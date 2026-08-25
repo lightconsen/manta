@@ -1,5 +1,6 @@
 import { Apple, Monitor, Terminal, Smartphone, Bot } from "lucide-react";
 import type { ReactNode } from "react";
+import { useLanguage } from "../i18n";
 
 const base = import.meta.env.BASE_URL;
 
@@ -26,18 +27,17 @@ function PhoneShot({ src, alt }: { src: string; alt: string }) {
 }
 
 export default function Platforms() {
+  const { t } = useLanguage();
+
   return (
     <section id="platforms" className="border-y border-line bg-alt">
       <div className="mx-auto max-w-6xl px-6 py-28">
         <div className="mb-14 text-center">
           <h2 className="text-3xl font-black tracking-tight sm:text-4xl">
-            Every device, <span className="text-gradient">one agent</span>
+            {t.platforms.titleA}{" "}
+            <span className="text-gradient">{t.platforms.titleB}</span>
           </h2>
-          <p className="mx-auto mt-4 max-w-2xl text-muted">
-            The same local runtime and memory on every machine you own. Chat,
-            voice, camera, and device tools on your phone — full desktop control
-            on your computer.
-          </p>
+          <p className="mx-auto mt-4 max-w-2xl text-muted">{t.platforms.lead}</p>
         </div>
 
         <div className="mb-14 flex flex-wrap items-center justify-center gap-3">
@@ -55,11 +55,11 @@ export default function Platforms() {
         <div className="grid gap-6 sm:grid-cols-2">
           <PhoneShot
             src={`${base}assets/mobile-ios-light.png`}
-            alt="Syscity on iOS"
+            alt={t.platforms.iosAlt}
           />
           <PhoneShot
             src={`${base}assets/mobile-android-light.png`}
-            alt="Syscity on Android"
+            alt={t.platforms.androidAlt}
           />
         </div>
       </div>

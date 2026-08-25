@@ -1,6 +1,10 @@
+import { useLanguage } from "../i18n";
+
 const base = import.meta.env.BASE_URL;
 
 export default function Demo() {
+  const { t } = useLanguage();
+
   return (
     <section className="mx-auto max-w-5xl px-6 pb-24">
       <div className="card overflow-hidden rounded-2xl shadow-[0_24px_64px_rgba(25,26,35,0.10)]">
@@ -8,18 +12,18 @@ export default function Demo() {
           <span className="h-3 w-3 rounded-full bg-[#ff5f57]" aria-hidden="true" />
           <span className="h-3 w-3 rounded-full bg-[#febc2e]" aria-hidden="true" />
           <span className="h-3 w-3 rounded-full bg-[#28c840]" aria-hidden="true" />
-          <span className="ml-3 text-xs text-faint">syscity — agent preview</span>
+          <span className="ml-3 text-xs text-faint">{t.demo.chromeTitle}</span>
         </div>
         <img
-          src={`${base}assets/demo-dark.gif`}
-          alt="Syscity demo — an agent generates a markdown report and previews it in a split panel"
+          src={`${base}assets/demo-light.gif`}
+          alt={t.demo.alt}
           className="w-full"
           loading="lazy"
         />
       </div>
       <p className="mt-4 text-center text-sm text-muted">
-        An agent generates a markdown report via <code className="font-mono">write_report</code>,
-        then previews it in a split-panel view.
+        {t.demo.captionBefore} <code className="font-mono">{t.demo.captionTool}</code>
+        {t.demo.captionAfter}
       </p>
     </section>
   );

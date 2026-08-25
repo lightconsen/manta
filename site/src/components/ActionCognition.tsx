@@ -12,22 +12,23 @@ import {
   Blocks,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { useLanguage } from "../i18n";
 
-const ACTION: { icon: ReactNode; label: string }[] = [
-  { icon: <MousePointer className="h-4 w-4" />, label: "Desktop Control" },
-  { icon: <Apple className="h-4 w-4" />, label: "AppleScript" },
-  { icon: <Terminal className="h-4 w-4" />, label: "Shell Commands" },
-  { icon: <Code2 className="h-4 w-4" />, label: "Code Execution" },
-  { icon: <Globe className="h-4 w-4" />, label: "Browser Automation" },
-  { icon: <FolderOpen className="h-4 w-4" />, label: "File Operations" },
+const ACTION_ICONS: ReactNode[] = [
+  <MousePointer key="0" className="h-4 w-4" />,
+  <Apple key="1" className="h-4 w-4" />,
+  <Terminal key="2" className="h-4 w-4" />,
+  <Code2 key="3" className="h-4 w-4" />,
+  <Globe key="4" className="h-4 w-4" />,
+  <FolderOpen key="5" className="h-4 w-4" />,
 ];
 
-const COGNITION: { icon: ReactNode; label: string }[] = [
-  { icon: <Brain className="h-4 w-4" />, label: "Multi-Provider LLM" },
-  { icon: <GitBranch className="h-4 w-4" />, label: "Sub-Agents (ACP)" },
-  { icon: <Database className="h-4 w-4" />, label: "Vector Memory" },
-  { icon: <Plug className="h-4 w-4" />, label: "MCP Support" },
-  { icon: <Blocks className="h-4 w-4" />, label: "WASM Plugins" },
+const COGNITION_ICONS: ReactNode[] = [
+  <Brain key="0" className="h-4 w-4" />,
+  <GitBranch key="1" className="h-4 w-4" />,
+  <Database key="2" className="h-4 w-4" />,
+  <Plug key="3" className="h-4 w-4" />,
+  <Blocks key="4" className="h-4 w-4" />,
 ];
 
 function Column({
@@ -58,28 +59,34 @@ function Column({
 }
 
 export default function ActionCognition() {
+  const { t } = useLanguage();
+
   return (
     <section className="mx-auto max-w-6xl px-6 py-28">
       <div className="mb-14 text-center">
         <h2 className="text-3xl font-black tracking-tight sm:text-4xl">
-          Action. <span className="text-gradient">Cognition.</span>
+          {t.actionCognition.titleA}{" "}
+          <span className="text-gradient">{t.actionCognition.titleB}</span>
         </h2>
-        <p className="mx-auto mt-4 max-w-2xl text-muted">
-          An agent system bridges language models with real computing
-          environments — an action layer, a memory layer, and a control plane.
-        </p>
+        <p className="mx-auto mt-4 max-w-2xl text-muted">{t.actionCognition.lead}</p>
       </div>
 
       <div className="grid gap-6 md:grid-cols-2">
         <Column
-          eyebrow="Action"
-          title="Things it does on your machine"
-          items={ACTION}
+          eyebrow={t.actionCognition.actionEyebrow}
+          title={t.actionCognition.actionTitle}
+          items={t.actionCognition.actionItems.map((label, i) => ({
+            icon: ACTION_ICONS[i],
+            label,
+          }))}
         />
         <Column
-          eyebrow="Cognition"
-          title="How it thinks and remembers"
-          items={COGNITION}
+          eyebrow={t.actionCognition.cognitionEyebrow}
+          title={t.actionCognition.cognitionTitle}
+          items={t.actionCognition.cognitionItems.map((label, i) => ({
+            icon: COGNITION_ICONS[i],
+            label,
+          }))}
         />
       </div>
     </section>

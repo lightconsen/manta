@@ -6,20 +6,23 @@ import Features from "./components/Features";
 import ActionCognition from "./components/ActionCognition";
 import QuickStart from "./components/QuickStart";
 import Footer from "./components/Footer";
+import { LangProvider } from "./i18n";
 
 export default function App() {
   return (
-    <div className="min-h-screen bg-page text-ink">
-      <Nav />
-      <main>
-        <Hero />
-        <Demo />
-        <Features />
-        <ActionCognition />
-        <Platforms />
-        <QuickStart />
-      </main>
-      <Footer />
-    </div>
+    <LangProvider>
+      <div className="min-h-screen bg-page text-ink">
+        <Nav />
+        <main>
+          <Hero />
+          <Demo />
+          <Features />
+          <ActionCognition />
+          <Platforms />
+          <QuickStart />
+        </main>
+        <Footer />
+      </div>
+    </LangProvider>
   );
 }

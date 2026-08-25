@@ -1,12 +1,14 @@
 import { useState } from "react";
 import { Check, Copy, ArrowRight } from "lucide-react";
 import GithubMark from "./GithubMark";
+import { useLanguage } from "../i18n";
 
 const base = import.meta.env.BASE_URL;
 const INSTALL_CMD = "curl -sSL https://syscity.net/install.sh | bash";
 
 function InstallChip() {
   const [copied, setCopied] = useState(false);
+  const { t } = useLanguage();
 
   const copy = async () => {
     try {
@@ -24,7 +26,7 @@ function InstallChip() {
       <span className="flex-1 truncate text-left text-ink/90">{INSTALL_CMD}</span>
       <button
         onClick={copy}
-        aria-label="Copy install command"
+        aria-label={t.hero.copyInstall}
         className="shrink-0 rounded-md p-1.5 text-faint transition hover:bg-line hover:text-ink"
       >
         {copied ? <Check className="h-4 w-4 text-brand-500" /> : <Copy className="h-4 w-4" />}
@@ -34,6 +36,8 @@ function InstallChip() {
 }
 
 export default function Hero() {
+  const { lang, t } = useLanguage();
+
   return (
     <section id="top" className="relative overflow-hidden">
       <div className="hero-glow pointer-events-none absolute inset-0" aria-hidden="true" />
@@ -49,21 +53,22 @@ export default function Hero() {
           </div>
         </div>
 
-        <p className="animate-fade-up mb-6 inline-flex items-center gap-2 rounded-full border border-brand-500/25 bg-brand-500/5 px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-brand-600 [animation-delay:80ms]">
-          Syscity · AI Agent System
+        <p
+          className={`animate-fade-up mb-6 inline-flex items-center gap-2 rounded-full border border-brand-500/25 bg-brand-500/5 px-4 py-1.5 text-xs font-semibold text-brand-600 [animation-delay:80ms] ${
+            lang === "zh" ? "tracking-[0.12em]" : "uppercase tracking-[0.18em]"
+          }`}
+        >
+          {t.hero.badge}
         </p>
 
         <h1 className="animate-fade-up text-[clamp(2.75rem,7vw,4.75rem)] font-black leading-[1.05] tracking-tight [animation-delay:160ms]">
-          One agent runtime,
+          {t.hero.titleTop}
           <br />
-          <span className="text-gradient">every device.</span>
+          <span className="text-gradient">{t.hero.titleBottom}</span>
         </h1>
 
         <p className="animate-fade-up mt-6 max-w-2xl text-base leading-relaxed text-muted sm:text-lg [animation-delay:240ms]">
-          Syscity turns a language model into an agent that lives inside your
-          machine — clicking buttons, browsing the web, running code, and
-          managing files. Runs natively on macOS, Windows, Linux, iOS, and
-          Android. Your data never leaves.
+          {t.hero.subtitle}
         </p>
 
         <div className="animate-fade-up mt-10 flex flex-wrap items-center justify-center gap-4 [animation-delay:320ms]">
@@ -71,7 +76,7 @@ export default function Hero() {
             href="#quickstart"
             className="inline-flex h-12 items-center gap-2 rounded-md bg-brand-500 px-6 text-[15px] font-semibold text-white shadow-[0_8px_24px_rgba(178,42,194,0.3)] transition hover:bg-brand-600"
           >
-            Get Started
+            {t.hero.getStarted}
             <ArrowRight className="h-4 w-4" />
           </a>
           <a
@@ -81,7 +86,7 @@ export default function Hero() {
             className="inline-flex h-12 items-center gap-2 rounded-md border border-brand-500/60 px-6 text-[15px] font-semibold text-brand-600 transition hover:border-brand-500 hover:bg-brand-500/5"
           >
             <GithubMark className="h-4 w-4" />
-            View on GitHub
+            {t.hero.viewOnGithub}
           </a>
         </div>
 

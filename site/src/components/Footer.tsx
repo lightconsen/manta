@@ -1,9 +1,12 @@
 import { MessageSquare, FileText } from "lucide-react";
 import GithubMark from "./GithubMark";
+import { useLanguage } from "../i18n";
 
 const base = import.meta.env.BASE_URL;
 
 export default function Footer() {
+  const { t } = useLanguage();
+
   return (
     <footer className="border-t border-line bg-alt">
       <div className="mx-auto max-w-6xl px-6 py-14">
@@ -17,26 +20,23 @@ export default function Footer() {
               />
               <span className="text-sm font-bold">Syscity</span>
             </div>
-            <p className="mt-3 max-w-xs text-sm text-muted">
-              AI agents that control your computer. Local-first, one runtime,
-              every device.
-            </p>
+            <p className="mt-3 max-w-xs text-sm text-muted">{t.footer.tagline}</p>
           </div>
 
           <div>
             <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-faint">
-              Product
+              {t.footer.product}
             </p>
             <ul className="space-y-2 text-sm text-muted">
-              <li><a href="#features" className="transition hover:text-ink">Features</a></li>
-              <li><a href="#platforms" className="transition hover:text-ink">Platforms</a></li>
-              <li><a href="#quickstart" className="transition hover:text-ink">Quick Start</a></li>
+              <li><a href="#features" className="transition hover:text-ink">{t.footer.features}</a></li>
+              <li><a href="#platforms" className="transition hover:text-ink">{t.footer.platforms}</a></li>
+              <li><a href="#quickstart" className="transition hover:text-ink">{t.footer.quickstart}</a></li>
             </ul>
           </div>
 
           <div>
             <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-faint">
-              Community
+              {t.footer.community}
             </p>
             <ul className="space-y-2 text-sm text-muted">
               <li>
@@ -66,7 +66,7 @@ export default function Footer() {
                   rel="noreferrer"
                   className="inline-flex items-center gap-2 transition hover:text-ink"
                 >
-                  <FileText className="h-4 w-4" /> Documentation
+                  <FileText className="h-4 w-4" /> {t.footer.documentation}
                 </a>
               </li>
             </ul>
@@ -75,7 +75,7 @@ export default function Footer() {
 
         <div className="mt-12 flex flex-col items-center justify-between gap-3 border-t border-line pt-6 text-xs text-faint sm:flex-row">
           <p>© {new Date().getFullYear()} Syscity</p>
-          <p>Apache-2.0 Licensed · Open Source</p>
+          <p>{t.footer.license}</p>
         </div>
       </div>
     </footer>

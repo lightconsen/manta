@@ -1,31 +1,31 @@
 import { Terminal } from "lucide-react";
-
-const LINES: { prompt?: string; text: string; dim?: boolean }[] = [
-  { prompt: "$", text: "curl -sSL https://syscity.net/install.sh | bash" },
-  { prompt: "✓", text: "installed syscity v0.2.0", dim: true },
-  { prompt: "$", text: "syscity setup" },
-  { prompt: "✓", text: "configured providers.openai.api_key", dim: true },
-  { prompt: "$", text: "syscity start" },
-  { prompt: "🚀", text: "gateway running at http://127.0.0.1:18080", dim: true },
-];
+import { useLanguage } from "../i18n";
 
 export default function QuickStart() {
+  const { t } = useLanguage();
+
+  const LINES: { prompt?: string; text: string; dim?: boolean }[] = [
+    { prompt: "$", text: "curl -sSL https://syscity.net/install.sh | bash" },
+    { prompt: "✓", text: t.quickstart.termInstalled, dim: true },
+    { prompt: "$", text: "syscity setup" },
+    { prompt: "✓", text: t.quickstart.termConfigured, dim: true },
+    { prompt: "$", text: "syscity start" },
+    { prompt: "🚀", text: t.quickstart.termRunning, dim: true },
+  ];
+
   return (
     <section id="quickstart">
       <div className="mx-auto max-w-6xl px-6 py-28">
         <div className="grid items-center gap-12 lg:grid-cols-2">
           <div>
             <p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">
-              Quick Start
+              {t.quickstart.eyebrow}
             </p>
             <h2 className="text-3xl font-black tracking-tight sm:text-4xl">
-              Up and running in <span className="text-gradient">seconds</span>
+              {t.quickstart.titleA}{" "}
+              <span className="text-gradient">{t.quickstart.titleB}</span>
             </h2>
-            <p className="mt-4 max-w-md text-muted">
-              No new IDE, no cloud subscription, no complex deployment. Install,
-              configure, start — then ask your agent to take a screenshot,
-              build a report, or automate a task.
-            </p>
+            <p className="mt-4 max-w-md text-muted">{t.quickstart.lead}</p>
             <div className="mt-8 flex flex-wrap gap-4">
               <a
                 href="https://github.com/lightconsen/syscity#readme"
@@ -33,7 +33,7 @@ export default function QuickStart() {
                 rel="noreferrer"
                 className="inline-flex h-12 items-center gap-2 rounded-md bg-brand-500 px-6 text-[15px] font-semibold text-white shadow-[0_8px_24px_rgba(178,42,194,0.3)] transition hover:bg-brand-600"
               >
-                Read the docs
+                {t.quickstart.readDocs}
               </a>
               <a
                 href="https://github.com/lightconsen/syscity#quick-start"
@@ -41,7 +41,7 @@ export default function QuickStart() {
                 rel="noreferrer"
                 className="inline-flex h-12 items-center gap-2 rounded-md border border-brand-500/60 px-6 text-[15px] font-semibold text-brand-600 transition hover:border-brand-500 hover:bg-brand-500/5"
               >
-                GitHub README
+                {t.quickstart.githubReadme}
               </a>
             </div>
           </div>

@@ -1,14 +1,17 @@
-import { Star } from "lucide-react";
+import { Star, Languages } from "lucide-react";
+import { useLanguage } from "../i18n";
 
 const base = import.meta.env.BASE_URL;
 
-const LINKS = [
-  { href: "#features", label: "Features" },
-  { href: "#platforms", label: "Platforms" },
-  { href: "#quickstart", label: "Quick Start" },
-];
-
 export default function Nav() {
+  const { lang, setLang, t } = useLanguage();
+
+  const LINKS = [
+    { href: "#features", label: t.nav.features },
+    { href: "#platforms", label: t.nav.platforms },
+    { href: "#quickstart", label: t.nav.quickstart },
+  ];
+
   return (
     <header className="sticky top-0 z-50 border-b border-line bg-page/80 backdrop-blur-md">
       <nav className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
@@ -30,6 +33,14 @@ export default function Nav() {
         </div>
 
         <div className="flex items-center gap-2.5">
+          <button
+            onClick={() => setLang(lang === "en" ? "zh" : "en")}
+            aria-label={lang === "en" ? "切换到中文" : "Switch to English"}
+            className="inline-flex items-center gap-1.5 rounded-md border border-line bg-panel px-3 py-2 text-sm font-semibold text-muted transition hover:border-brand-500/60 hover:text-brand-600"
+          >
+            <Languages className="h-4 w-4" />
+            {t.nav.switchTo}
+          </button>
           <a
             href="https://github.com/lightconsen/syscity"
             target="_blank"
@@ -37,8 +48,8 @@ export default function Nav() {
             className="inline-flex items-center gap-1.5 rounded-md border border-line bg-panel px-3.5 py-2 text-sm font-semibold transition hover:border-brand-500/60 hover:text-brand-600"
           >
             <Star className="h-4 w-4" />
-            <span className="hidden sm:inline">Star on GitHub</span>
-            <span className="sm:hidden">Star</span>
+            <span className="hidden sm:inline">{t.nav.starLong}</span>
+            <span className="sm:hidden">{t.nav.starShort}</span>
           </a>
           <a
             href="https://discord.gg/aaXghvzD"
