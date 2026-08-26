@@ -18,9 +18,20 @@ fi
 cd "$ROOT"
 
 echo ""
-echo "🔒 pre-commit: security audit (cargo audit + cargo-deny)"
+echo "🔒 pre-commit: staged checks + security audit"
 echo "   bypass with: git commit --no-verify"
 echo ""
+
+# Fast staged-content checks (conflict markers, oversized files, rustfmt,
+# secrets) reject immediately before the slower audit runs.
+if ! ./scripts/staged-checks.sh; then
+    echo ""
+    echo "❌  Staged-content checks failed — commit rejected."
+    echo "    Fix the files above or unstage them:"
+    echo "    git restore --staged <file>"
+    echo "    Emergency bypass: git commit --no-verify"
+    exit 1
+fi
 
 if ./scripts/audit.sh; then
     exit 0
