@@ -123,6 +123,7 @@ pub struct MemoryState {
 pub struct ToolState {
     pub registry: Arc<ToolRegistry>,
     pub mcp_manager: Arc<McpManager>,
+    pub connector_manager: Arc<crate::mcp::ConnectorManager>,
     pub approval_queue: Arc<ApprovalQueue>,
     pub ask_queue: Arc<AskQueue>,
     pub skills_manager: Arc<RwLock<SkillManager>>,

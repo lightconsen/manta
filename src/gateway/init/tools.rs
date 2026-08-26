@@ -29,6 +29,7 @@ use crate::tools::ToolRegistry;
 /// Tool subsystem initialization result.
 pub struct ToolsInit {
     pub mcp_manager: Arc<McpManager>,
+    pub connector_manager: Arc<crate::mcp::ConnectorManager>,
     pub mcp_event_rx: mpsc::UnboundedReceiver<McpEvent>,
     pub approval_queue: Arc<ApprovalQueue>,
     pub ask_queue: Arc<AskQueue>,
@@ -252,6 +253,11 @@ pub async fn init_tools(config: &GatewayConfig, deps: ToolSystemDeps) -> crate::
         shell_hooks,
     } = deps;
     let (mcp_manager, mcp_event_rx) = init_mcp_manager().await;
+    let connector_manager = Arc::new(crate::mcp::ConnectorManager::new(
+        crate::dirs::connectors_dir(),
+        mcp_manager.clone(),
+        Arc::new(crate::skills::SkillStorage::new()?),
+    ));
     let approval_queue = Arc::new(ApprovalQueue::new());
     let ask_queue = Arc::new(AskQueue::new());
     let memory_manager_holder: Arc<RwLock<Option<Arc<MemoryManager>>>> =
@@ -331,6 +337,7 @@ pub async fn init_tools(config: &GatewayConfig, deps: ToolSystemDeps) -> crate::
 
     Ok(ToolsInit {
         mcp_manager,
+        connector_manager,
         mcp_event_rx,
         approval_queue,
         ask_queue,

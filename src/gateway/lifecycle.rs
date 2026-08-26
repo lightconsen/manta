@@ -273,6 +273,21 @@ pub(crate) async fn start_gateway(
     // Auto-connect MCP servers (non-blocking — HTTP listener starts immediately)
     init_mcp_servers(state.clone(), &config);
 
+    // Reconnect enabled connectors (MCP-backed ones) in the background.
+    {
+        let connectors = state.tools.connector_manager.clone();
+        let task_registry = state.task_registry.clone();
+        let handle = tokio::spawn(async move {
+            let n = connectors.load_and_connect().await;
+            if n > 0 {
+                info!("{n} connector(s) reconnected after restart");
+            }
+        });
+        task_registry
+            .insert_join("connectors:load_and_connect", handle)
+            .await;
+    }
+
     // Initialize configured channels
     super::init::channels::init_channels(state.clone(), &config).await?;
 

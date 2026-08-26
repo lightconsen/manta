@@ -133,6 +133,14 @@ pub fn cron_dir() -> PathBuf {
     syscity_dir().join("cron")
 }
 
+/// Get the connectors directory (~/.syscity/connectors)
+///
+/// Holds the connector state machine, the synced remote catalog, and the
+/// versioned package cache (see `crate::mcp::connectors`).
+pub fn connectors_dir() -> PathBuf {
+    syscity_dir().join("connectors")
+}
+
 /// Get the workspace data directory (~/.syscity/workspace)
 pub fn workspace_data_dir() -> PathBuf {
     syscity_dir().join("workspace")

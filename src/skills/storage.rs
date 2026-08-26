@@ -156,6 +156,20 @@ impl SkillStorage {
         Ok(())
     }
 
+    /// Storage scoped to an explicit user skills directory, with no bundled /
+    /// project / workspace levels.
+    ///
+    /// Used by the connector subsystem (which installs bundled skills into a
+    /// caller-chosen location) and by tests that must not touch `~/.syscity`.
+    pub fn with_user_dir(user_dir: PathBuf) -> Self {
+        Self {
+            bundled_dir: None,
+            user_dir,
+            project_dir: None,
+            workspace_dir: None,
+        }
+    }
+
     /// Ensure project skills directory exists
     pub async fn ensure_project_dir(&self) -> crate::Result<PathBuf> {
         let dir = std::env::current_dir()

@@ -62,8 +62,25 @@ impl PluginInstaller {
         Ok(())
     }
 
+    /// Extract an archive into the target directory.
+    ///
+    /// Dispatches on the file extension: `.tar.gz`/`.tgz` via
+    /// [`extract_tar_gz`](extract_tar_gz), `.zip` via
+    /// [`extract_zip`](extract_zip). Shared with `src/mcp/connectors` for
+    /// connector package installs.
+    pub(crate) async fn extract_archive(
+        archive_path: &std::path::Path,
+        target_dir: &std::path::Path,
+    ) -> crate::Result<()> {
+        let name = archive_path.file_name().and_then(|n| n.to_str());
+        match name.map(|n| n.to_ascii_lowercase()) {
+            Some(n) if n.ends_with(".zip") => extract_zip(archive_path, target_dir).await,
+            _ => Self::extract_tar_gz(archive_path, target_dir).await,
+        }
+    }
+
     /// Extract a .tar.gz archive into the target directory.
-    async fn extract_archive(
+    pub(crate) async fn extract_tar_gz(
         archive_path: &std::path::Path,
         target_dir: &std::path::Path,
     ) -> crate::Result<()> {
@@ -99,22 +116,7 @@ impl PluginInstaller {
                             e
                         ))
                     })?;
-                    let components: Vec<_> = raw_path.components().collect();
-                    if components.iter().any(|c| {
-                        matches!(
-                            c,
-                            std::path::Component::ParentDir
-                                | std::path::Component::RootDir
-                                | std::path::Component::Prefix(_)
-                        )
-                    }) {
-                        return Err(crate::error::SyscityError::Internal(format!(
-                            "Zip-slip detected: tar entry '{}' contains unsafe path components",
-                            raw_path.display()
-                        )));
-                    }
-
-                    // Clone the path before unpack_in to avoid borrow conflict
+                    sanitize_archive_path(&raw_path)?;
                     let raw_path_clone = raw_path.to_path_buf();
                     entry.unpack_in(&target).map_err(|e| {
                         crate::error::SyscityError::Internal(format!(
@@ -148,6 +150,108 @@ impl PluginInstaller {
         info!("Plugin '{}' uninstalled", name);
         Ok(())
     }
+}
+
+/// Reject archive entry paths that escape the extraction root.
+///
+/// Shared by the tar and zip extractors: absolute paths, parent-directory
+/// traversal, and Windows prefixes are all zip-slip vectors.
+pub(crate) fn sanitize_archive_path(raw: &std::path::Path) -> crate::Result<()> {
+    let components: Vec<_> = raw.components().collect();
+    if components.iter().any(|c| {
+        matches!(
+            c,
+            std::path::Component::ParentDir
+                | std::path::Component::RootDir
+                | std::path::Component::Prefix(_)
+        )
+    }) || raw.is_absolute()
+    {
+        return Err(crate::error::SyscityError::Internal(format!(
+            "Zip-slip detected: archive entry '{}' contains unsafe path components",
+            raw.display()
+        )));
+    }
+    Ok(())
+}
+
+/// Extract a .zip archive into the target directory (zip-slip sanitized).
+pub(crate) async fn extract_zip(
+    archive_path: &std::path::Path,
+    target_dir: &std::path::Path,
+) -> crate::Result<()> {
+    let archive_bytes = tokio::fs::read(archive_path).await?;
+    let target = target_dir.to_path_buf();
+    tokio::task::spawn_blocking(move || -> crate::Result<()> {
+        let reader = std::io::Cursor::new(&archive_bytes[..]);
+        let mut archive = zip::ZipArchive::new(reader).map_err(|e| {
+            crate::error::SyscityError::Internal(format!("Failed to open zip archive: {e}"))
+        })?;
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i).map_err(|e| {
+                crate::error::SyscityError::Internal(format!("Failed to read zip entry {i}: {e}"))
+            })?;
+            let Some(name) = entry.enclosed_name() else {
+                // enclosed_name() already filters traversal; treat as unsafe.
+                return Err(crate::error::SyscityError::Internal(format!(
+                    "Zip-slip detected: zip entry '{i}' has an unsafe path"
+                )));
+            };
+            sanitize_archive_path(&name)?;
+
+            let out_path = target.join(name);
+            if entry.is_dir() {
+                std::fs::create_dir_all(&out_path).map_err(|e| {
+                    crate::error::SyscityError::IoContext {
+                        context: format!("Failed to create {}", out_path.display()),
+                        source: e,
+                    }
+                })?;
+            } else {
+                if let Some(parent) = out_path.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| {
+                        crate::error::SyscityError::IoContext {
+                            context: format!("Failed to create {}", parent.display()),
+                            source: e,
+                        }
+                    })?;
+                }
+                let mut out = std::fs::File::create(&out_path).map_err(|e| {
+                    crate::error::SyscityError::IoContext {
+                        context: format!("Failed to create {}", out_path.display()),
+                        source: e,
+                    }
+                })?;
+                std::io::copy(&mut entry, &mut out).map_err(|e| {
+                    crate::error::SyscityError::IoContext {
+                        context: format!("Failed to write {}", out_path.display()),
+                        source: e,
+                    }
+                })?;
+            }
+        }
+        info!("Extracted zip archive to {:?}", target);
+        Ok(())
+    })
+    .await
+    .map_err(|e| crate::error::SyscityError::Internal(format!("Extraction task failed: {}", e)))?
+}
+
+/// Check whether an extracted package directory contains a `connector.json`
+/// directly or inside a single top-level wrapper directory (common when a
+/// tarball is built from a folder). Returns the effective package root.
+#[allow(dead_code)]
+pub(crate) fn locate_package_root(extract_dir: &std::path::Path, marker: &str) -> PathBuf {
+    if extract_dir.join(marker).exists() {
+        return extract_dir.to_path_buf();
+    }
+    if let Ok(entries) = std::fs::read_dir(extract_dir) {
+        let dirs: Vec<_> = entries.flatten().filter(|e| e.path().is_dir()).collect();
+        if dirs.len() == 1 && dirs[0].path().join(marker).exists() {
+            return dirs[0].path();
+        }
+    }
+    extract_dir.to_path_buf()
 }
 
 #[cfg(test)]

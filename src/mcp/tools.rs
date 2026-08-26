@@ -279,22 +279,51 @@ impl Tool for McpPromptTool {
 // McpConnectionTool
 // ─────────────────────────────────────────────
 
-/// Meta-tool the agent can invoke to manage MCP connections at runtime.
+/// Extract the required `connector_id` argument.
+fn require_connector_id(args: &serde_json::Value) -> crate::Result<&str> {
+    args["connector_id"].as_str().ok_or_else(|| {
+        crate::error::SyscityError::Validation(
+            "connector_id is required for this action".to_string(),
+        )
+    })
+}
+
+/// Meta-tool the agent can invoke to manage MCP connections at runtime, plus
+/// connector lifecycle operations (install/enable/disable/uninstall/auth).
 #[derive(Debug)]
 pub struct McpConnectionTool {
     manager: Arc<McpManager>,
+    connectors: Option<Arc<crate::mcp::connectors::ConnectorManager>>,
 }
 
 impl McpConnectionTool {
     pub fn new() -> Self {
         Self {
             manager: Arc::new(McpManager::new()),
+            connectors: None,
         }
     }
 
     /// Create with a shared manager (so gateway can also share it).
     pub fn with_manager(manager: Arc<McpManager>) -> Self {
-        Self { manager }
+        Self { manager, connectors: None }
+    }
+
+    /// Attach the connector subsystem, enabling `connector_*` actions.
+    pub fn with_connectors(
+        mut self,
+        connectors: Arc<crate::mcp::connectors::ConnectorManager>,
+    ) -> Self {
+        self.connectors = Some(connectors);
+        self
+    }
+
+    fn require_connectors(&self) -> crate::Result<Arc<crate::mcp::connectors::ConnectorManager>> {
+        self.connectors.clone().ok_or_else(|| {
+            crate::error::SyscityError::Validation(
+                "connector subsystem is not attached to this tool".to_string(),
+            )
+        })
     }
 }
 
@@ -333,8 +362,8 @@ Actions:
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["connect", "disconnect", "list", "tools", "resources", "resource_read", "subscribe", "unsubscribe", "prompts", "prompt_get", "sampling"],
-                    "description": "Action to perform"
+                    "enum": ["connect", "disconnect", "list", "tools", "resources", "resource_read", "subscribe", "unsubscribe", "prompts", "prompt_get", "sampling", "connector_list", "connector_install", "connector_enable", "connector_disable", "connector_uninstall", "connector_auth_status", "connector_auth_login", "connector_auth_logout", "connector_check_version", "connector_sync_catalog", "connector_updates"],
+                    "description": "Action to perform. `connector_*` actions manage marketplace-style connector packages (install/enable/auth); they need the subsystem attached."
                 },
                 "server_id": {
                     "type": "string",
@@ -696,6 +725,141 @@ Actions:
                 }
             }
 
+            // ── Connector lifecycle actions ────────────────────────────────
+            "connector_list" => {
+                let connectors = self.require_connectors()?;
+                let list = connectors.list().await?;
+                let names: Vec<String> = list
+                    .iter()
+                    .map(|c| format!("{} v{} ({:?})", c.id, c.version, c.state))
+                    .collect();
+                Ok(ToolExecutionResult::success(format!(
+                    "{} connector(s): {}",
+                    list.len(),
+                    if names.is_empty() {
+                        "none".to_string()
+                    } else {
+                        names.join(", ")
+                    }
+                ))
+                .with_data(json!({ "connectors": list })))
+            }
+            "connector_install" => {
+                let connectors = self.require_connectors()?;
+                let source = args["source_dir"].as_str().ok_or_else(|| {
+                    crate::error::SyscityError::Validation(
+                        "source_dir is required for connector_install \
+                             (path to a package directory containing connector.json)"
+                            .to_string(),
+                    )
+                })?;
+                let summary = connectors
+                    .install_from_dir(std::path::Path::new(source))
+                    .await?;
+                Ok(ToolExecutionResult::success(format!(
+                    "Installed connector {} v{} ({:?})",
+                    summary.id, summary.version, summary.state,
+                ))
+                .with_data(serde_json::to_value(&summary).unwrap_or_default()))
+            }
+            "connector_enable" | "connector_disable" | "connector_uninstall" => {
+                let connectors = self.require_connectors()?;
+                let id = require_connector_id(&args)?;
+                let verb = action.trim_start_matches("connector_");
+                let result: serde_json::Value = match verb {
+                    "enable" => serde_json::to_value(connectors.enable(id).await?)?,
+                    "disable" => serde_json::to_value(connectors.disable(id).await?)?,
+                    _ => {
+                        connectors.uninstall(id).await?;
+                        json!({ "id": id, "state": "uninstalled" })
+                    }
+                };
+                let state = result
+                    .get("state")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or(verb)
+                    .to_string();
+                Ok(ToolExecutionResult::success(format!("Connector {id}: {state}"))
+                    .with_data(result))
+            }
+            "connector_auth_status" | "connector_auth_login" | "connector_auth_logout" => {
+                let connectors = self.require_connectors()?;
+                let id = require_connector_id(&args)?;
+                let which = action.trim_start_matches("connector_auth_");
+                match which {
+                    "status" => {
+                        let status = connectors.auth_status(id).await?;
+                        let text = status.unwrap_or_else(|| {
+                            "no auth.status command declared or not authenticated".to_string()
+                        });
+                        Ok(ToolExecutionResult::success(format!("Connector {id} auth: {text}"))
+                            .with_data(json!({ "id": id, "authenticated_text": text })))
+                    }
+                    "login" => {
+                        let out = connectors.auth_login(id).await?;
+                        Ok(ToolExecutionResult::success(format!(
+                            "Connector {id} auth login exited with code {}",
+                            out.code
+                        ))
+                        .with_data(json!({
+                            "code": out.code,
+                            "stdout": out.stdout,
+                            "stderr": out.stderr,
+                        })))
+                    }
+                    _ => {
+                        connectors.auth_logout(id).await?;
+                        Ok(ToolExecutionResult::success(format!("Connector {id} logged out")))
+                    }
+                }
+            }
+            "connector_check_version" => {
+                let connectors = self.require_connectors()?;
+                let id = require_connector_id(&args)?;
+                let outcome = connectors.check_version(id).await?;
+                Ok(ToolExecutionResult::success(format!(
+                    "Connector {id} version check: {outcome:?}"
+                ))
+                .with_data(json!({ "outcome": format!("{outcome:?}") })))
+            }
+            "connector_sync_catalog" => {
+                let connectors = self.require_connectors()?;
+                let url = args["url"].as_str().ok_or_else(|| {
+                    crate::error::SyscityError::Validation(
+                        "url is required for connector_sync_catalog".to_string(),
+                    )
+                })?;
+                let (doc, refreshed) = connectors.sync_catalog(url).await?;
+                Ok(ToolExecutionResult::success(format!(
+                    "Catalog {} ({} entries) from {url}",
+                    if refreshed { "refreshed" } else { "unchanged" },
+                    doc.connectors.len()
+                ))
+                .with_data(json!({
+                    "refreshed": refreshed,
+                    "entries": doc.connectors.len(),
+                })))
+            }
+            "connector_updates" => {
+                let connectors = self.require_connectors()?;
+                let auto_only = args["auto_only"].as_bool().unwrap_or(false);
+                if args["apply"].as_bool().unwrap_or(false) {
+                    let applied = connectors.apply_updates(auto_only).await?;
+                    Ok(ToolExecutionResult::success(format!("Applied {} update(s)", applied.len()))
+                        .with_data(json!({ "applied": applied })))
+                } else {
+                    let pending = connectors.check_updates().await?;
+                    Ok(ToolExecutionResult::success(format!("{} pending update(s)", pending.len()))
+                        .with_data(json!({
+                            "pending": pending.iter().map(|u| json!({
+                                "id": u.id,
+                                "current_version": u.current_version,
+                                "latest_version": u.latest_version,
+                                "auto_update": u.entry.auto_update,
+                            })).collect::<Vec<_>>(),
+                        })))
+                }
+            }
             _ => Err(crate::error::SyscityError::Validation(format!("Unknown action: {}", action))),
         }
     }

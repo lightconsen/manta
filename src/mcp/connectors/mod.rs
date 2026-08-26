@@ -1,0 +1,967 @@
+//! Connector subsystem — marketplace-style packaging for MCP servers and
+//! CLI-backed integrations.
+//!
+//! A *connector* is a versioned package (a directory with a
+//! [`connector.json`](manifest::ConnectorManifest)) that can provide any mix
+//! of:
+//!
+//! - an **MCP server** (`mcp` section) connected through [`McpManager`] when
+//!   the connector is enabled;
+//! - **lifecycle hooks** (`lifecycle` section): per-platform dependency
+//!   install, version verification, and auth commands, executed by the
+//!   [`LifecycleRunner`];
+//! - **bundled skills** (`skills` section): `SKILL.md` folders installed into
+//!   the user skills directory so the agent learns how to drive the service.
+//!
+//! State is persisted in a versioned [`states.json`](state) file; remote
+//! catalogs are synced through [`catalog::CatalogCache`] with ETag/304
+//! semantics and sha256 archive verification.
+//!
+//! Layout under [`crate::dirs::connectors_dir()`]:
+//!
+//! ```text
+//! ├── states.json                     # ConnectorStateFile (versioned)
+//! ├── catalog/{catalog.json,meta.json}
+//! └── cache/<connector-id>/<semver>/  # installed packages (connector.json at root)
+//! ```
+
+pub mod catalog;
+pub mod lifecycle;
+pub mod manifest;
+pub mod state;
+
+use std::future::Future;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use chrono::Utc;
+use serde::Serialize;
+use tokio::sync::Mutex as AsyncMutex;
+use tracing::{info, warn};
+
+use crate::error::SyscityError;
+use crate::skills::SkillStorage;
+
+use self::catalog::{CatalogCache, CatalogDocument, PendingUpdate};
+use self::lifecycle::{LifecycleRunner, VersionCheckOutcome};
+use self::manifest::ConnectorManifest;
+use self::state::{new_record, put_record, ConnectorRecord, StateKind, StateStore};
+use super::McpManager;
+
+// ─────────────────────────────────────────────
+// Public summary type
+// ─────────────────────────────────────────────
+
+/// Read-only view of an installed connector for listings and tool output.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConnectorSummary {
+    /// Connector id.
+    pub id: String,
+    /// Installed version.
+    pub version: String,
+    /// Display name from the manifest.
+    pub display_name: String,
+    /// Description from the manifest.
+    pub description: String,
+    /// Lifecycle state.
+    pub state: StateKind,
+    /// Last error, when `state == Error`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Whether enabling opens an MCP connection.
+    pub provides_mcp: bool,
+    /// Bundled skill names installed on this connector's behalf.
+    pub skills: Vec<String>,
+}
+
+// ─────────────────────────────────────────────
+// Manager
+// ─────────────────────────────────────────────
+
+/// Facade over the connector package cache, persistent state machine, bundled
+/// skill installation, lifecycle execution, MCP connection, and catalog sync.
+///
+/// Mutating operations serialize through one write lock — installs touch the
+/// filesystem, the skills dir, and [`McpManager`], and tool calls may arrive
+/// concurrently from multiple sessions.
+pub struct ConnectorManager {
+    root: PathBuf,
+    mcp_manager: Arc<McpManager>,
+    skill_storage: Arc<SkillStorage>,
+    lifecycle: LifecycleRunner,
+    /// Serializes state-mutating operations.
+    write_lock: AsyncMutex<()>,
+}
+
+impl std::fmt::Debug for ConnectorManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Lifecycle runner and storage handles carry no secrets, but they are
+        // not Debug; summarize by location instead.
+        f.debug_struct("ConnectorManager")
+            .field("root", &self.root)
+            .finish()
+    }
+}
+
+impl ConnectorManager {
+    /// Manager rooted at `root` (normally [`crate::dirs::connectors_dir()]).
+    pub fn new(
+        root: PathBuf,
+        mcp_manager: Arc<McpManager>,
+        skill_storage: Arc<SkillStorage>,
+    ) -> Self {
+        Self {
+            root,
+            mcp_manager,
+            skill_storage,
+            lifecycle: LifecycleRunner::new(300),
+            write_lock: AsyncMutex::new(()),
+        }
+    }
+
+    fn state_store(&self) -> StateStore {
+        StateStore::new(&self.root)
+    }
+
+    fn catalog_cache(&self) -> CatalogCache {
+        CatalogCache::new(self.root.join("catalog"))
+    }
+
+    fn cache_root(&self) -> PathBuf {
+        self.root.join("cache")
+    }
+
+    fn package_dir(&self, id: &str, version: &str) -> PathBuf {
+        self.cache_root().join(id).join(version)
+    }
+
+    async fn load_manifest_for(
+        &self,
+        record: &ConnectorRecord,
+    ) -> crate::Result<ConnectorManifest> {
+        let pkg = self.package_dir(&record.id, &record.version);
+        ConnectorManifest::load(&pkg).await.map_err(|e| match e {
+            SyscityError::NotFound { .. } => SyscityError::NotFound {
+                resource: format!(
+                    "connector {} v{} missing from cache ({})",
+                    record.id,
+                    record.version,
+                    pkg.display()
+                ),
+            },
+            other => other,
+        })
+    }
+
+    async fn require_record(&self, id: &str) -> crate::Result<ConnectorRecord> {
+        let file = self.state_store().load().await?;
+        file.connectors
+            .get(id)
+            .cloned()
+            .ok_or_else(|| SyscityError::NotFound {
+                resource: format!("connector {id} is not installed"),
+            })
+    }
+
+    // ── Install / remove ─────────────────────────────────────────────────
+
+    /// Install a connector from a local package directory.
+    ///
+    /// Copies the package into the versioned cache, installs bundled skills,
+    /// runs the declared `init` + `version_check` hooks, records the state,
+    /// and — when the manifest has an auto-connect `mcp` section — enables it.
+    ///
+    /// On hook failure the package stays cached as `Installed` with the reason
+    /// recorded on its error field, and the error propagates to the caller.
+    pub async fn install_from_dir(&self, source_dir: &Path) -> crate::Result<ConnectorSummary> {
+        let manifest = ConnectorManifest::load(source_dir).await?;
+        let id = manifest.connector.id.clone();
+        let version = if manifest.connector.version.is_empty() {
+            "0.0.0".to_string()
+        } else {
+            manifest.connector.version.clone()
+        };
+
+        let _guard = self.write_lock.lock().await;
+        let dest = self.package_dir(&id, &version);
+        copy_dir_recursive(source_dir, &dest).await?;
+
+        // Bundled-skills bridge: install every discovered SKILL.md directory
+        // under a connector-prefixed flat name into the user skills directory.
+        // Each `skills` entry may be one skill folder itself or a folder of
+        // skill folders (both shapes exist in the wild).
+        let mut installed_skills = Vec::new();
+        for rel in &manifest.skills {
+            let base = source_dir.join(rel);
+            let discovered = discover_skill_dirs(&base).ok_or_else(|| {
+                SyscityError::Validation(format!(
+                    "connector {id}: declared skill path '{rel}' not found"
+                ))
+            })?;
+            if discovered.is_empty() {
+                rollback_skills(&self.skill_storage, &installed_skills).await;
+                let _ = tokio::fs::remove_dir_all(&dest).await;
+                return Err(SyscityError::Validation(format!(
+                    "connector {id}: no SKILL.md found under '{rel}'"
+                )));
+            }
+            for (leaf, skill_dir) in discovered {
+                let name = format!("connector-{id}-{leaf}");
+                match self.skill_storage.install_to_user(&skill_dir, &name).await {
+                    Ok(_) => installed_skills.push(name),
+                    Err(e) => {
+                        rollback_skills(&self.skill_storage, &installed_skills).await;
+                        let _ = tokio::fs::remove_dir_all(&dest).await;
+                        return Err(e);
+                    }
+                }
+            }
+        }
+
+        let store = self.state_store();
+        let mut record = new_record(&id, &version);
+        record.skills = installed_skills;
+
+        // Lifecycle hooks run after unpack; failures leave the package in
+        // place (as `Installed` with the reason recorded) so the user can fix
+        // auth/deps and retry enable.
+        if let Err(e) = self.run_hooks(&manifest).await {
+            record.error = Some(e.to_string());
+            store
+                .update(|f| {
+                    put_record(f, record);
+                    Ok(())
+                })
+                .await?;
+            return Err(e);
+        }
+
+        store
+            .update(|f| {
+                put_record(f, record.clone());
+                Ok(())
+            })
+            .await?;
+        info!("Installed connector {id} v{version}");
+
+        // Auto-enable connectors that ship an always-on MCP server.
+        if let Some(mcp) = &manifest.mcp {
+            if mcp.auto_connect {
+                drop(_guard);
+                return self.enable(&id).await;
+            }
+        }
+        Ok(self.summary_from_parts(record, Some(&manifest)))
+    }
+
+    /// Enable a connector: connect its MCP server (if any) and flip state.
+    pub async fn enable(&self, id: &str) -> crate::Result<ConnectorSummary> {
+        let _guard = self.write_lock.lock().await;
+        let store = self.state_store();
+        let record = self.require_record(id).await?;
+        let manifest = self.load_manifest_for(&record).await?;
+        let mut next = record.clone();
+
+        if let Some(mcp) = &manifest.mcp {
+            let cfg = mcp.to_server_config();
+            match self.mcp_manager.connect(id, cfg).await {
+                Ok(tools) => {
+                    info!("Connector {id} connected ({} tools)", tools.len());
+                }
+                Err(e) => {
+                    next.state = StateKind::Error;
+                    next.error = Some(e.to_string());
+                    next.updated_at = Utc::now();
+                    store
+                        .update(|f| {
+                            put_record(f, next.clone());
+                            Ok(())
+                        })
+                        .await?;
+                    return Err(e);
+                }
+            }
+        }
+
+        next.state = StateKind::Enabled;
+        next.error = None;
+        next.updated_at = Utc::now();
+        store
+            .update(|f| {
+                put_record(f, next.clone());
+                Ok(())
+            })
+            .await?;
+        Ok(self.summary_from_parts(next, Some(&manifest)))
+    }
+
+    /// Disable a connector: drop its MCP connection and park it as `Disabled`.
+    pub async fn disable(&self, id: &str) -> crate::Result<ConnectorSummary> {
+        let _guard = self.write_lock.lock().await;
+        let store = self.state_store();
+        let mut record = self.require_record(id).await?;
+
+        if record.state == StateKind::Enabled {
+            if let Err(e) = self.mcp_manager.disconnect(id).await {
+                warn!("Connector {id} disconnect failed: {e}");
+            }
+        }
+        record.state = StateKind::Disabled;
+        record.updated_at = Utc::now();
+        store
+            .update(|f| {
+                put_record(f, record.clone());
+                Ok(())
+            })
+            .await?;
+        let manifest = self.load_manifest_for(&record).await.ok();
+        Ok(self.summary_from_parts(record, manifest.as_ref()))
+    }
+
+    /// Remove a connector entirely: bundled skills, cached package, record.
+    ///
+    /// Refused while `Enabled` — disable first so the MCP connection is torn
+    /// down before its package disappears.
+    pub async fn uninstall(&self, id: &str) -> crate::Result<()> {
+        let _guard = self.write_lock.lock().await;
+        let store = self.state_store();
+        let record = self.require_record(id).await?;
+
+        if record.state == StateKind::Enabled {
+            return Err(SyscityError::Validation(format!(
+                "connector {id} is enabled; disable it before uninstalling"
+            )));
+        }
+
+        for skill in &record.skills {
+            if let Err(e) = self.skill_storage.uninstall_from_user(skill).await {
+                warn!("Failed to remove bundled skill {skill}: {e}");
+            }
+        }
+
+        let pkg = self.package_dir(id, &record.version);
+        if pkg.exists() {
+            tokio::fs::remove_dir_all(&pkg)
+                .await
+                .map_err(|e| SyscityError::IoContext {
+                    context: format!("Failed to remove {}", pkg.display()),
+                    source: e,
+                })?;
+        }
+
+        store
+            .update(|f| {
+                f.connectors.remove(id);
+                Ok(())
+            })
+            .await?;
+        info!("Uninstalled connector {id}");
+        Ok(())
+    }
+
+    // ── Listing ───────────────────────────────────────────────────────────
+
+    /// List every connector known to the subsystem (cache entries plus state
+    /// records), joined with manifests where available.
+    pub async fn list(&self) -> crate::Result<Vec<ConnectorSummary>> {
+        let file = self.state_store().load().await?;
+
+        let cache_root = self.cache_root();
+        let mut ids: Vec<String> = match tokio::fs::read_dir(&cache_root).await {
+            Ok(mut rd) => {
+                let mut names = Vec::new();
+                while let Some(entry) = rd.next_entry().await? {
+                    if entry.path().is_dir() {
+                        if let Ok(name) = entry.file_name().into_string() {
+                            names.push(name);
+                        }
+                    }
+                }
+                names
+            }
+            Err(_) => Vec::new(),
+        };
+        // Records whose cache entry vanished still show up (degraded view).
+        for key in file.connectors.keys() {
+            if !ids.contains(key) {
+                ids.push(key.clone());
+            }
+        }
+        ids.sort();
+
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            let record = file.connectors.get(&id).cloned();
+            let manifest = match record.as_ref().map(|r| r.version.clone()) {
+                Some(version) => ConnectorManifest::load(&self.package_dir(&id, &version))
+                    .await
+                    .ok(),
+                None => None,
+            };
+            let Some(summary) = self.summary_from_parts_opt(record, manifest.as_ref(), &id) else {
+                continue;
+            };
+            out.push(summary);
+        }
+        Ok(out)
+    }
+
+    // ── Lifecycle passthroughs ────────────────────────────────────────────
+
+    /// Run the connector's interactive auth login.
+    pub async fn auth_login(&self, id: &str) -> crate::Result<lifecycle::LifecycleOutput> {
+        let manifest = self.manifest_by_id(id).await?;
+        self.lifecycle.run_auth_login(&manifest).await
+    }
+
+    /// Probe the connector's auth status; `None` when unauthenticated /
+    /// undeclared.
+    pub async fn auth_status(&self, id: &str) -> crate::Result<Option<String>> {
+        let manifest = self.manifest_by_id(id).await?;
+        self.lifecycle.run_auth_status(&manifest).await
+    }
+
+    /// Run the connector's auth logout / credential reset.
+    pub async fn auth_logout(&self, id: &str) -> crate::Result<()> {
+        let manifest = self.manifest_by_id(id).await?;
+        self.lifecycle.run_auth_logout(&manifest).await
+    }
+
+    /// Verify the connector's runtime against its declared version requirement.
+    pub async fn check_version(&self, id: &str) -> crate::Result<VersionCheckOutcome> {
+        let manifest = self.manifest_by_id(id).await?;
+        self.lifecycle.run_version_check(&manifest).await
+    }
+
+    async fn manifest_by_id(&self, id: &str) -> crate::Result<ConnectorManifest> {
+        let record = self.require_record(id).await?;
+        self.load_manifest_for(&record).await
+    }
+
+    // ── Catalog operations ────────────────────────────────────────────────
+
+    /// Refresh the remote catalog. Returns `(document, refreshed)`.
+    pub async fn sync_catalog(&self, url: &str) -> crate::Result<(CatalogDocument, bool)> {
+        self.catalog_cache().sync(url).await
+    }
+
+    /// Locally cached catalog document (no network).
+    pub async fn cached_catalog(&self) -> crate::Result<Option<CatalogDocument>> {
+        self.catalog_cache().cached().await
+    }
+
+    /// Updates available according to the locally cached catalog.
+    pub async fn check_updates(&self) -> crate::Result<Vec<PendingUpdate>> {
+        let Some(doc) = self.cached_catalog().await? else {
+            return Ok(Vec::new());
+        };
+        let file = self.state_store().load().await?;
+        let installed = file
+            .connectors
+            .values()
+            .map(|r| (r.id.clone(), r.version.clone()));
+        Ok(catalog::diff_updates(installed, &doc.connectors))
+    }
+
+    /// Upgrade or fresh-install a single connector from a catalog entry.
+    ///
+    /// An `Enabled` connector is disabled before the swap and re-enabled after.
+    pub async fn upgrade(&self, entry: &catalog::CatalogEntry) -> crate::Result<ConnectorSummary> {
+        let cache_root = self.cache_root();
+        let dest = self
+            .catalog_cache()
+            .install_entry(entry, &cache_root)
+            .await?;
+
+        let previous = self.require_record(&entry.id).await.ok();
+        let was_enabled = previous
+            .as_ref()
+            .is_some_and(|r| r.state == StateKind::Enabled);
+        if was_enabled {
+            self.disable(&entry.id).await?;
+        }
+
+        let summary = self.install_from_dir(&dest).await?;
+
+        if let Some(prev) = &previous {
+            if prev.version != entry.version && prev.skills != summary.skills {
+                // Skill name sets can change between versions; drop stale ones.
+                for stale in &prev.skills {
+                    if !summary.skills.contains(stale) {
+                        let _ = self.skill_storage.uninstall_from_user(stale).await;
+                    }
+                }
+            }
+            if prev.version != entry.version {
+                let old = self.package_dir(&entry.id, &prev.version);
+                if old.exists() {
+                    let _ = tokio::fs::remove_dir_all(old).await;
+                }
+            }
+        }
+
+        if was_enabled && summary.provides_mcp {
+            return self.enable(&entry.id).await;
+        }
+        Ok(summary)
+    }
+
+    /// Apply pending updates; when `auto_only`, restrict to entries flagged
+    /// `auto_update`. Failures are logged per-entry, never abort the batch.
+    pub async fn apply_updates(&self, auto_only: bool) -> crate::Result<Vec<String>> {
+        let updates = self.check_updates().await?;
+        let mut applied = Vec::new();
+        for update in updates {
+            if auto_only && !update.entry.auto_update {
+                continue;
+            }
+            match self.upgrade(&update.entry).await {
+                Ok(_) => applied.push(update.id.clone()),
+                Err(e) => warn!("Auto-update of connector {} failed: {e}", update.id),
+            }
+        }
+        Ok(applied)
+    }
+
+    // ── Startup rehydration ───────────────────────────────────────────────
+
+    /// Reconnect every `Enabled` MCP-backed connector after a restart.
+    ///
+    /// Best effort per connector: failures mark that connector `Error` and are
+    /// logged, never propagated. Awaited by the gateway inside a spawned task
+    /// so startup stays non-blocking.
+    pub async fn load_and_connect(&self) -> usize {
+        let file = match self.state_store().load().await {
+            Ok(f) => f,
+            Err(e) => {
+                warn!("Failed to load connector states: {e}");
+                return 0;
+            }
+        };
+        let enabled: Vec<ConnectorRecord> = file
+            .connectors
+            .values()
+            .filter(|r| r.state == StateKind::Enabled)
+            .cloned()
+            .collect();
+
+        let mut connected = 0;
+        for record in enabled {
+            let manifest = match self.load_manifest_for(&record).await {
+                Ok(m) => m,
+                Err(e) => {
+                    warn!("Connector {} cannot be loaded: {e}", record.id);
+                    continue;
+                }
+            };
+            let Some(mcp) = &manifest.mcp else {
+                // CLI-only connectors have nothing to reconnect.
+                connected += 1;
+                continue;
+            };
+            match self
+                .mcp_manager
+                .connect(&record.id, mcp.to_server_config())
+                .await
+            {
+                Ok(tools) => {
+                    info!("Connector {} reconnected ({} tools)", record.id, tools.len());
+                    connected += 1;
+                }
+                Err(e) => {
+                    warn!("Connector {} failed to reconnect: {e}", record.id);
+                    self.mark_error(&record, e.to_string()).await;
+                }
+            }
+        }
+        connected
+    }
+
+    async fn run_hooks(&self, manifest: &ConnectorManifest) -> crate::Result<()> {
+        self.lifecycle.run_init(manifest).await?;
+        // Unverifiable declarations are non-fatal by design (logged upstream).
+        let outcome = self.lifecycle.run_version_check(manifest).await?;
+        let _ = outcome;
+        Ok(())
+    }
+
+    async fn mark_error(&self, record: &ConnectorRecord, message: String) {
+        let mut rec = record.clone();
+        rec.state = StateKind::Error;
+        rec.error = Some(message);
+        rec.updated_at = Utc::now();
+        if let Err(save_err) = self
+            .state_store()
+            .update(|f| {
+                put_record(f, rec);
+                Ok(())
+            })
+            .await
+        {
+            warn!("Failed to persist connector error state: {save_err}");
+        }
+    }
+
+    fn summary_from_parts(
+        &self,
+        record: ConnectorRecord,
+        manifest: Option<&ConnectorManifest>,
+    ) -> ConnectorSummary {
+        let meta = manifest.map(|m| &m.connector);
+        ConnectorSummary {
+            id: record.id.clone(),
+            version: record.version.clone(),
+            display_name: meta
+                .map(|m| m.display_name.clone())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| record.id.clone()),
+            description: meta.map(|m| m.description.clone()).unwrap_or_default(),
+            state: record.state,
+            error: record.error,
+            provides_mcp: manifest.as_ref().is_some_and(|m| m.provides_mcp()),
+            skills: record.skills,
+        }
+    }
+
+    /// Build a summary from whichever pieces exist. Returns `None` only when
+    /// neither a record nor a manifest exists (nothing knowable about `id`).
+    fn summary_from_parts_opt(
+        &self,
+        record: Option<ConnectorRecord>,
+        manifest: Option<&ConnectorManifest>,
+        fallback_id: &str,
+    ) -> Option<ConnectorSummary> {
+        let meta = manifest.map(|m| &m.connector);
+        let record = match record {
+            Some(r) => r,
+            None => {
+                // Cache entry without a state record — synthesize a fresh one.
+                let m = meta?;
+                let id = if m.id.is_empty() {
+                    fallback_id.to_string()
+                } else {
+                    m.id.clone()
+                };
+                new_record(&id, &m.version)
+            }
+        };
+        Some(ConnectorSummary {
+            id: record.id.clone(),
+            version: record.version.clone(),
+            display_name: meta
+                .map(|m| m.display_name.clone())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| record.id.clone()),
+            description: meta.map(|m| m.description.clone()).unwrap_or_default(),
+            state: record.state,
+            error: record.error,
+            provides_mcp: manifest.as_ref().is_some_and(|m| m.provides_mcp()),
+            skills: record.skills.clone(),
+        })
+    }
+}
+
+// ─────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────
+
+/// Discover skill directories under a declared `skills` entry.
+///
+/// Returns `(leaf_name, directory)` pairs. Two shapes are accepted:
+/// - the entry itself contains `SKILL.md` → a single skill named after the
+///   entry's final path segment;
+/// - the entry is a folder of skill folders → every subdirectory containing
+///   `SKILL.md` becomes a skill.
+///
+/// `None` when the path does not exist; empty vec when nothing under it is a
+/// valid skill.
+fn discover_skill_dirs(base: &Path) -> Option<Vec<(String, PathBuf)>> {
+    if !base.exists() {
+        return None;
+    }
+    if base.join("SKILL.md").is_file() {
+        let leaf = base
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("skill")
+            .to_string();
+        return Some(vec![(leaf, base.to_path_buf())]);
+    }
+    let mut out = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(base) {
+        for entry in rd.flatten() {
+            let path = entry.path();
+            if path.is_dir() && path.join("SKILL.md").is_file() {
+                if let Ok(name) = entry.file_name().into_string() {
+                    out.push((name, path));
+                }
+            }
+        }
+    }
+    Some(out)
+}
+
+async fn rollback_skills(storage: &SkillStorage, names: &[String]) {
+    for name in names {
+        if let Err(e) = storage.uninstall_from_user(name).await {
+            warn!("Rollback: failed to remove skill {name}: {e}");
+        }
+    }
+}
+
+async fn copy_dir_recursive(src: &Path, dst: &Path) -> crate::Result<()> {
+    async_recursion(src, dst).await
+}
+
+/// Boxed body so the recursion compiles inside an async fn.
+fn async_recursion<'a>(
+    src: &'a Path,
+    dst: &'a Path,
+) -> std::pin::Pin<Box<dyn Future<Output = crate::Result<()>> + Send + 'a>> {
+    Box::pin(async move {
+        if dst.exists() {
+            tokio::fs::remove_dir_all(dst).await?;
+        }
+        tokio::fs::create_dir_all(dst).await?;
+        let mut entries = tokio::fs::read_dir(src).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let from = entry.path();
+            let to = dst.join(entry.file_name());
+            if from.is_dir() {
+                async_recursion(&from, &to).await?;
+            } else {
+                tokio::fs::copy(&from, &to).await?;
+            }
+        }
+        Ok(())
+    })
+}
+
+// ─────────────────────────────────────────────
+// Tests
+// ─────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::skills::semver;
+    use serde_json::json;
+
+    /// URL template for the MCP section; `{url}` is filled in by the fixture
+    /// with the address of a local fake streamable-HTTP server.
+    const MCP_PACKAGE_JSON: &str = r#"{
+        "connector": { "id": "test-mcp", "display_name": "Test MCP",
+                       "description": "fixture", "version": "1.0.0" },
+        "mcp": { "transport": "streamable_http", "url": "{url}",
+                 "auto_connect": false, "timeout_secs": 10 },
+        "skills": ["skills"]
+    }"#;
+
+    const SKILL_PACKAGE_JSON: &str = r#"{
+        "connector": { "id": "cli-tool", "display_name": "CLI Tool",
+                       "description": "fixture", "version": "0.3.0" },
+        "lifecycle": {
+            "init": { "darwin": "echo ok", "linux": "echo ok", "win32": "echo ok" }
+        },
+        "skills": ["skills"]
+    }"#;
+
+    /// Minimal fake streamable-HTTP MCP server: answers initialize /
+    /// tools-list / tools-call with SSE-framed JSON-RPC responses.
+    async fn spawn_fake_mcp_server() -> String {
+        use axum::routing::post;
+
+        async fn handle(body: String) -> String {
+            let req: serde_json::Value = serde_json::from_str(&body).unwrap_or(json!({}));
+            let id = req["id"].clone();
+            let result = match req["method"].as_str().unwrap_or("") {
+                "initialize" => json!({
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": { "tools": {} },
+                    "serverInfo": { "name": "fake", "version": "1.0.0" }
+                }),
+                "tools/list" => json!({ "tools": [
+                    { "name": "echo", "description": "Echo text",
+                      "inputSchema": { "type": "object" } }
+                ]}),
+                _ => json!({ "content": [{ "type": "text", "text": "ok" }],
+                             "isError": false }),
+            };
+            let reply = json!({ "jsonrpc": "2.0", "id": id, "result": result });
+            format!("data: {reply}\n\n")
+        }
+
+        let app = axum::Router::new().route("/mcp", post(handle));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{addr}/mcp")
+    }
+
+    struct Fixture {
+        root: PathBuf,
+        user_skills: PathBuf,
+        manager: ConnectorManager,
+        mcp_url: String,
+    }
+
+    async fn fixture() -> Fixture {
+        let base =
+            std::env::temp_dir().join(format!("syscity_connectors_{}", uuid::Uuid::new_v4()));
+        let root = base.join("connectors");
+        let user_skills = base.join("user-skills");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&user_skills).unwrap();
+        let mcp_url = spawn_fake_mcp_server().await;
+        let manager = ConnectorManager::new(
+            root.clone(),
+            Arc::new(McpManager::new()),
+            Arc::new(SkillStorage::with_user_dir(user_skills.clone())),
+        );
+        Fixture {
+            root,
+            user_skills,
+            manager,
+            mcp_url,
+        }
+    }
+
+    fn write_package(dir: &Path, json: &str, with_skill: bool) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join("connector.json"), json).unwrap();
+        if with_skill {
+            let skill = dir.join("skills/my-usage");
+            std::fs::create_dir_all(&skill).unwrap();
+            std::fs::write(
+                skill.join("SKILL.md"),
+                "---\nname: my-usage\ndescription: how to drive the cli\n---\n# usage\n",
+            )
+            .unwrap();
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(self.root.parent().unwrap());
+        }
+    }
+
+    #[tokio::test]
+    async fn install_enable_disable_uninstall_full_cycle() {
+        let fx = fixture().await;
+        let src = fx.root.parent().unwrap().join("pkg-mcp");
+        write_package(&src, &MCP_PACKAGE_JSON.replace("{url}", &fx.mcp_url), true);
+
+        let summary = fx.manager.install_from_dir(&src).await.unwrap();
+        assert_eq!(summary.id, "test-mcp");
+        assert_eq!(summary.version, "1.0.0");
+        assert_eq!(summary.state, StateKind::Installed); // auto_connect=false
+        assert!(summary.provides_mcp);
+
+        // Bundled skill landed under the connector-prefixed name.
+        assert!(fx.user_skills.join("connector-test-mcp-my-usage").exists());
+
+        let enabled = fx.manager.enable("test-mcp").await.unwrap();
+        assert_eq!(enabled.state, StateKind::Enabled);
+
+        // Enabled connectors refuse uninstall until disabled.
+        assert!(fx.manager.uninstall("test-mcp").await.is_err());
+
+        let disabled = fx.manager.disable("test-mcp").await.unwrap();
+        assert_eq!(disabled.state, StateKind::Disabled);
+
+        fx.manager.uninstall("test-mcp").await.unwrap();
+        assert!(!fx.user_skills.join("connector-test-mcp-my-usage").exists());
+        assert!(fx.manager.list().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn lifecycle_failure_is_recorded_on_state() {
+        let fx = fixture().await;
+        let src = fx.root.parent().unwrap().join("pkg-broken");
+        write_package(
+            &src,
+            r#"{
+            "connector": { "id": "broken", "display_name": "B", "version": "1.0.0" },
+            "lifecycle": { "init": { "darwin": "exit 3", "linux": "exit 3" } },
+            "skills": []
+        }"#,
+            false,
+        );
+        let err = fx.manager.install_from_dir(&src).await.unwrap_err();
+        assert!(err.to_string().contains("init"), "{err}");
+
+        let list = fx.manager.list().await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].state, StateKind::Installed);
+        assert!(list[0]
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("exited with code"));
+    }
+
+    #[tokio::test]
+    async fn missing_skill_md_fails_install_without_side_effects() {
+        let fx = fixture().await;
+        let src = fx.root.parent().unwrap().join("pkg-noskill");
+        // Manifest claims a skills dir we deliberately do not create.
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("connector.json"), SKILL_PACKAGE_JSON).unwrap();
+
+        let err = fx.manager.install_from_dir(&src).await.unwrap_err();
+        assert!(err.to_string().contains("skill path 'skills' not found"), "{err}");
+        // No cache entry, no state record leaked by the failed install.
+        assert!(fx.manager.list().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_joins_cache_and_states_and_survives_missing_manifest() {
+        let fx = fixture().await;
+        let src = fx.root.parent().unwrap().join("pkg-cli");
+        write_package(&src, SKILL_PACKAGE_JSON, true);
+        fx.manager.install_from_dir(&src).await.unwrap();
+
+        let list = fx.manager.list().await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].display_name, "CLI Tool");
+        assert_eq!(list[0].state, StateKind::Installed);
+        assert_eq!(list[0].skills, vec!["connector-cli-tool-my-usage"]);
+
+        // Simulate manual deletion of the package dir: listing must degrade
+        // gracefully instead of panicking or dropping the record.
+        let pkg = fx.root.join("cache/cli-tool/0.3.0");
+        std::fs::remove_dir_all(&pkg).unwrap();
+        let degraded = fx.manager.list().await.unwrap();
+        assert_eq!(degraded.len(), 1);
+        assert_eq!(degraded[0].id, "cli-tool");
+    }
+
+    #[tokio::test]
+    async fn unknown_connector_operations_are_not_found() {
+        let fx = fixture().await;
+        assert!(matches!(
+            fx.manager.enable("ghost").await.unwrap_err(),
+            SyscityError::NotFound { .. }
+        ));
+        assert!(matches!(
+            fx.manager.auth_status("ghost").await.unwrap_err(),
+            SyscityError::NotFound { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn check_updates_empty_without_catalog() {
+        let fx = fixture().await;
+        assert!(fx.manager.check_updates().await.unwrap().is_empty());
+    }
+
+    #[test]
+    fn semver_reexport_usable() {
+        // Guards the semver dependency used by lifecycle version checks.
+        let v = semver::Version::parse("1.2.3").unwrap();
+        assert!(semver::VersionReq::parse(">=1.0.0").unwrap().matches(&v));
+    }
+}

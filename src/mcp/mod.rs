@@ -7,7 +7,13 @@
 //! - `stdio` – spawn a subprocess and communicate over stdin/stdout
 //! - `sse` – connect to an HTTP server via Server-Sent Events
 //! - `streamable_http` – POST requests with SSE response bodies
-// INVARIANTS-NONE: server registry rebuilds wholesale on reconnect; no durable local state between sessions.
+//!
+//! The [`connectors`] submodule layers marketplace-style packaging on top:
+//! versioned packages with declarative lifecycle hooks, bundled skills,
+//! a persistent state machine, and remote catalog sync. Unlike the rest of
+//! this module it owns durable local state (`~/.syscity/connectors/`).
+// INVARIANTS-NONE: server registry rebuilds wholesale on reconnect; durable
+// state lives only under connectors/ (states.json), owned by that submodule.
 
 mod client;
 mod config;
@@ -15,6 +21,8 @@ mod manager;
 mod oauth;
 mod tools;
 mod types;
+
+pub mod connectors;
 
 /// The default MCP presets embedded in the binary.
 pub const DEFAULT_PRESETS_TOML: &str = include_str!("presets.toml");
@@ -25,6 +33,7 @@ pub const DEFAULT_PRESETS_TOML: &str = include_str!("presets.toml");
 
 pub use client::McpClient;
 pub use config::{McpConfig, McpServerConfig, McpSettings, McpTransport};
+pub use connectors::{catalog as connector_catalog, ConnectorManager, ConnectorSummary};
 pub use manager::{McpConnectionMeta, McpManager};
 pub use oauth::{
     mcp_tokens_dir, migrate_legacy_mcp_tokens, token_path_for, OAuthManager, OAuthTokens,

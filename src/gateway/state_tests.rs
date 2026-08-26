@@ -164,6 +164,14 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
         tools: ToolState {
             registry: Arc::new(ToolRegistry::new()),
             mcp_manager: Arc::new(McpManager::new()),
+            connector_manager: Arc::new(crate::mcp::ConnectorManager::new(
+                std::env::temp_dir().join(format!("syscity_state_test_{}", uuid::Uuid::new_v4())),
+                Arc::new(McpManager::new()),
+                Arc::new(crate::skills::SkillStorage::with_user_dir(
+                    std::env::temp_dir()
+                        .join(format!("syscity_state_test_sk_{}", uuid::Uuid::new_v4())),
+                )),
+            )),
             approval_queue: Arc::new(ApprovalQueue::new()),
             ask_queue: Arc::new(crate::tools::ask_user::AskQueue::new()),
             skills_manager,

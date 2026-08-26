@@ -455,6 +455,7 @@ impl Gateway {
             tools: ToolState {
                 registry: tools_init.tool_registry.clone(),
                 mcp_manager: tools_init.mcp_manager.clone(),
+                connector_manager: tools_init.connector_manager.clone(),
                 approval_queue: tools_init.approval_queue.clone(),
                 ask_queue: tools_init.ask_queue.clone(),
                 skills_manager: skills_manager.clone(),
