@@ -885,7 +885,11 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
         .route("/live", get(super::live_handler))
         .route("/api/v1/health", get(super::health_handler))
         .route("/api/v1/metrics", get(super::metrics_handler))
-        .route("/api/v1/artifacts/*path", get(super::artifact_handler));
+        .route("/api/v1/artifacts/*path", get(super::artifact_handler))
+        .route(
+            "/onboarding",
+            get(super::onboarding_status_handler).post(super::onboarding_apply_handler),
+        );
 
     // Authenticated essential APIs (auth required)
     let essential_auth_router = Router::new()
@@ -958,6 +962,7 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
         .route("/api/v1/update/status", get(super::update_status_handler))
         .route("/api/v1/update", post(super::trigger_update_handler))
         .route("/api/v1/update/progress", get(super::update_progress_handler))
+        .route("/api/traces/:turn_id", get(super::trace_replay_handler))
         .layer(from_fn_with_state(state.clone(), super::middleware::auth_middleware));
 
     let essential_router = essential_public_router.merge(essential_auth_router);

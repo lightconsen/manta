@@ -10,7 +10,8 @@
 //! - File-backed storage for large artifacts
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -317,15 +318,120 @@ impl ArtifactStore {
         }
     }
 
-    /// Initialize directories.
+    /// Initialize directories and load the persistent index (if present).
     pub async fn init(&self) -> std::io::Result<()> {
         tokio::fs::create_dir_all(&self.root_dir).await?;
+        let path = self.index_path();
+        if path.exists() {
+            self.load_index(&path);
+        }
         debug!("Artifact store initialized at {:?}", self.root_dir);
         Ok(())
     }
 
+    /// Path to the append-only metadata index (one JSON `Artifact` per line).
+    fn index_path(&self) -> PathBuf {
+        self.root_dir.join("index.jsonl")
+    }
+
+    /// Load artifacts from `index.jsonl`, skipping and warning on corrupt lines.
+    fn load_index(&self, path: &Path) {
+        let file = match std::fs::File::open(path) {
+            Ok(file) => file,
+            Err(e) => {
+                warn!("Failed to open artifact index {}: {}", path.display(), e);
+                return;
+            }
+        };
+        let mut artifacts = self.artifacts.lock().unwrap_or_else(|e| e.into_inner());
+        let mut corrupt = 0usize;
+        for line in BufReader::new(file).lines() {
+            let line = match line {
+                Ok(line) => line,
+                Err(e) => {
+                    corrupt += 1;
+                    warn!("Failed to read artifact index line: {}", e);
+                    continue;
+                }
+            };
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            match serde_json::from_str::<Artifact>(line) {
+                Ok(artifact) => {
+                    let session_id = artifact.session_id.clone();
+                    artifacts.entry(session_id).or_default().push(artifact);
+                }
+                Err(e) => {
+                    corrupt += 1;
+                    warn!("Skipping corrupt artifact index line: {}", e);
+                }
+            }
+        }
+        if corrupt > 0 {
+            warn!("Skipped {} corrupt lines from artifact index {}", corrupt, path.display());
+        }
+    }
+
+    /// Append a single serialized `Artifact` line to the index.
+    fn append_index_line(&self, line: &str) {
+        let path = self.index_path();
+        let mut file = match std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&path)
+        {
+            Ok(file) => file,
+            Err(e) => {
+                warn!("Failed to open artifact index {}: {}", path.display(), e);
+                return;
+            }
+        };
+        if let Err(e) = writeln!(file, "{}", line) {
+            warn!("Failed to append to artifact index {}: {}", path.display(), e);
+        }
+    }
+
+    /// Rewrite the index from the current in-memory contents (compact).
+    fn rewrite_index(&self, artifacts: &HashMap<String, Vec<Artifact>>) {
+        let path = self.index_path();
+        let file = match std::fs::File::create(&path) {
+            Ok(file) => file,
+            Err(e) => {
+                warn!("Failed to rewrite artifact index {}: {}", path.display(), e);
+                return;
+            }
+        };
+        let mut writer = BufWriter::new(file);
+        for artifact in artifacts.values().flatten() {
+            let line = match serde_json::to_string(artifact) {
+                Ok(line) => line,
+                Err(e) => {
+                    warn!("Failed to serialize artifact for index rewrite: {}", e);
+                    continue;
+                }
+            };
+            if let Err(e) = writeln!(writer, "{}", line) {
+                warn!("Failed to write artifact index {}: {}", path.display(), e);
+                return;
+            }
+        }
+        if let Err(e) = writer.flush() {
+            warn!("Failed to flush artifact index {}: {}", path.display(), e);
+        }
+    }
+
     /// Add an artifact to a session.
     pub fn add(&self, artifact: Artifact) {
+        // Serialize before moving `artifact` into the in-memory map.
+        let index_line = match serde_json::to_string(&artifact) {
+            Ok(line) => Some(line),
+            Err(e) => {
+                warn!("Failed to serialize artifact for index: {}", e);
+                None
+            }
+        };
         let mut artifacts = self.artifacts.lock().unwrap_or_else(|e| e.into_inner());
         let id = artifact.id.clone();
         let session_id = artifact.session_id.clone();
@@ -336,7 +442,11 @@ impl ArtifactStore {
         if is_new {
             self.evict_lru(&mut artifacts, &session_id);
         }
+        drop(artifacts);
         debug!("Added artifact '{}' to session {}", id, session_id);
+        if let Some(line) = index_line {
+            self.append_index_line(&line);
+        }
     }
 
     /// Get all artifacts for a session.
@@ -374,17 +484,51 @@ impl ArtifactStore {
         result
     }
 
+    /// Search artifacts across all sessions by case-insensitive substring match.
+    ///
+    /// Matches against `title`, `tags`, `mime_type`, `language`, and
+    /// `session_id`. Results are returned in descending `created_at` order.
+    pub fn search(&self, query: &str) -> Vec<Artifact> {
+        let needle = query.to_lowercase();
+        let artifacts = self.artifacts.lock().unwrap_or_else(|e| e.into_inner());
+        let mut results: Vec<Artifact> = artifacts
+            .values()
+            .flatten()
+            .filter(|a| {
+                a.title.to_lowercase().contains(&needle)
+                    || a.session_id.to_lowercase().contains(&needle)
+                    || a.language
+                        .as_deref()
+                        .is_some_and(|s| s.to_lowercase().contains(&needle))
+                    || a.mime_type
+                        .as_deref()
+                        .is_some_and(|s| s.to_lowercase().contains(&needle))
+                    || a.tags
+                        .as_ref()
+                        .is_some_and(|tags| tags.iter().any(|t| t.to_lowercase().contains(&needle)))
+            })
+            .cloned()
+            .collect();
+        results.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        results
+    }
+
     /// Remove a specific artifact.
     pub fn remove(&self, session_id: &str, artifact_id: &str) -> Option<Artifact> {
         let mut artifacts = self.artifacts.lock().unwrap_or_else(|e| e.into_inner());
+        let mut removed = None;
         if let Some(list) = artifacts.get_mut(session_id) {
             let pos = list.iter().position(|a| a.id == artifact_id);
             if let Some(pos) = pos {
-                return Some(list.remove(pos));
+                removed = Some(list.remove(pos));
+                self.rewrite_index(&artifacts);
             }
         }
-        self.touch_session(session_id);
-        None
+        drop(artifacts);
+        if removed.is_none() {
+            self.touch_session(session_id);
+        }
+        removed
     }
 
     /// Remove all artifacts for a session (cleanup on session end).
@@ -393,6 +537,7 @@ impl ArtifactStore {
         let removed = artifacts.remove(session_id).unwrap_or_default();
         let mut last = self.last_accessed.lock().unwrap_or_else(|e| e.into_inner());
         last.remove(session_id);
+        self.rewrite_index(&artifacts);
         info!("Cleared {} artifacts for session {}", removed.len(), session_id);
         removed
     }
@@ -527,5 +672,120 @@ mod tests {
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("main.rs"));
         assert!(content.contains("Notes"));
+    }
+
+    fn at(secs: i64) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_persistence_roundtrip() {
+        let tmp = TempDir::new().unwrap();
+        let store = ArtifactStore::new(tmp.path());
+        store.init().await.unwrap();
+        store.add(Artifact::code("a1", "s1", "main.rs", "rust", "fn main() {}"));
+        store.add(Artifact::document("a2", "s1", "README", "Hello"));
+
+        // A fresh store over the same directory should reload the index.
+        let store2 = ArtifactStore::new(tmp.path());
+        store2.init().await.unwrap();
+        assert_eq!(store2.get_for_session("s1").len(), 2);
+        assert!(store2.get("s1", "a1").is_some());
+        assert!(store2.get("s1", "a2").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_remove_and_clear_rewrite_index() {
+        let tmp = TempDir::new().unwrap();
+        let store = ArtifactStore::new(tmp.path());
+        store.init().await.unwrap();
+        store.add(Artifact::code("a1", "s1", "main.rs", "rust", "fn main() {}"));
+        store.add(Artifact::document("a2", "s1", "README", "Hello"));
+        store.add(Artifact::link("a3", "s2", "Docs", "https://example.com"));
+
+        store.remove("s1", "a1");
+
+        let store2 = ArtifactStore::new(tmp.path());
+        store2.init().await.unwrap();
+        assert!(store2.get("s1", "a1").is_none());
+        assert!(store2.get("s1", "a2").is_some());
+        assert_eq!(store2.list_all().len(), 2);
+
+        store2.clear_session("s1");
+
+        let store3 = ArtifactStore::new(tmp.path());
+        store3.init().await.unwrap();
+        assert_eq!(store3.list_all().len(), 1);
+        assert!(store3.get("s1", "a2").is_none());
+        assert!(store3.get("s2", "a3").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_search_filtering() {
+        let tmp = TempDir::new().unwrap();
+        let store = ArtifactStore::new(tmp.path());
+        store.init().await.unwrap();
+
+        let mut a1 =
+            Artifact::code("a1", "s1", "Auth Service", "rust", "fn main() {}").with_tag("backend");
+        a1.created_at = at(1_000_000);
+        store.add(a1);
+
+        let mut a2 = Artifact::document("a2", "s2", "README", "setup").with_tag("docs");
+        a2.created_at = at(2_000_000);
+        store.add(a2);
+
+        let mut a3 = Artifact::link("a3", "s2", "Docs link", "https://example.com");
+        a3.created_at = at(3_000_000);
+        store.add(a3);
+
+        let mut a4 = Artifact::data("a4", "s3", "Metrics", "{}");
+        a4.created_at = at(4_000_000);
+        store.add(a4);
+
+        // Case-insensitive title match.
+        assert_eq!(store.search("AUTH").len(), 1);
+        assert_eq!(store.search("AUTH")[0].id, "a1");
+
+        // Tag match.
+        assert_eq!(store.search("backend")[0].id, "a1");
+
+        // Language match.
+        assert_eq!(store.search("RUST")[0].id, "a1");
+
+        // MIME type match.
+        assert_eq!(store.search("application/json")[0].id, "a4");
+
+        // Session id match, newest first.
+        let by_session = store.search("s2");
+        assert_eq!(by_session.len(), 2);
+        assert_eq!(by_session[0].id, "a3");
+        assert_eq!(by_session[1].id, "a2");
+
+        // Title + tag match, ordered by created_at desc.
+        let by_docs = store.search("docs");
+        assert_eq!(by_docs.len(), 2);
+        assert_eq!(by_docs[0].id, "a3");
+        assert_eq!(by_docs[1].id, "a2");
+    }
+
+    #[tokio::test]
+    async fn test_init_skips_corrupt_lines() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        std::fs::create_dir_all(dir).unwrap();
+        let good = Artifact::code("a1", "s1", "main.rs", "rust", "fn main() {}");
+        let index = dir.join("index.jsonl");
+        std::fs::write(
+            &index,
+            format!("{}\nnot-json\n{}\n\n", serde_json::to_string(&good).unwrap(), "{\"id\": 42}",),
+        )
+        .unwrap();
+
+        let store = ArtifactStore::new(dir);
+        store.init().await.unwrap();
+        let all = store.list_all();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].id, "a1");
     }
 }

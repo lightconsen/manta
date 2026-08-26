@@ -15,8 +15,8 @@ use crate::agent::turns::ToolCallRecord;
 use crate::providers::Usage;
 
 use super::record::{
-    ErrorSource, LlmRoundRecord, ObservedError, ObservedToolCall, ObservedUsage, TurnEndState,
-    TurnRecord, SCHEMA_VERSION,
+    json_value_or_string, ErrorSource, FullTraceEvent, LlmRoundRecord, ObservedError,
+    ObservedToolCall, ObservedUsage, TurnEndState, TurnRecord, SCHEMA_VERSION,
 };
 use super::writer::TurnMetricsWriter;
 use super::TurnMetricsSink;
@@ -28,6 +28,7 @@ struct OpenRound {
     round: u32,
     provider: String,
     model: String,
+    input: Option<String>,
     started_at: String,
     start: Instant,
     ttft_ms: Option<u64>,
@@ -48,6 +49,8 @@ pub struct TurnMetricsCollector {
     user_message: String,
     partial_text: Arc<Mutex<String>>,
     partial_reasoning: Arc<Mutex<String>>,
+    /// Complete (untruncated) streamed text for the current open round.
+    full_text: Arc<Mutex<String>>,
     rounds: Vec<LlmRoundRecord>,
     open_round: Option<OpenRound>,
     tools: Vec<ObservedToolCall>,
@@ -111,6 +114,7 @@ impl TurnMetricsCollector {
             user_message,
             partial_text: Arc::new(Mutex::new(String::new())),
             partial_reasoning: Arc::new(Mutex::new(String::new())),
+            full_text: Arc::new(Mutex::new(String::new())),
             rounds: Vec::new(),
             open_round: None,
             tools: Vec::new(),
@@ -157,6 +161,10 @@ impl TurnMetricsCollector {
     /// Append a streamed text delta (abort fallback content).
     pub fn push_text_delta(&self, delta: &str) {
         Self::push_partial(&self.partial_text, delta);
+        // Also accumulate the complete (untruncated) text for the full trace.
+        if let Ok(mut s) = self.full_text.lock() {
+            s.push_str(delta);
+        }
     }
 
     /// Append a streamed reasoning delta.
@@ -165,17 +173,22 @@ impl TurnMetricsCollector {
     }
 
     /// Begin a new LLM round. Defensively closes any prior open round.
-    pub fn begin_round(&mut self, provider: &str, model: &str) {
+    pub fn begin_round(&mut self, provider: &str, model: &str, input: Option<String>) {
         if self.open_round.is_some() {
             self.end_round(None, Some("interrupted".to_string()));
         }
         if self.model.is_empty() {
             self.model = model.to_string();
         }
+        // Reset the per-round full-text buffer for the incoming round.
+        if let Ok(mut s) = self.full_text.lock() {
+            s.clear();
+        }
         self.open_round = Some(OpenRound {
             round: self.rounds.len() as u32,
             provider: provider.to_string(),
             model: model.to_string(),
+            input,
             started_at: chrono::Local::now().to_rfc3339(),
             start: Instant::now(),
             ttft_ms: None,
@@ -191,43 +204,94 @@ impl TurnMetricsCollector {
         }
     }
 
+    /// Drain the complete (untruncated) streamed text for the open round,
+    /// returning `None` when empty and resetting the buffer for the next round.
+    fn take_full_text(&self) -> Option<String> {
+        match self.full_text.lock() {
+            Ok(mut guard) => {
+                let text = std::mem::take(&mut *guard);
+                if text.is_empty() {
+                    None
+                } else {
+                    Some(text)
+                }
+            }
+            Err(_) => None,
+        }
+    }
+
+    /// Build a summary round record from a closed [`OpenRound`].
+    fn build_round_record(
+        open: OpenRound,
+        usage: Option<ObservedUsage>,
+        finish_reason: Option<String>,
+        error: Option<String>,
+        output: Option<String>,
+    ) -> LlmRoundRecord {
+        LlmRoundRecord {
+            round: open.round,
+            provider: open.provider,
+            model: open.model,
+            started_at: open.started_at,
+            duration_ms: open.start.elapsed().as_millis() as u64,
+            ttft_ms: open.ttft_ms,
+            usage,
+            finish_reason,
+            error,
+            input: open.input,
+            output,
+        }
+    }
+
+    /// Build the untruncated full-trace round event for a summary round record.
+    fn full_round_event(rec: &LlmRoundRecord) -> FullTraceEvent {
+        FullTraceEvent::Round {
+            round: rec.round,
+            request: rec.input.as_deref().map(json_value_or_string),
+            response: rec.output.clone(),
+            usage: rec.usage,
+            finish_reason: rec.finish_reason.clone(),
+            error: rec.error.clone(),
+        }
+    }
+
+    /// Push a round record into the summary vector and append its full trace.
+    fn push_round(&mut self, rec: LlmRoundRecord) {
+        let full = Self::full_round_event(&rec);
+        self.rounds.push(rec);
+        self.append_full_event(&full);
+    }
+
+    /// Append a full-trace event to `full.json` immediately (true append-only).
+    fn append_full_event(&self, event: &FullTraceEvent) {
+        if let Err(e) = self.writer.append_event(&self.turn_id, event) {
+            super::WRITE_FAILURES.fetch_add(1, Ordering::Relaxed);
+            warn!("Failed to append full trace event for turn {}: {}", self.turn_id, e);
+        }
+    }
+
     /// Close the open round with its usage and finish reason.
     pub fn end_round(&mut self, usage: Option<&Usage>, finish_reason: Option<String>) {
         if let Some(open) = self.open_round.take() {
-            self.rounds.push(LlmRoundRecord {
-                round: open.round,
-                provider: open.provider,
-                model: open.model,
-                started_at: open.started_at,
-                duration_ms: open.start.elapsed().as_millis() as u64,
-                ttft_ms: open.ttft_ms,
-                usage: usage.map(|u| ObservedUsage {
-                    prompt_tokens: u.prompt_tokens,
-                    completion_tokens: u.completion_tokens,
-                    total_tokens: u.total_tokens,
-                    cache_read_tokens: u.cache_read_tokens,
-                    cache_creation_tokens: u.cache_creation_tokens,
-                }),
-                finish_reason,
-                error: None,
+            let output = self.take_full_text();
+            let usage = usage.map(|u| ObservedUsage {
+                prompt_tokens: u.prompt_tokens,
+                completion_tokens: u.completion_tokens,
+                total_tokens: u.total_tokens,
+                cache_read_tokens: u.cache_read_tokens,
+                cache_creation_tokens: u.cache_creation_tokens,
             });
+            let rec = Self::build_round_record(open, usage, finish_reason, None, output);
+            self.push_round(rec);
         }
     }
 
     /// Close the open round as failed.
     pub fn fail_round(&mut self, err: &str) {
         if let Some(open) = self.open_round.take() {
-            self.rounds.push(LlmRoundRecord {
-                round: open.round,
-                provider: open.provider,
-                model: open.model,
-                started_at: open.started_at,
-                duration_ms: open.start.elapsed().as_millis() as u64,
-                ttft_ms: open.ttft_ms,
-                usage: None,
-                finish_reason: None,
-                error: Some(err.to_string()),
-            });
+            let output = self.take_full_text();
+            let rec = Self::build_round_record(open, None, None, Some(err.to_string()), output);
+            self.push_round(rec);
         }
     }
 
@@ -246,6 +310,15 @@ impl TurnMetricsCollector {
             } else {
                 Some(rec.result.clone())
             },
+        });
+        // Full trace keeps the complete args/result (never truncated here).
+        self.append_full_event(&FullTraceEvent::Tool {
+            round,
+            name: rec.name.clone(),
+            args: rec.args.clone(),
+            result: rec.result.clone(),
+            success: rec.success,
+            duration_ms: rec.duration_ms,
         });
     }
 
@@ -304,17 +377,15 @@ impl TurnMetricsCollector {
     /// Close any open round with the given error / finish reason (no usage).
     fn close_open_round(&mut self, error: Option<&str>, finish_reason: Option<String>) {
         if let Some(open) = self.open_round.take() {
-            self.rounds.push(LlmRoundRecord {
-                round: open.round,
-                provider: open.provider,
-                model: open.model,
-                started_at: open.started_at,
-                duration_ms: open.start.elapsed().as_millis() as u64,
-                ttft_ms: open.ttft_ms,
-                usage: None,
+            let output = self.take_full_text();
+            let rec = Self::build_round_record(
+                open,
+                None,
                 finish_reason,
-                error: error.map(|e| e.to_string()),
-            });
+                error.map(|e| e.to_string()),
+                output,
+            );
+            self.push_round(rec);
         }
     }
 
@@ -368,7 +439,8 @@ impl Drop for TurnMetricsCollector {
         if self.terminal {
             return;
         }
-        // True future-drop abort: persist best-effort.
+        // True future-drop abort: persist best-effort. (full.json events have
+        // already been appended incrementally; only the summary remains.)
         self.close_open_round(None, Some("dropped".to_string()));
         let rec = self.build_record(TurnEndState::Aborted, None);
         let writer = Arc::clone(&self.writer);
@@ -403,6 +475,7 @@ impl Drop for TurnMetricsCollector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::turns::ToolCallRecord;
     use tempfile::TempDir;
 
     fn make_collector(dir: &TempDir) -> TurnMetricsCollector {
@@ -420,18 +493,31 @@ mod tests {
         )
     }
 
-    fn read_record(dir: &TempDir, turn_id: &str) -> TurnRecord {
+    fn turn_dir(dir: &TempDir, turn_id: &str) -> std::path::PathBuf {
         let date = chrono::Local::now().format("%Y-%m-%d").to_string();
-        let path = dir.path().join(date).join(format!("{}.json", turn_id));
+        dir.path().join(date).join(turn_id)
+    }
+
+    fn read_record(dir: &TempDir, turn_id: &str) -> TurnRecord {
+        let path = turn_dir(dir, turn_id).join("summary.json");
         let content = std::fs::read_to_string(path).unwrap();
         serde_json::from_str(&content).unwrap()
+    }
+
+    fn read_full_lines(dir: &TempDir, turn_id: &str) -> Vec<serde_json::Value> {
+        let path = turn_dir(dir, turn_id).join("full.json");
+        let content = std::fs::read_to_string(path).unwrap();
+        content
+            .lines()
+            .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
+            .collect()
     }
 
     #[tokio::test]
     async fn finish_writes_complete_record() {
         let dir = TempDir::new().unwrap();
         let mut c = make_collector(&dir);
-        c.begin_round("p", "m");
+        c.begin_round("p", "m", None);
         c.round_first_token();
         c.end_round(None, Some("stop".into()));
         let id = c.turn_id().to_string();
@@ -449,7 +535,7 @@ mod tests {
     async fn fail_writes_error_record() {
         let dir = TempDir::new().unwrap();
         let mut c = make_collector(&dir);
-        c.begin_round("p", "m");
+        c.begin_round("p", "m", None);
         let id = c.turn_id().to_string();
         c.fail(ErrorSource::Llm, "boom").await;
 
@@ -463,7 +549,7 @@ mod tests {
     async fn abort_writes_aborted_record_with_partial_text() {
         let dir = TempDir::new().unwrap();
         let mut c = make_collector(&dir);
-        c.begin_round("p", "m");
+        c.begin_round("p", "m", None);
         c.push_text_delta("partial ");
         c.push_text_delta("content");
         c.push_reasoning_delta("thinking");
@@ -482,7 +568,7 @@ mod tests {
         let id;
         {
             let mut c = make_collector(&dir);
-            c.begin_round("p", "m");
+            c.begin_round("p", "m", None);
             c.push_text_delta("partial");
             id = c.turn_id().to_string();
             drop(c); // no terminal call -> Drop persists aborted
@@ -500,7 +586,7 @@ mod tests {
     async fn drop_after_terminal_is_noop() {
         let dir = TempDir::new().unwrap();
         let mut c = make_collector(&dir);
-        c.begin_round("p", "m");
+        c.begin_round("p", "m", None);
         c.end_round(None, None);
         let id = c.turn_id().to_string();
         c.finish("ok").await; // consumes self; terminal set, Drop must not rewrite
@@ -512,7 +598,7 @@ mod tests {
     fn first_token_only_recorded_once() {
         let dir = TempDir::new().unwrap();
         let mut c = make_collector(&dir);
-        c.begin_round("p", "m");
+        c.begin_round("p", "m", None);
         std::thread::sleep(std::time::Duration::from_millis(2));
         c.round_first_token();
         let first = c.open_round.as_ref().unwrap().ttft_ms;
@@ -532,5 +618,80 @@ mod tests {
         let rec = read_record(&dir, &id);
         assert!(rec.cache_hit);
         assert!(rec.llm_rounds.is_empty());
+    }
+
+    #[tokio::test]
+    async fn finish_writes_full_trace_with_complete_round_and_tool() {
+        let dir = TempDir::new().unwrap();
+        let mut c = make_collector(&dir);
+        c.begin_round(
+            "p",
+            "m",
+            Some(r#"{"messages":[{"role":"user","content":"hi"}]}"#.to_string()),
+        );
+        // Output longer than the 4 KiB summary field cap must survive in full.json.
+        let long_delta = "x".repeat(5000);
+        c.push_text_delta(&long_delta);
+        c.end_round(None, Some("stop".into()));
+        c.record_tool(&ToolCallRecord {
+            name: "file_read".into(),
+            args: r#"{"path":"/tmp/a"}"#.into(),
+            result: "contents".into(),
+            success: true,
+            duration_ms: 12,
+        });
+        let id = c.turn_id().to_string();
+        c.finish("done").await;
+
+        // Full trace: one round line + one tool line, both untruncated.
+        let lines = read_full_lines(&dir, &id);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0]["type"].as_str().unwrap(), "round");
+        assert_eq!(lines[0]["round"].as_u64().unwrap(), 0);
+        assert_eq!(lines[0]["request"]["messages"][0]["role"].as_str().unwrap(), "user");
+        assert_eq!(lines[0]["response"].as_str().unwrap().len(), 5000);
+        assert_eq!(lines[1]["type"].as_str().unwrap(), "tool");
+        assert_eq!(lines[1]["round"].as_u64().unwrap(), 0);
+        assert_eq!(lines[1]["name"].as_str().unwrap(), "file_read");
+        assert_eq!(lines[1]["args"].as_str().unwrap(), r#"{"path":"/tmp/a"}"#);
+        assert_eq!(lines[1]["result"].as_str().unwrap(), "contents");
+
+        // Summary: the same round output is truncated to the field cap.
+        let rec = read_record(&dir, &id);
+        assert_eq!(rec.llm_rounds[0].output.as_ref().unwrap().len(), 4096);
+        assert_eq!(
+            rec.llm_rounds[0].input.as_deref(),
+            Some(r#"{"messages":[{"role":"user","content":"hi"}]}"#)
+        );
+    }
+
+    #[tokio::test]
+    async fn complete_output_accumulates_untruncated_across_rounds() {
+        let dir = TempDir::new().unwrap();
+        let mut c = make_collector(&dir);
+
+        // Round 0 output exceeds the 64 KiB abort-fallback cap but stays intact.
+        c.begin_round("p", "m", Some(r#"{"n":0}"#.to_string()));
+        let chunk = "y".repeat(70 * 1024);
+        c.push_text_delta(&chunk);
+        c.end_round(None, Some("stop".into()));
+
+        // Round 1 starts with a fresh per-round buffer.
+        c.begin_round("p", "m", Some(r#"{"n":1}"#.to_string()));
+        c.push_text_delta("second");
+        c.end_round(None, Some("stop".into()));
+
+        let id = c.turn_id().to_string();
+        c.finish("done").await;
+
+        let lines = read_full_lines(&dir, &id);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0]["response"].as_str().unwrap().len(), 70 * 1024);
+        assert_eq!(lines[1]["response"].as_str().unwrap(), "second");
+
+        // Summary truncates each round output to the field cap; full.json does not.
+        let rec = read_record(&dir, &id);
+        assert_eq!(rec.llm_rounds[0].output.as_ref().unwrap().len(), 4096);
+        assert_eq!(rec.llm_rounds[1].output.as_deref(), Some("second"));
     }
 }

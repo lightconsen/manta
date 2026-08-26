@@ -62,6 +62,12 @@ pub struct LlmRoundRecord {
     pub usage: Option<ObservedUsage>,
     pub finish_reason: Option<String>,
     pub error: Option<String>,
+    /// Full request messages serialized as JSON (untruncated at capture time).
+    #[serde(default)]
+    pub input: Option<String>,
+    /// Full streamed output text for this round (untruncated at capture time).
+    #[serde(default)]
+    pub output: Option<String>,
 }
 
 /// One tool invocation within a turn.
@@ -74,6 +80,41 @@ pub struct ObservedToolCall {
     pub success: bool,
     pub duration_ms: u64,
     pub error: Option<String>,
+}
+
+/// One line of the append-only full trace (`full.json`). Internally tagged by
+/// `type` so every JSONL line is self-describing and can be replayed in order.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum FullTraceEvent {
+    /// A complete LLM round, holding the untruncated request/response.
+    Round {
+        round: u32,
+        /// The full request messages, kept as a JSON value (never truncated).
+        request: Option<serde_json::Value>,
+        /// The complete streamed output text (never truncated).
+        response: Option<String>,
+        usage: Option<ObservedUsage>,
+        finish_reason: Option<String>,
+        error: Option<String>,
+    },
+    /// A complete tool invocation, holding untruncated args/result.
+    Tool {
+        round: u32,
+        name: String,
+        args: String,
+        result: String,
+        success: bool,
+        duration_ms: u64,
+    },
+}
+
+/// Parse `raw` into a JSON value, falling back to a plain string value when it
+/// is not valid JSON. Full-trace `request` fields are always produced by
+/// `serde_json::to_string`, so the fallback is defensive only.
+pub fn json_value_or_string(raw: &str) -> serde_json::Value {
+    serde_json::from_str::<serde_json::Value>(raw)
+        .unwrap_or_else(|_| serde_json::Value::String(raw.to_string()))
 }
 
 /// A complete per-turn observability record.
@@ -131,6 +172,13 @@ impl TurnRecord {
         for round in &mut self.llm_rounds {
             if let Some(e) = &mut round.error {
                 truncate_field(e);
+            }
+            // Keep the summary small: the full input/output lives in full.json.
+            if let Some(i) = &mut round.input {
+                truncate_field(i);
+            }
+            if let Some(o) = &mut round.output {
+                truncate_field(o);
             }
         }
         for call in &mut self.tool_calls {

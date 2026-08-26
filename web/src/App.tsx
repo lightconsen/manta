@@ -13,6 +13,7 @@ import { useChatStore } from "@/stores/chatStore";
 import { Sidebar } from "@/components/chat/Sidebar";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { WelcomeScreen } from "@/components/onboarding/WelcomeScreen";
+import { IdentityWizard } from "@/components/onboarding/IdentityWizard";
 import { ChatContent } from "@/components/chat/ChatContent";
 import { useGoalStore } from "@/stores/goalStore";
 import { GoalPanel } from "@/components/chat/GoalPanel";
@@ -131,6 +132,8 @@ function ChatApp() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   // null = not yet checked / not connected; true = no LLM configured (Welcome).
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
+  // null = not yet checked; true = identity wizard completed.
+  const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
   const isMobile = useIsMobile();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const previewDocument = useChatStore((s) => s.previewDocument);
@@ -192,6 +195,16 @@ function ChatApp() {
     }
   }, [transport]);
 
+  // Check whether the first-launch identity wizard is still pending.
+  const checkOnboarding = useCallback(async () => {
+    try {
+      const { status } = await transport.onboardingStatus();
+      setOnboardingDone(status === "done");
+    } catch {
+      /* keep onboardingDone as-is; retried on next connect */
+    }
+  }, [transport]);
+
   // Network status
   useEffect(() => {
     return transport.onStatusChange((status) => {
@@ -200,20 +213,30 @@ function ChatApp() {
         refreshSessions();
         refreshAgents();
         checkModelConfig();
+        checkOnboarding();
       }
     });
-  }, [transport, refreshSessions, refreshAgents, checkModelConfig]);
+  }, [transport, refreshSessions, refreshAgents, checkModelConfig, checkOnboarding]);
 
   useEffect(() => {
     refreshSessions();
     refreshAgents();
     checkModelConfig();
+    checkOnboarding();
     const interval = setInterval(() => {
       refreshSessions();
       refreshAgents();
     }, 8000);
     return () => clearInterval(interval);
-  }, [refreshSessions, refreshAgents, checkModelConfig]);
+  }, [refreshSessions, refreshAgents, checkModelConfig, checkOnboarding]);
+
+  // Once an LLM is configured, resolve the identity wizard state so we don't
+  // linger on the loading gate if the mount/connect checks raced model setup.
+  useEffect(() => {
+    if (needsSetup === false && onboardingDone === null) {
+      checkOnboarding();
+    }
+  }, [needsSetup, onboardingDone, checkOnboarding]);
 
   // Track which sessions are currently running for sidebar loading indicators
   useEffect(() => {
@@ -547,6 +570,27 @@ function ChatApp() {
   // No LLM configured yet — show the first-launch welcome screen.
   if (needsSetup) {
     return <WelcomeScreen transport={transport} onComplete={checkModelConfig} />;
+  }
+
+  // LLM configured but the identity wizard state is still resolving.
+  if (onboardingDone === null) {
+    return (
+      <div
+        className="flex items-center justify-center bg-page text-primary"
+        style={{
+          paddingTop: "env(safe-area-inset-top)",
+          paddingBottom: "env(safe-area-inset-bottom)",
+          height: "100lvh",
+        }}
+      >
+        <div className="w-6 h-6 border-2 border-subtle border-t-primary-500 rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  // LLM configured but identity not set yet — show the first-launch wizard.
+  if (!onboardingDone) {
+    return <IdentityWizard transport={transport} onComplete={checkOnboarding} />;
   }
 
   // iOS WKWebView computes the layout viewport as safe-area-exclusive

@@ -36,34 +36,54 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BehaviorConfig {
     /// Whether the agent should proactively suggest actions.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proactive: Option<bool>,
     /// Whether to ask before destructive operations.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ask_before_destructive: Option<bool>,
     /// Group chat participation mode.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group_chat_mode: Option<String>,
     /// Additional free-form behavior flags.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_yml::Value>,
 }
 
+impl BehaviorConfig {
+    /// Returns `true` when no behavior fields are set.
+    pub fn is_empty(&self) -> bool {
+        self.proactive.is_none()
+            && self.ask_before_destructive.is_none()
+            && self.group_chat_mode.is_none()
+            && self.extra.is_empty()
+    }
+}
+
 /// User preference configuration embedded in SOUL.md.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PreferenceConfig {
     /// Preferred language code (e.g. "en-US", "zh-CN").
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
     /// Preferred code style conventions.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code_style: Option<String>,
     /// Preferred response format.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
     /// Additional free-form preferences.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_yml::Value>,
+}
+
+impl PreferenceConfig {
+    /// Returns `true` when no preference fields are set.
+    pub fn is_empty(&self) -> bool {
+        self.language.is_none()
+            && self.code_style.is_none()
+            && self.format.is_none()
+            && self.extra.is_empty()
+    }
 }
 
 /// Heuristic analysis of conversation patterns used to auto-populate SOUL.md.
@@ -85,22 +105,22 @@ pub struct SoulAnalysis {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SoulConfig {
     /// Agent name / call sign.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Short persona description.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persona: Option<String>,
     /// Voice / tone description.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub voice: Option<String>,
     /// Signature emoji.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emoji: Option<String>,
     /// Structured behavior flags.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BehaviorConfig::is_empty")]
     pub behavior: BehaviorConfig,
     /// Structured preferences.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "PreferenceConfig::is_empty")]
     pub preferences: PreferenceConfig,
     /// Extra top-level keys for forward compatibility.
     #[serde(flatten)]
@@ -108,6 +128,17 @@ pub struct SoulConfig {
 }
 
 impl SoulConfig {
+    /// Returns `true` when no structured fields are set.
+    pub fn is_empty(&self) -> bool {
+        self.name.is_none()
+            && self.persona.is_none()
+            && self.voice.is_none()
+            && self.emoji.is_none()
+            && self.behavior.is_empty()
+            && self.preferences.is_empty()
+            && self.extra.is_empty()
+    }
+
     /// Generate a structured system-prompt fragment from the config.
     ///
     /// Returns an empty string if no structured fields are set.
@@ -283,6 +314,43 @@ impl SoulFile {
             body,
             has_frontmatter: true,
         })
+    }
+
+    /// Serialize this SOUL file back to markdown (YAML frontmatter + body).
+    ///
+    /// The frontmatter is emitted whenever structured config fields are
+    /// present (or `has_frontmatter` is set). Unset fields are omitted so the
+    /// output stays clean and round-trips through [`SoulFile::parse`].
+    pub fn to_markdown(&self) -> crate::Result<String> {
+        let include_frontmatter = self.has_frontmatter || !self.config.is_empty();
+
+        let mut out = String::new();
+        if include_frontmatter {
+            let yaml = serde_yml::to_string(&self.config).map_err(|e| {
+                crate::error::SyscityError::Validation(format!(
+                    "Failed to serialize SOUL.md frontmatter: {}",
+                    e
+                ))
+            })?;
+            let yaml = yaml.trim();
+            out.push_str("---\n");
+            if !yaml.is_empty() && yaml != "{}" {
+                out.push_str(yaml);
+                out.push('\n');
+            }
+            out.push_str("---\n");
+        }
+
+        let body = self.body.trim_end();
+        if !body.is_empty() {
+            if include_frontmatter {
+                out.push('\n');
+            }
+            out.push_str(body);
+            out.push('\n');
+        }
+
+        Ok(out)
     }
 
     /// Merge structured config prompt fragment + body into full prompt text.

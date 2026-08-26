@@ -406,6 +406,8 @@ mod tests {
                 }),
                 finish_reason: Some("stop".into()),
                 error: None,
+                input: None,
+                output: None,
             }],
             tool_calls: vec![ObservedToolCall {
                 round: 0,

@@ -1845,6 +1845,16 @@ impl Agent {
         let model_id = self.resolve_model_id(context.id()).await;
         self.persist_request_snapshot(context, &model_id, &tools);
 
+        // Snapshot the full request messages (untruncated) for the observability
+        // full-trace input. Captured before the stream-setup loop below because
+        // the model-router branch moves `request.messages`.
+        let input_json = serde_json::to_string(&request.messages).map_err(|e| {
+            crate::error::SyscityError::Internal(format!(
+                "Failed to serialize request messages: {}",
+                e
+            ))
+        })?;
+
         // Get streaming completion — use model router when available. If the
         // provider rejects the request as over its context window at stream
         // setup (before any bytes are emitted), compact and retry once.
@@ -1907,7 +1917,7 @@ impl Agent {
         let mut stream = registry.apply(family, raw_stream);
 
         // Begin an observability round for this LLM call.
-        collector.begin_round(&round_provider, &round_model);
+        collector.begin_round(&round_provider, &round_model, Some(input_json));
 
         let mut accumulated_text = String::new();
         let mut accumulated_reasoning = String::new();

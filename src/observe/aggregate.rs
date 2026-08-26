@@ -8,9 +8,10 @@ use std::path::Path;
 
 use super::record::{TurnEndState, TurnRecord};
 
-/// Load turn records from `<base>/<date>/` directories, optionally only those
-/// with a directory name >= `since` (YYYY-MM-DD, lexicographic compare).
-/// Returns the parsed records and the number of files skipped (unparseable).
+/// Load turn records from `<base>/<date>/<turn_id>/summary.json`, optionally
+/// only those with a date directory name >= `since` (YYYY-MM-DD, lexicographic
+/// compare). Returns the parsed records and the number of files skipped
+/// (unparseable).
 pub fn load_records(base: &Path, since: Option<&str>) -> (Vec<TurnRecord>, usize) {
     let mut records = Vec::new();
     let mut skipped = 0;
@@ -35,16 +36,17 @@ pub fn load_records(base: &Path, since: Option<&str>) -> (Vec<TurnRecord>, usize
                 continue;
             }
         }
-        let files = match std::fs::read_dir(&path) {
-            Ok(f) => f,
+        let turns = match std::fs::read_dir(&path) {
+            Ok(t) => t,
             Err(_) => continue,
         };
-        for file in files.flatten() {
-            let fpath = file.path();
-            if fpath.extension().and_then(|e| e.to_str()) != Some("json") {
+        for turn in turns.flatten() {
+            let tpath = turn.path();
+            if !tpath.is_dir() {
                 continue;
             }
-            match std::fs::read_to_string(&fpath)
+            let summary = tpath.join("summary.json");
+            match std::fs::read_to_string(&summary)
                 .ok()
                 .and_then(|c| serde_json::from_str::<TurnRecord>(&c).ok())
             {
@@ -263,6 +265,8 @@ mod tests {
                 }),
                 finish_reason: Some("stop".into()),
                 error: None,
+                input: None,
+                output: None,
             }],
             tool_calls: vec![ObservedToolCall {
                 round: 0,
@@ -310,19 +314,21 @@ mod tests {
         let base = dir.path();
         let day1 = base.join("2026-08-01");
         let day2 = base.join("2026-08-14");
-        std::fs::create_dir_all(&day1).unwrap();
-        std::fs::create_dir_all(&day2).unwrap();
+        std::fs::create_dir_all(day1.join("a")).unwrap();
+        std::fs::create_dir_all(day2.join("b")).unwrap();
         std::fs::write(
-            day1.join("a.json"),
+            day1.join("a").join("summary.json"),
             serde_json::to_string(&rec("a", 1, TurnEndState::Complete)).unwrap(),
         )
         .unwrap();
         std::fs::write(
-            day2.join("b.json"),
+            day2.join("b").join("summary.json"),
             serde_json::to_string(&rec("b", 2, TurnEndState::Complete)).unwrap(),
         )
         .unwrap();
-        std::fs::write(day2.join("bad.json"), "not json").unwrap();
+        // A turn dir with a corrupt summary.json is counted as skipped.
+        std::fs::create_dir_all(day2.join("bad")).unwrap();
+        std::fs::write(day2.join("bad").join("summary.json"), "not json").unwrap();
         std::fs::create_dir_all(base.join("not-a-date")).unwrap();
 
         let (all, skipped) = load_records(base, None);

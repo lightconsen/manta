@@ -19,6 +19,7 @@ pub mod hybrid;
 pub mod in_memory_store;
 pub mod manager;
 pub mod multimodal;
+pub mod onboarding;
 pub mod personality;
 pub mod qmd;
 pub mod query;

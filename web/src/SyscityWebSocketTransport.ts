@@ -72,6 +72,27 @@ export interface ModelInfo {
   base_url?: string;
 }
 
+/** First-launch identity form payload (POST /onboarding). */
+export interface OnboardingPayload {
+  /** Agent name / call sign. */
+  name?: string;
+  /** Short persona / vibe description. */
+  vibe?: string;
+  /** Signature emoji. */
+  emoji?: string;
+  /** How the user wants to be addressed. */
+  user_name?: string;
+  /** The user's city. */
+  city?: string;
+  /** Free-form context about the user. */
+  user_context?: string;
+}
+
+/** Response from GET /onboarding. */
+export interface OnboardingStatus {
+  status: "pending" | "done";
+}
+
 function makeTextPart(text: string): TextMessagePart {
   return { type: "text", text };
 }
@@ -1190,6 +1211,43 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  /* ── Onboarding (first-launch identity wizard) ── */
+
+  /** Bearer auth headers for plain-HTTP gateway calls (mobile builds only). */
+  private authHeaders(): Record<string, string> {
+    const token = localStorage.getItem("syscity_gateway_token");
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
+  /** Query the identity wizard status (GET /onboarding). */
+  async onboardingStatus(): Promise<OnboardingStatus> {
+    const res = await fetch("/onboarding", { headers: this.authHeaders() });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return (await res.json()) as OnboardingStatus;
+  }
+
+  /** Submit the identity wizard form (POST /onboarding). */
+  async applyOnboarding(
+    payload: OnboardingPayload
+  ): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const res = await fetch("/onboarding", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...this.authHeaders() },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as {
+          message?: string;
+        } | null;
+        return { ok: false, error: body?.message || `HTTP ${res.status}` };
+      }
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
   }
 
