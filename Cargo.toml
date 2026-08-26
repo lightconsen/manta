@@ -193,7 +193,7 @@ rust_xlsxwriter = "0.99"
 scraper = "0.27"
 
 # SVG rasterization
-resvg = "0.44"
+resvg = "0.48"
 
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "migrate", "chrono"] }

@@ -197,6 +197,8 @@ mod tests {
     #[test]
     fn rasterize_svg_rejects_invalid() {
         assert!(rasterize_svg("not svg at all").is_err());
-        assert!(rasterize_svg("<svg/>").is_err()); // zero size
+        // A size-less root now defaults to 100x100 upstream; only an
+        // explicitly zero-sized SVG trips our zero-size guard.
+        assert!(rasterize_svg(r#"<svg width="0" height="0"/>"#).is_err());
     }
 }
