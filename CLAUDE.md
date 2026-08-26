@@ -92,6 +92,11 @@ syscity/
    - Or run individual steps: `cargo fmt`, `cargo clippy -- -D warnings`, `cargo test`
    - Run `./scripts/static-analysis.sh --full` for cross-module anti-patterns
    - Run `cargo doc` to check docs build
+   - Security gate: a versioned pre-commit hook (`.githooks/pre-commit`) runs
+     `./scripts/audit.sh` (`cargo audit` + `cargo deny`) and rejects the commit
+     on failure. Enable it once per clone with
+     `git config core.hooksPath .githooks`; bypass a single commit with
+     `git commit --no-verify`.
 
 2. **CI Checks:**
    - Format check: `cargo fmt -- --check`
