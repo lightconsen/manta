@@ -241,15 +241,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "arc-swap"
-version = "1.9.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c049c0be4daef0b145cb3555416b3b8ef5b7888a38aea1a3a155801fe7b0810b"
-dependencies = [
- "rustversion",
-]
-
-[[package]]
 name = "arraydeque"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -934,18 +925,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
  "rand_core 0.10.1",
-]
-
-[[package]]
-name = "charts-rs"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "345df58e125d09449010e16c1569994610543dc293f32454c1306d5d6e4623ce"
-dependencies = [
- "arc-swap",
- "fontdue",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -2651,16 +2630,6 @@ dependencies = [
  "slotmap",
  "tinyvec",
  "ttf-parser 0.24.1",
-]
-
-[[package]]
-name = "fontdue"
-version = "0.9.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7894823fa221401399e2598f8b63f81ac77ff5c63248b7656779bff1632d7d3d"
-dependencies = [
- "hashbrown 0.15.5",
- "ttf-parser 0.25.1",
 ]
 
 [[package]]
@@ -8011,7 +7980,6 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "calamine",
- "charts-rs",
  "chromiumoxide",
  "chrono",
  "clap",
@@ -9231,9 +9199,6 @@ name = "ttf-parser"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
-dependencies = [
- "core_maths",
-]
 
 [[package]]
 name = "tungstenite"

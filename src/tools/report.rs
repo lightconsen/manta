@@ -53,9 +53,9 @@ fn artifact_url_owner(agent_ws: &std::path::Path) -> Option<String> {
 }
 
 /// Resolve the artifacts directory + serving URL for a previewable file
-/// produced by the current agent. Shared by `write_report`, `svg_to_png`, and
-/// `generate_chart` so all document/image artifacts land in the same
-/// owner-addressed workspace convention.
+/// produced by the current agent. Shared by `write_report` and `svg_to_png` so
+/// all document/image artifacts land in the same owner-addressed workspace
+/// convention.
 pub fn resolve_artifact_target(
     context: &ToolContext,
     filename: &str,
