@@ -27,6 +27,7 @@ pub fn test_context() -> ToolContext {
 mod acp_tests;
 #[cfg(feature = "browser")]
 mod browser_tests;
+mod chrome_connector_smoke;
 mod computer_adapter_e2e_tests;
 mod computer_modules_tests;
 mod delegate_mcp_plan_tests;
