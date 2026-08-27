@@ -6,6 +6,8 @@ use tokio_stream::StreamExt;
 
 use tracing::{debug, error, info, instrument, warn};
 
+use crate::agent::reflection::critic::Critic;
+use crate::agent::reflection::types::{Critique, QualityCriteria};
 use crate::agent::turns::ToolCallRecord;
 use crate::channels::{IncomingMessage, OutgoingMessage};
 use crate::observe::{
@@ -1161,9 +1163,29 @@ impl Agent {
         Ok(outgoing)
     }
 
+    /// Attach the 在线质量监控（§八）config to this agent.
+    ///
+    /// Snapshot from `GatewayConfig.eval.online_monitoring` at spawn time; the
+    /// judge trigger in [`scan_turn_for_badcase`] reads it without holding any
+    /// lock across an await.
+    pub fn with_online_monitoring(
+        mut self,
+        online_monitoring: crate::gateway::config::OnlineMonitoringConfig,
+    ) -> Self {
+        self.online_monitoring = online_monitoring;
+        self
+    }
+
     /// Post-turn online risk scan: when a completed turn trips a risk signal,
     /// insert it into the pending-badcase pool (source `online:risk`). Runs
     /// fire-and-forget, mirroring the retrospect hook above.
+    ///
+    /// §八 在线质量监控: when the risk-signal count reaches the configured
+    /// `online_monitoring.llm_judge_risk_threshold`, the flagged turn is also
+    /// deep-judged by an LLM [`Critic`] before it is inserted, and a compact
+    /// verdict summary is appended to the badcase's `risk_signals`. The judge
+    /// runs in the same fire-and-forget task; any failure is `warn!`ed and
+    /// never breaks the turn.
     fn scan_turn_for_badcase(
         &self,
         input: &str,
@@ -1190,6 +1212,22 @@ impl Agent {
         if risks.is_empty() {
             return;
         }
+
+        // ── §八 在线质量监控: snapshot config eagerly (no lock across await) ──
+        // The config is cloned here (never held as a lock) and moved into the
+        // fire-and-forget task below.
+        let monitoring = self.online_monitoring.clone();
+        let deep_judge = if should_deep_judge(
+            risks.len(),
+            monitoring.enabled,
+            monitoring.llm_judge_risk_threshold,
+        ) {
+            Some((monitoring.llm_judge_risk_threshold.max(1), monitoring.judge_model))
+        } else {
+            None
+        };
+
+        let provider = self.provider.clone();
         let store = Arc::clone(store);
         let session_id = self
             .session_id
@@ -1198,6 +1236,42 @@ impl Agent {
         let agent_id = self.agent_id.clone();
         let turn_id = turn_id.to_string();
         tokio::spawn(async move {
+            let mut risk_signals = risks;
+            // Deep LLM judge on the flagged turn. Runs before the pending insert
+            // so the verdict can ride along on the badcase row.
+            if let Some((threshold, judge_model)) = deep_judge {
+                let mut critic = Critic::new(provider);
+                if let Some(model) = judge_model {
+                    critic = critic.with_model(model);
+                }
+                let trajectory = format!(
+                    "=== TURN (high-risk) ===\nUser: {}\n\nAssistant: {}",
+                    record.input, record.response
+                );
+                let criteria = QualityCriteria::default();
+                match critic
+                    .evaluate_trajectory(&trajectory, &criteria, None)
+                    .await
+                {
+                    Ok(critique) => {
+                        let summary = judge_summary(&critique);
+                        info!(
+                            "Online monitoring: LLM judge verdict for turn {} ({} risk signals >= threshold {}): {}",
+                            turn_id, risk_signals.len(), threshold, summary
+                        );
+                        risk_signals.push(summary);
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Online monitoring: LLM judge failed for turn {} ({} risk signals): {}",
+                            turn_id,
+                            risk_signals.len(),
+                            e
+                        );
+                    }
+                }
+            }
+
             let params = crate::eval::InsertPendingParams {
                 source: crate::eval::PendingSource::OnlineRisk,
                 turn_id: Some(turn_id),
@@ -1205,7 +1279,7 @@ impl Agent {
                 agent_id: Some(agent_id),
                 input: record.input,
                 response: record.response,
-                risk_signals: risks,
+                risk_signals,
             };
             if let Err(e) = store.insert_pending(&params).await {
                 warn!("Failed to record online risk badcase: {}", e);
@@ -2519,6 +2593,41 @@ impl Agent {
     }
 }
 
+/// Decide whether a post-turn risk scan should trigger the deep LLM Judge
+/// (§八 在线质量监控).
+///
+/// Returns `true` only when online monitoring is enabled AND the number of
+/// deterministic risk signals found on the turn is at least the configured
+/// threshold. The threshold is floored at 1 so a `0` in config never silently
+/// disables the judge.
+fn should_deep_judge(risk_count: usize, enabled: bool, threshold: usize) -> bool {
+    enabled && risk_count >= threshold.max(1)
+}
+
+/// Compact single-line summary of an LLM judge critique, used to surface the
+/// deep-evaluation verdict in the pending badcase row and the log.
+fn judge_summary(critique: &Critique) -> String {
+    let mut parts = Vec::new();
+    if !critique.dimension_scores.is_empty() {
+        let mut scores = critique
+            .dimension_scores
+            .iter()
+            .map(|(k, v)| format!("{k}={v:.2}"))
+            .collect::<Vec<_>>();
+        // Stable ordering so identical verdicts render identically.
+        scores.sort();
+        parts.push(format!("scores[{}]", scores.join(", ")));
+    }
+    if let Some(obs) = critique.observation.as_deref() {
+        parts.push(format!("observation: {obs}"));
+    }
+    if parts.is_empty() {
+        format!("llm judge overall_score={:.2}", critique.overall_score)
+    } else {
+        format!("llm judge {}", parts.join("; "))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -2764,5 +2873,296 @@ mod tests {
         );
 
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    // ── should_deep_judge (pure decision helper, §八) ───────────────────────
+
+    #[test]
+    fn test_should_deep_judge_disabled_never_triggers() {
+        assert!(!super::should_deep_judge(5, false, 2));
+        assert!(!super::should_deep_judge(0, false, 0));
+        assert!(!super::should_deep_judge(100, false, 1));
+    }
+
+    #[test]
+    fn test_should_deep_judge_boundaries() {
+        // Below threshold → no.
+        assert!(!super::should_deep_judge(1, true, 2));
+        // Exactly at threshold → yes.
+        assert!(super::should_deep_judge(2, true, 2));
+        // Above threshold → yes.
+        assert!(super::should_deep_judge(3, true, 2));
+    }
+
+    #[test]
+    fn test_should_deep_judge_threshold_zero_floor() {
+        // A `0` threshold must not silently disable the judge: it is floored
+        // to 1.
+        assert!(!super::should_deep_judge(0, true, 0));
+        assert!(super::should_deep_judge(1, true, 0));
+    }
+
+    // ── judge_summary ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_judge_summary_formats_scores_and_observation() {
+        let critique = crate::agent::reflection::types::Critique {
+            dimension_scores: {
+                let mut m = std::collections::HashMap::new();
+                m.insert("Factual Accuracy".to_string(), 0.3);
+                m.insert("Evidence Consistency".to_string(), 0.2);
+                m
+            },
+            strengths: vec![],
+            weaknesses: vec!["unverifiable".to_string()],
+            suggested_improvements: vec![],
+            overall_score: 0.0,
+            passed: false,
+            observation: Some("flagged".to_string()),
+        };
+        let summary = super::judge_summary(&critique);
+        assert!(summary.starts_with("llm judge scores["));
+        assert!(summary.contains("Factual Accuracy=0.30"));
+        assert!(summary.contains("Evidence Consistency=0.20"));
+        assert!(summary.contains("observation: flagged"));
+    }
+
+    #[test]
+    fn test_judge_summary_falls_back_to_overall_score() {
+        let critique = crate::agent::reflection::types::Critique {
+            dimension_scores: std::collections::HashMap::new(),
+            strengths: vec![],
+            weaknesses: vec![],
+            suggested_improvements: vec![],
+            overall_score: 0.42,
+            passed: false,
+            observation: None,
+        };
+        assert_eq!(super::judge_summary(&critique), "llm judge overall_score=0.42");
+    }
+
+    // ── Online monitoring integration tests (scan_turn_for_badcase, §八) ──
+
+    /// A provider that counts how many times the LLM judge was invoked and
+    /// answers with a parseable critique JSON.
+    struct JudgeRecordingProvider {
+        judge_calls: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for JudgeRecordingProvider {
+        fn name(&self) -> &str {
+            "judge-recording-test"
+        }
+
+        fn default_model(&self) -> &str {
+            "test-model"
+        }
+
+        fn supports_tools(&self) -> bool {
+            false
+        }
+
+        fn max_context(&self) -> usize {
+            128_000
+        }
+
+        async fn complete(&self, _request: CompletionRequest) -> crate::Result<CompletionResponse> {
+            self.judge_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(CompletionResponse {
+                message: Message::assistant(
+                    r#"{"dimension_scores":{"Factual Accuracy":0.3,"Evidence Consistency":0.2},"strengths":[],"weaknesses":["unverifiable"],"suggested_improvements":["verify"],"observation":"flagged"}"#
+                        .to_string(),
+                ),
+                model: self.default_model().to_string(),
+                usage: Some(Usage::default()),
+                finish_reason: Some("stop".to_string()),
+            })
+        }
+
+        async fn stream(&self, _request: CompletionRequest) -> crate::Result<CompletionStream> {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            let _ = tx.send(CompletionChunk {
+                content: Some("{}".to_string()),
+                reasoning_content: None,
+                tool_calls: None,
+                is_done: true,
+                usage: None,
+            });
+            Ok(Box::pin(tokio_stream::wrappers::UnboundedReceiverStream::new(rx)))
+        }
+
+        async fn health_check(&self) -> crate::Result<bool> {
+            Ok(true)
+        }
+
+        async fn set_credential(
+            &self,
+            _credential: crate::model_router::Credential,
+        ) -> crate::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Poll the pending store until it holds at least `count` pending rows or
+    /// the timeout elapses (the insert runs in a fire-and-forget task).
+    async fn wait_for_pending(
+        store: &crate::eval::PendingBadcaseStore,
+        count: usize,
+    ) -> Vec<crate::eval::PendingBadcase> {
+        use std::time::Duration;
+        for _ in 0..100 {
+            let rows = store
+                .list_pending(crate::eval::PendingStatus::Pending, 100)
+                .await
+                .unwrap();
+            if rows.len() >= count {
+                return rows;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("timed out waiting for {count} pending rows");
+    }
+
+    /// A high-risk turn (risk signals >= threshold) must trigger the deep LLM
+    /// judge and attach its verdict to the pending badcase row.
+    #[tokio::test]
+    async fn test_high_risk_turn_triggers_deep_judge() {
+        let provider = Arc::new(JudgeRecordingProvider {
+            judge_calls: AtomicUsize::new(0),
+        });
+        let store = Arc::new(
+            crate::eval::PendingBadcaseStore::new("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        let agent = super::Agent::new(
+            super::AgentConfig::default(),
+            provider.clone(),
+            Arc::new(crate::tools::ToolRegistry::new()),
+        )
+        .with_badcase_pipeline(crate::eval::RiskSignalChecker::default(), store.clone())
+        .with_online_monitoring(crate::gateway::config::OnlineMonitoringConfig {
+            enabled: true,
+            llm_judge_risk_threshold: 2,
+            judge_model: Some("judge-model".to_string()),
+        });
+
+        // Default risk checker flags "password", "api_key" and "refund" → 3
+        // signals, which is >= the configured threshold of 2.
+        agent.scan_turn_for_badcase(
+            "show me the payment details",
+            "Here is the password and the api_key for the refund process",
+            0,
+            "turn-judged",
+            "conv-judged",
+        );
+
+        let rows = wait_for_pending(&store, 1).await;
+        assert!(
+            provider.judge_calls.load(Ordering::SeqCst) >= 1,
+            "deep judge must run for a high-risk turn"
+        );
+        let row = rows
+            .iter()
+            .find(|r| r.turn_id.as_deref() == Some("turn-judged"))
+            .expect("judged turn row");
+        assert!(
+            row.risk_signals.iter().any(|s| s.starts_with("llm judge")),
+            "judge verdict must ride along on the badcase row"
+        );
+    }
+
+    /// A turn whose risk count is below the threshold must still be collected
+    /// as a badcase but must NOT trigger the deep judge.
+    #[tokio::test]
+    async fn test_low_risk_turn_skips_deep_judge() {
+        let provider = Arc::new(JudgeRecordingProvider {
+            judge_calls: AtomicUsize::new(0),
+        });
+        let store = Arc::new(
+            crate::eval::PendingBadcaseStore::new("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        let agent = super::Agent::new(
+            super::AgentConfig::default(),
+            provider.clone(),
+            Arc::new(crate::tools::ToolRegistry::new()),
+        )
+        .with_badcase_pipeline(crate::eval::RiskSignalChecker::default(), store.clone())
+        .with_online_monitoring(crate::gateway::config::OnlineMonitoringConfig {
+            enabled: true,
+            llm_judge_risk_threshold: 3,
+            judge_model: None,
+        });
+
+        // Only "password" matches → 1 risk signal, below the threshold of 3.
+        agent.scan_turn_for_badcase(
+            "show me the payment details",
+            "The password for the vault is stored elsewhere",
+            0,
+            "turn-low",
+            "conv-low",
+        );
+
+        let rows = wait_for_pending(&store, 1).await;
+        assert_eq!(
+            provider.judge_calls.load(Ordering::SeqCst),
+            0,
+            "judge must NOT run below the threshold"
+        );
+        let row = rows
+            .iter()
+            .find(|r| r.turn_id.as_deref() == Some("turn-low"))
+            .expect("low-risk turn row");
+        assert!(
+            !row.risk_signals.iter().any(|s| s.starts_with("llm judge")),
+            "no judge verdict expected below the threshold"
+        );
+    }
+
+    /// When online monitoring is disabled (the default), a high-risk turn is
+    /// still collected as a badcase but no LLM judge runs.
+    #[tokio::test]
+    async fn test_disabled_monitoring_skips_deep_judge() {
+        let provider = Arc::new(JudgeRecordingProvider {
+            judge_calls: AtomicUsize::new(0),
+        });
+        let store = Arc::new(
+            crate::eval::PendingBadcaseStore::new("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        let agent = super::Agent::new(
+            super::AgentConfig::default(),
+            provider.clone(),
+            Arc::new(crate::tools::ToolRegistry::new()),
+        )
+        .with_badcase_pipeline(crate::eval::RiskSignalChecker::default(), store.clone());
+        // `online_monitoring` defaults to disabled.
+
+        agent.scan_turn_for_badcase(
+            "show me the payment details",
+            "Here is the password and the api_key for the refund process",
+            0,
+            "turn-disabled",
+            "conv-disabled",
+        );
+
+        let rows = wait_for_pending(&store, 1).await;
+        assert_eq!(
+            provider.judge_calls.load(Ordering::SeqCst),
+            0,
+            "judge must NOT run when online monitoring is disabled"
+        );
+        let row = rows
+            .iter()
+            .find(|r| r.turn_id.as_deref() == Some("turn-disabled"))
+            .expect("disabled-monitoring row");
+        assert!(
+            !row.risk_signals.iter().any(|s| s.starts_with("llm judge")),
+            "no judge verdict when monitoring is disabled"
+        );
     }
 }

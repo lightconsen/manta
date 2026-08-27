@@ -73,6 +73,13 @@ struct YamlTask {
     /// Session-level conditions (§03).
     #[serde(default)]
     session_conditions: Vec<YamlCondition>,
+    /// Difficulty label for regression weighting (§八): `"easy"` |
+    /// `"medium"` | `"hard"`. Defaults to `"medium"` for old YAML.
+    #[serde(default = "crate::eval::dataset::default_task_difficulty")]
+    difficulty: String,
+    /// Coverage tags for regression attribution (§八).
+    #[serde(default)]
+    coverage: Vec<String>,
 }
 
 /// A condition entry within a task.
@@ -571,6 +578,9 @@ fn convert_task(yt: YamlTask) -> Result<EvalTask> {
         agent_type: yt.agent_type.as_deref().map(parse_agent_type),
         turns,
         session_conditions,
+        difficulty: yt.difficulty,
+        coverage: yt.coverage,
+        trials: None,
     })
 }
 
@@ -695,6 +705,51 @@ fn parse_agent_type(s: &str) -> AgentType {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_old_badcase_yaml_without_labels_parses_with_defaults() {
+        // Pre-existing badcase YAML has no difficulty/coverage fields — the
+        // loader must default them so the regression suite keeps loading.
+        let yaml = r#"
+            tasks:
+            - id: legacy_bc
+              input: hello
+              source: badcase
+              failure_reason: crit
+        "#;
+        let file: YamlTaskFile = serde_yml::from_str(yaml).unwrap();
+        let tasks: Vec<EvalTask> = file
+            .tasks
+            .into_iter()
+            .map(convert_task)
+            .collect::<Result<_>>()
+            .unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].difficulty, "medium");
+        assert!(tasks[0].coverage.is_empty());
+        assert_eq!(tasks[0].source, EvalTaskSource::BadcaseRecycle);
+    }
+
+    #[test]
+    fn test_labeled_badcase_yaml_roundtrips_through_loader() {
+        let yaml = r#"
+            tasks:
+            - id: labeled_bc
+              input: hello
+              source: badcase
+              difficulty: hard
+              coverage: [tools, routing]
+        "#;
+        let file: YamlTaskFile = serde_yml::from_str(yaml).unwrap();
+        let tasks: Vec<EvalTask> = file
+            .tasks
+            .into_iter()
+            .map(convert_task)
+            .collect::<Result<_>>()
+            .unwrap();
+        assert_eq!(tasks[0].difficulty, "hard");
+        assert_eq!(tasks[0].coverage, vec!["tools", "routing"]);
+    }
 
     #[test]
     fn test_convert_yaml_value_to_string() {

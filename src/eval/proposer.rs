@@ -29,9 +29,12 @@ use tracing::{debug, info, warn};
 
 use crate::error::{Result, SyscityError};
 use crate::eval::apply_patch::{apply_optimizer_patch, OptimizerPatch, PatchOutcome};
-use crate::eval::comparison::ComparisonVerdict;
+use crate::eval::comparison::{ComparisonVerdict, VersionComparison};
 use crate::eval::decision_trace::{RecordTraceParams, TraceKind, TraceStatus};
 use crate::eval::pending_badcase::PendingStatus;
+use crate::eval::verdict::{
+    CandidateVerifier, HarnessCandidateVerifier, NoopVerifier, VerdictSubject,
+};
 use crate::gateway::{config_revision, GatewayState};
 use crate::providers::{CompletionRequest, Message, Provider};
 use crate::tools::ToolRegistry;
@@ -120,6 +123,10 @@ pub struct StructuralProposer {
     provider: Option<Arc<dyn Provider + Send + Sync>>,
     /// Hard cap on candidates produced per call (§十一, default 4).
     max_candidates: usize,
+    /// Optional statistical-verdict gate (§十二 ⑤⑥ 纪律). When set, or when
+    /// `cfg.eval.proposer.verdict_enabled` is true, a candidate must produce
+    /// harness evidence that it is statistically `Improved` before adoption.
+    verifier: Option<Arc<dyn CandidateVerifier>>,
 }
 
 /// Compact input summary for the LLM, plus per-path badcase reference counts.
@@ -133,7 +140,15 @@ impl StructuralProposer {
         Self {
             provider,
             max_candidates: max_candidates.clamp(1, 8),
+            verifier: None,
         }
+    }
+
+    /// Inject a statistical [`CandidateVerifier`]. When set, the verdict gate
+    /// runs for every adoption regardless of `cfg.eval.proposer.verdict_enabled`.
+    pub fn with_verifier(mut self, verifier: Arc<dyn CandidateVerifier>) -> Self {
+        self.verifier = Some(verifier);
+        self
     }
 
     /// Propose structural rewording candidates for the default agent.
@@ -198,7 +213,7 @@ impl StructuralProposer {
                 cand.object.as_str(),
                 cand.path
             );
-            self.record_trace(state, TraceKind::OptimizerReject, cand, "fenced")
+            self.record_trace(state, TraceKind::OptimizerReject, cand, "fenced", None)
                 .await?;
             return Ok(AdoptionReport {
                 candidate_id: cand.id.clone(),
@@ -208,7 +223,7 @@ impl StructuralProposer {
             });
         }
         if cand.verdict != Some(ComparisonVerdict::Improved) {
-            self.record_trace(state, TraceKind::OptimizerReject, cand, "not_improved")
+            self.record_trace(state, TraceKind::OptimizerReject, cand, "not_improved", None)
                 .await?;
             return Ok(AdoptionReport {
                 candidate_id: cand.id.clone(),
@@ -216,6 +231,96 @@ impl StructuralProposer {
                 reason: "not_improved".to_string(),
                 new_revision: None,
             });
+        }
+
+        // Statistical verdict (§十二 ⑤⑥ 纪律): when a verdict gate is active,
+        // the candidate must additionally produce *harness evidence* that it is
+        // statistically `Improved`. Regressed / non-improved / no-evidence
+        // candidates are refused with the verdict evidence recorded in the
+        // trace. The deterministic `judge` above stays as the fallback when the
+        // gate is inactive.
+        if let Some(verifier) = self.active_verifier(state).await {
+            let subject = VerdictSubject {
+                path: cand.path.clone(),
+                current: Value::String(cand.current.clone()),
+                proposed: Value::String(cand.proposed.clone()),
+            };
+            let verdict = match verifier.verify(&subject).await {
+                Ok(Some(v)) => v,
+                Ok(None) => {
+                    warn!(
+                        "Structural proposer refuses {} ({}): no harness evidence",
+                        cand.id,
+                        cand.object.as_str()
+                    );
+                    self.record_trace(
+                        state,
+                        TraceKind::OptimizerReject,
+                        cand,
+                        "verdict_no_evidence",
+                        None,
+                    )
+                    .await?;
+                    return Ok(AdoptionReport {
+                        candidate_id: cand.id.clone(),
+                        adopted: false,
+                        reason: "verdict_no_evidence".to_string(),
+                        new_revision: None,
+                    });
+                }
+                Err(e) => {
+                    warn!("Structural proposer verdict errored for {}: {}; refusing", cand.id, e);
+                    self.record_trace(
+                        state,
+                        TraceKind::OptimizerReject,
+                        cand,
+                        "verdict_no_evidence",
+                        None,
+                    )
+                    .await?;
+                    return Ok(AdoptionReport {
+                        candidate_id: cand.id.clone(),
+                        adopted: false,
+                        reason: "verdict_no_evidence".to_string(),
+                        new_revision: None,
+                    });
+                }
+            };
+            match &verdict.comparison.verdict {
+                ComparisonVerdict::Improved => {}
+                ComparisonVerdict::Regressed => {
+                    self.record_trace(
+                        state,
+                        TraceKind::OptimizerReject,
+                        cand,
+                        "verdict_regressed",
+                        Some(&verdict.comparison),
+                    )
+                    .await?;
+                    return Ok(AdoptionReport {
+                        candidate_id: cand.id.clone(),
+                        adopted: false,
+                        reason: "verdict_regressed".to_string(),
+                        new_revision: None,
+                    });
+                }
+                ComparisonVerdict::NoSignificantChange | ComparisonVerdict::InsufficientData => {
+                    self.record_trace(
+                        state,
+                        TraceKind::OptimizerReject,
+                        cand,
+                        "verdict_not_improved",
+                        Some(&verdict.comparison),
+                    )
+                    .await?;
+                    return Ok(AdoptionReport {
+                        candidate_id: cand.id.clone(),
+                        adopted: false,
+                        reason: "verdict_not_improved".to_string(),
+                        new_revision: None,
+                    });
+                }
+            }
         }
 
         match cand.object {
@@ -236,7 +341,7 @@ impl StructuralProposer {
                     "Structural proposer adopted tool_description {} (v{})",
                     cand.path, next_version
                 );
-                self.record_trace(state, TraceKind::OptimizerApply, cand, "improved")
+                self.record_trace(state, TraceKind::OptimizerApply, cand, "improved", None)
                     .await?;
                 Ok(AdoptionReport {
                     candidate_id: cand.id.clone(),
@@ -260,7 +365,7 @@ impl StructuralProposer {
                             "Structural proposer adopted prompt {} -> revision {}",
                             cand.path, new_revision
                         );
-                        self.record_trace(state, TraceKind::OptimizerApply, cand, "improved")
+                        self.record_trace(state, TraceKind::OptimizerApply, cand, "improved", None)
                             .await?;
                         Ok(AdoptionReport {
                             candidate_id: cand.id.clone(),
@@ -275,6 +380,7 @@ impl StructuralProposer {
                             TraceKind::OptimizerReject,
                             cand,
                             "revision_conflict",
+                            None,
                         )
                         .await?;
                         Ok(AdoptionReport {
@@ -285,8 +391,14 @@ impl StructuralProposer {
                         })
                     }
                     PatchOutcome::UnknownPath => {
-                        self.record_trace(state, TraceKind::OptimizerReject, cand, "unknown_path")
-                            .await?;
+                        self.record_trace(
+                            state,
+                            TraceKind::OptimizerReject,
+                            cand,
+                            "unknown_path",
+                            None,
+                        )
+                        .await?;
                         Ok(AdoptionReport {
                             candidate_id: cand.id.clone(),
                             adopted: false,
@@ -296,6 +408,35 @@ impl StructuralProposer {
                     }
                 }
             }
+        }
+    }
+
+    /// Resolve the active verdict gate: an injected verifier wins; otherwise
+    /// derive one from `cfg.eval.proposer.verdict_enabled`. When verdicts are
+    /// enabled but no suite is configured, use the no-op verifier so a
+    /// candidate without harness evidence is conservatively refused.
+    async fn active_verifier(
+        &self,
+        state: &Arc<GatewayState>,
+    ) -> Option<Arc<dyn CandidateVerifier>> {
+        if let Some(v) = &self.verifier {
+            return Some(v.clone());
+        }
+        let cfg = state.config.read().await;
+        let p = &cfg.eval.proposer;
+        if !p.verdict_enabled {
+            return None;
+        }
+        match &p.suite {
+            Some(suite_id) => Some(Arc::new(HarnessCandidateVerifier::new(
+                state.clone(),
+                suite_id.clone(),
+                p.trials,
+                p.bootstrap_iterations,
+                p.confidence_level,
+                None,
+            ))),
+            None => Some(Arc::new(NoopVerifier)),
         }
     }
 
@@ -460,13 +601,16 @@ impl StructuralProposer {
         ProposerContext { summary, references }
     }
 
-    /// Persist a decision trace for an adoption or rejection.
+    /// Persist a decision trace for an adoption or rejection. `comparison`
+    /// carries the bootstrap verdict evidence when the decision came from the
+    /// statistical gate (§十二 ⑤⑥ 纪律).
     async fn record_trace(
         &self,
         state: &Arc<GatewayState>,
         kind: TraceKind,
         cand: &StructuralCandidate,
         outcome: &str,
+        comparison: Option<&VersionComparison>,
     ) -> Result<()> {
         let Some(store) = state.infra.decision_trace_store.as_ref() else {
             return Ok(()); // Trace store is optional; adoption itself already happened.
@@ -478,11 +622,14 @@ impl StructuralProposer {
             "to": cand.proposed,
             "reason": cand.reason,
         });
-        let evidence = json!({
+        let mut evidence = json!({
             "outcome": outcome,
             "verdict": cand.verdict.as_ref().map(|v| format!("{:?}", v)),
             "evidence_count": cand.evidence,
         });
+        if let Some(c) = comparison {
+            evidence["verdict_comparison"] = json!(c);
+        }
         store
             .record(&RecordTraceParams {
                 kind,
@@ -549,6 +696,9 @@ fn strip_code_fences(s: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::SystemTime;
+
+    use crate::eval::CandidateVerdict;
     use crate::gateway::state_tests::{make_test_state, make_test_state_with_store};
     use crate::gateway::GatewayConfig;
     use crate::tools::{Tool, ToolContext, ToolExecutionResult};
@@ -782,6 +932,151 @@ mod tests {
         let report = proposer.adopt(&state, &cand).await.unwrap();
         assert!(report.adopted, "Improved prompt must be adopted");
         assert!(report.new_revision.is_some());
+        assert_eq!(state.config.read().await.default_agent.system_prompt, "be helpful and concise");
+    }
+
+    // ── Statistical verdict gate (§十二 ⑤⑥ 纪律) ──────────────────────────
+
+    /// Deterministic stub verifier — no LLM, no harness. Pins the exact
+    /// statistical outcome the gate must react to.
+    #[derive(Clone, Copy)]
+    enum StubOutcome {
+        Improved,
+        Regressed,
+    }
+
+    struct StubVerifier {
+        outcome: StubOutcome,
+    }
+
+    #[async_trait::async_trait]
+    impl CandidateVerifier for StubVerifier {
+        async fn verify(
+            &self,
+            _subject: &VerdictSubject,
+        ) -> std::result::Result<Option<CandidateVerdict>, String> {
+            let verdict = match self.outcome {
+                StubOutcome::Improved => ComparisonVerdict::Improved,
+                StubOutcome::Regressed => ComparisonVerdict::Regressed,
+            };
+            Ok(Some(CandidateVerdict {
+                comparison: VersionComparison {
+                    verdict,
+                    old_pass_rate: 0.5,
+                    new_pass_rate: if matches!(self.outcome, StubOutcome::Improved) {
+                        0.9
+                    } else {
+                        0.4
+                    },
+                    delta: 0.0,
+                    confidence_interval: (0.0, 0.0),
+                    bootstrap_iterations: 1000,
+                    computed_at: SystemTime::now(),
+                },
+                baseline_trials: 4,
+                candidate_trials: 4,
+                suite_id: "stub".to_string(),
+            }))
+        }
+    }
+
+    fn improved_prompt_candidate(id: &str) -> StructuralCandidate {
+        StructuralCandidate {
+            id: id.into(),
+            object: StructuralObjectKind::Prompt,
+            path: "default_agent.system_prompt".into(),
+            current: "be helpful".into(),
+            proposed: "be helpful and concise".into(),
+            reason: "test".into(),
+            fenced: false,
+            evidence: 1,
+            verdict: Some(ComparisonVerdict::Improved),
+        }
+    }
+
+    #[tokio::test]
+    async fn verdict_improved_candidate_is_adopted() {
+        let state = Arc::new(make_test_state_with_store(GatewayConfig::default()).await);
+        let proposer = StructuralProposer::new(None, 4)
+            .with_verifier(Arc::new(StubVerifier { outcome: StubOutcome::Improved }));
+
+        let cand = improved_prompt_candidate("v1");
+        let report = proposer.adopt(&state, &cand).await.unwrap();
+        assert!(report.adopted, "statistically Improved candidate must be adopted");
+        assert_eq!(state.config.read().await.default_agent.system_prompt, "be helpful and concise");
+
+        let traces = state
+            .infra
+            .decision_trace_store
+            .as_ref()
+            .unwrap()
+            .list(None, 10)
+            .await
+            .unwrap();
+        assert_eq!(traces[0].kind, TraceKind::OptimizerApply);
+    }
+
+    #[tokio::test]
+    async fn verdict_regressed_candidate_is_refused() {
+        let state = Arc::new(make_test_state_with_store(GatewayConfig::default()).await);
+        let proposer = StructuralProposer::new(None, 4).with_verifier(Arc::new(StubVerifier {
+            outcome: StubOutcome::Regressed,
+        }));
+
+        let cand = improved_prompt_candidate("v2");
+        let report = proposer.adopt(&state, &cand).await.unwrap();
+        assert!(!report.adopted, "regressed candidate must be refused");
+        assert_eq!(report.reason, "verdict_regressed");
+        // Nothing mutated (the default prompt is untouched).
+        assert_ne!(state.config.read().await.default_agent.system_prompt, "be helpful and concise");
+
+        let traces = state
+            .infra
+            .decision_trace_store
+            .as_ref()
+            .unwrap()
+            .list(None, 10)
+            .await
+            .unwrap();
+        assert_eq!(traces[0].kind, TraceKind::OptimizerReject);
+        assert_eq!(traces[0].evidence["outcome"], "verdict_regressed");
+        assert!(traces[0].evidence["verdict_comparison"]["verdict"].is_string());
+    }
+
+    #[tokio::test]
+    async fn verdict_no_evidence_refused_when_enabled() {
+        let mut cfg = GatewayConfig::default();
+        cfg.eval.proposer.verdict_enabled = true;
+        cfg.eval.proposer.suite = None; // → NoopVerifier → no evidence → refuse
+        let state = Arc::new(make_test_state_with_store(cfg).await);
+        let proposer = StructuralProposer::new(None, 4);
+
+        let cand = improved_prompt_candidate("v3");
+        let report = proposer.adopt(&state, &cand).await.unwrap();
+        assert!(!report.adopted, "no harness evidence must refuse adoption");
+        assert_eq!(report.reason, "verdict_no_evidence");
+
+        let traces = state
+            .infra
+            .decision_trace_store
+            .as_ref()
+            .unwrap()
+            .list(None, 10)
+            .await
+            .unwrap();
+        assert_eq!(traces[0].evidence["outcome"], "verdict_no_evidence");
+    }
+
+    #[tokio::test]
+    async fn verdict_disabled_uses_deterministic_judge() {
+        // Default config: verdict gate disabled, no injected verifier → the
+        // deterministic judge (Improved) still adopts.
+        let state = Arc::new(make_test_state_with_store(GatewayConfig::default()).await);
+        let proposer = StructuralProposer::new(None, 4);
+
+        let cand = improved_prompt_candidate("v4");
+        let report = proposer.adopt(&state, &cand).await.unwrap();
+        assert!(report.adopted, "deterministic judge still adopts when verdict gate is disabled");
         assert_eq!(state.config.read().await.default_agent.system_prompt, "be helpful and concise");
     }
 }

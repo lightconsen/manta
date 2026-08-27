@@ -25,6 +25,11 @@ use crate::eval::apply_patch::{
 };
 use crate::eval::decision_trace::{RecordTraceParams, TraceKind, TraceStatus};
 use crate::eval::guardrail::{CircuitBreaker, OnlineSignalShadowEvaluator, ShadowEvaluator};
+use crate::eval::verdict::{
+    verdict_allows_apply, verdict_reason, CandidateVerifier, HarnessCandidateVerifier,
+    NoopVerifier, VerdictSubject,
+};
+use crate::eval::VersionComparison;
 use crate::gateway::apply_config::read_config_scalar;
 use crate::gateway::config::ScalarOptimizerConfig;
 use crate::gateway::{config_revision, GatewayConfig, GatewayState};
@@ -74,7 +79,9 @@ pub struct OptimizerRunReport {
     pub applied: Vec<AppliedPatch>,
     pub rejected: Vec<RejectedPatch>,
     /// `completed` | `disabled` | `revision_conflict` | `no_viable_candidate`
-    /// | `partial`.
+    /// | `partial` | `cost_guard_exceeded` | `shadow_fail` |
+    /// `verdict_regressed` | `verdict_not_improved` | `verdict_no_evidence` |
+    /// `online_anomaly_rollback` | `circuit_open`.
     pub reason: String,
 }
 
@@ -88,6 +95,10 @@ pub struct OptimizerRunParams {
     /// Shadow-evaluator override. `None` = derive the default from the
     /// guardrail config (online-signal evaluator when guardrails are enabled).
     pub shadow: Option<Arc<dyn ShadowEvaluator>>,
+    /// Statistical-verdict override (§十二 ⑤⑥ 纪律). `None` = derive from
+    /// `cfg.eval.optimizer.verdict`. An injected verifier activates the verdict
+    /// gate regardless of `verdict.enabled`.
+    pub verifier: Option<Arc<dyn CandidateVerifier>>,
 }
 
 /// Live run status surfaced by `eval.optimizer.status`.
@@ -269,6 +280,37 @@ impl ScalarOptimizer {
             )
         };
 
+        // Statistical verdict (§十二 ⑤⑥ 纪律): an injected verifier wins;
+        // otherwise derive one from `cfg.eval.optimizer.verdict`. When verdicts
+        // are enabled but no suite is configured, use the no-op verifier so a
+        // candidate without harness evidence is conservatively rejected.
+        let (
+            verdict_enabled,
+            verdict_suite,
+            verdict_trials,
+            verdict_iterations,
+            verdict_confidence,
+        ) = {
+            let cfg = state.config.read().await;
+            let v = &cfg.eval.optimizer.verdict;
+            (v.enabled, v.suite.clone(), v.trials, v.bootstrap_iterations, v.confidence_level)
+        };
+        let verifier: Option<Arc<dyn CandidateVerifier>> = match &params.verifier {
+            Some(v) => Some(v.clone()),
+            None if verdict_enabled => match verdict_suite {
+                Some(suite_id) => Some(Arc::new(HarnessCandidateVerifier::new(
+                    state.clone(),
+                    suite_id,
+                    verdict_trials,
+                    verdict_iterations,
+                    verdict_confidence,
+                    None,
+                ))),
+                None => Some(Arc::new(NoopVerifier)),
+            },
+            None => None,
+        };
+
         if !enabled && !params.force {
             debug!("Scalar optimizer run skipped: disabled");
             let report = OptimizerRunReport {
@@ -313,6 +355,9 @@ impl ScalarOptimizer {
         let mut applied: Vec<AppliedPatch> = Vec::new();
         let mut rejected: Vec<RejectedPatch> = Vec::new();
         let mut reason = "completed".to_string();
+        // Bootstrap comparison that passed the verdict gate for the current
+        // candidate, folded into the apply-trace evidence.
+        let mut verdict_evidence: Option<VersionComparison> = None;
 
         for cand in candidates.into_iter().take(max_steps) {
             // Gate 1 — cost cap (§十二 护栏 · 成本封顶).
@@ -367,24 +412,109 @@ impl ScalarOptimizer {
                 }
             }
 
+            // Gate 1.5 — statistical verdict (§十二 ⑤⑥ 纪律). Only a candidate
+            // with *harness evidence* that it is statistically `Improved` may
+            // proceed to apply. A regression trips the breaker (like a shadow
+            // failure); a non-improvement or missing evidence is a conservative
+            // reject that does not trip the breaker.
+            if let Some(verifier) = &verifier {
+                let subject = VerdictSubject {
+                    path: cand.path.to_string(),
+                    current: json!(cand.current),
+                    proposed: json!(cand.proposed),
+                };
+                match verifier.verify(&subject).await {
+                    Ok(Some(verdict)) => {
+                        if verdict_allows_apply(&verdict.comparison) {
+                            verdict_evidence = Some(verdict.comparison.clone());
+                        } else {
+                            let reason_str = verdict_reason(&verdict.comparison);
+                            let tripped = reason_str == "verdict_regressed";
+                            let trace_verdict = if tripped { "regressed" } else { "not_improved" };
+                            self.record_trace(
+                                &state,
+                                TraceKind::GateFail,
+                                cand.path.to_string(),
+                                json!({ "path": cand.path, "from": cand.current, "to": cand.proposed }),
+                                json!({
+                                    "run_id": run_id,
+                                    "gate": "verdict",
+                                    "verdict": trace_verdict,
+                                    "reason": format!("candidate {}", reason_str),
+                                    "comparison": &verdict.comparison,
+                                }),
+                                TraceStatus::Rejected,
+                            )
+                            .await;
+                            rejected.push(RejectedPatch {
+                                path: cand.path.to_string(),
+                                reason: reason_str.to_string(),
+                            });
+                            reason = reason_str.to_string();
+                            if tripped {
+                                self.trip_breaker(&state, threshold).await;
+                            }
+                            break;
+                        }
+                    }
+                    other => {
+                        if let Err(e) = other {
+                            warn!(
+                                "Verdict gate errored for {}: {}; rejecting conservatively",
+                                cand.path, e
+                            );
+                        } else {
+                            warn!(
+                                "Verdict gate produced no harness evidence for {}; rejecting conservatively",
+                                cand.path
+                            );
+                        }
+                        self.record_trace(
+                            &state,
+                            TraceKind::GateFail,
+                            cand.path.to_string(),
+                            json!({ "path": cand.path, "from": cand.current, "to": cand.proposed }),
+                            json!({
+                                "run_id": run_id,
+                                "gate": "verdict",
+                                "verdict": "no_evidence",
+                                "reason": "no harness evidence available",
+                            }),
+                            TraceStatus::Rejected,
+                        )
+                        .await;
+                        rejected.push(RejectedPatch {
+                            path: cand.path.to_string(),
+                            reason: "verdict_no_evidence".to_string(),
+                        });
+                        reason = "verdict_no_evidence".to_string();
+                        break;
+                    }
+                }
+            }
+
             let patch = OptimizerPatch {
                 path: cand.path.to_string(),
                 value: json!(cand.proposed),
             };
             match apply_optimizer_patch(&state, &patch, &base_revision).await {
                 PatchOutcome::Applied { new_revision } => {
+                    let mut evidence = applied_evidence(
+                        &run_id,
+                        cand.current,
+                        cand.proposed,
+                        &base_revision,
+                        &new_revision,
+                    );
+                    if let Some(comparison) = &verdict_evidence {
+                        evidence["verdict"] = json!({ "comparison": comparison });
+                    }
                     self.record_trace(
                         &state,
                         TraceKind::OptimizerApply,
                         cand.path.to_string(),
                         json!({ "path": cand.path, "from": cand.current, "to": cand.proposed }),
-                        applied_evidence(
-                            &run_id,
-                            cand.current,
-                            cand.proposed,
-                            &base_revision,
-                            &new_revision,
-                        ),
+                        evidence,
                         TraceStatus::Applied,
                     )
                     .await;
@@ -662,6 +792,9 @@ pub(crate) fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::SystemTime;
+
+    use crate::eval::{CandidateVerdict, ComparisonVerdict, VersionComparison};
     use crate::gateway::state_tests::make_test_state_with_store;
     use crate::gateway::GatewayConfig;
     use async_trait::async_trait;
@@ -1085,5 +1218,257 @@ mod tests {
             matches!(err, SyscityError::NotFound { .. }),
             "no prior apply → NotFound, got {err:?}"
         );
+    }
+
+    // ── Verdict gate (Gate 1.5) ──────────────────────────────────────────
+
+    /// Deterministic stub verifier — no LLM, no harness. Pins the exact
+    /// statistical outcome the gate must react to.
+    #[derive(Clone, Copy)]
+    enum StubOutcome {
+        Improved,
+        Regressed,
+        NotImproved,
+        NoEvidence,
+    }
+
+    struct StubVerifier {
+        outcome: StubOutcome,
+    }
+
+    impl StubVerifier {
+        fn new(outcome: StubOutcome) -> Self {
+            Self { outcome }
+        }
+    }
+
+    #[async_trait]
+    impl CandidateVerifier for StubVerifier {
+        async fn verify(
+            &self,
+            _subject: &VerdictSubject,
+        ) -> Result<Option<CandidateVerdict>, String> {
+            let (verdict, old_rate, new_rate, delta, ci) = match self.outcome {
+                StubOutcome::Improved => (ComparisonVerdict::Improved, 0.5, 0.9, 0.4, (0.1, 0.7)),
+                StubOutcome::Regressed => {
+                    (ComparisonVerdict::Regressed, 0.9, 0.5, -0.4, (-0.7, -0.1))
+                }
+                StubOutcome::NotImproved => {
+                    (ComparisonVerdict::NoSignificantChange, 0.7, 0.7, 0.0, (-0.2, 0.2))
+                }
+                StubOutcome::NoEvidence => return Ok(None),
+            };
+            Ok(Some(CandidateVerdict {
+                comparison: VersionComparison {
+                    verdict,
+                    old_pass_rate: old_rate,
+                    new_pass_rate: new_rate,
+                    delta,
+                    confidence_interval: ci,
+                    bootstrap_iterations: 1000,
+                    computed_at: SystemTime::now(),
+                },
+                baseline_trials: 4,
+                candidate_trials: 4,
+                suite_id: "stub".to_string(),
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn improved_verdict_applies_candidate() {
+        let state = Arc::new(make_test_state_with_store(guarded_config()).await);
+        let optimizer = Arc::new(ScalarOptimizer::new(state.infra.optimizer.clone()));
+
+        let before = state.config.read().await.default_agent.temperature;
+        let report = optimizer
+            .run(
+                state.clone(),
+                OptimizerRunParams {
+                    verifier: Some(Arc::new(StubVerifier::new(StubOutcome::Improved))),
+                    ..Default::default()
+                },
+            )
+            .await;
+
+        assert_eq!(report.reason, "completed");
+        assert_eq!(report.applied.len(), 1, "statistically Improved candidate must apply");
+        assert_ne!(state.config.read().await.default_agent.temperature, before);
+
+        // The apply trace carries the verdict comparison evidence.
+        let traces = state
+            .infra
+            .decision_trace_store
+            .as_ref()
+            .unwrap()
+            .list(None, 10)
+            .await
+            .unwrap();
+        assert_eq!(traces[0].kind, TraceKind::OptimizerApply);
+        assert!(traces[0].evidence["verdict"]["comparison"]["verdict"].is_string());
+
+        // A clean apply records a breaker success.
+        let snap = state.infra.optimizer.breaker.snapshot().await;
+        assert_eq!(snap.failures, 0);
+        assert!(!snap.tripped);
+    }
+
+    #[tokio::test]
+    async fn regressed_verdict_rejects_and_trips_breaker() {
+        let state = Arc::new(make_test_state_with_store(guarded_config()).await);
+        let optimizer = Arc::new(ScalarOptimizer::new(state.infra.optimizer.clone()));
+        let params = OptimizerRunParams {
+            verifier: Some(Arc::new(StubVerifier::new(StubOutcome::Regressed))),
+            ..Default::default()
+        };
+
+        let r1 = optimizer.run(state.clone(), params.clone()).await;
+        assert_eq!(r1.reason, "verdict_regressed");
+        assert!(r1.applied.is_empty(), "regressed candidate must not apply");
+        assert_eq!(r1.rejected[0].reason, "verdict_regressed");
+        assert!(!state.infra.optimizer.paused.load(Ordering::SeqCst));
+
+        let r2 = optimizer.run(state.clone(), params).await;
+        assert_eq!(r2.reason, "verdict_regressed");
+        assert!(
+            state.infra.optimizer.paused.load(Ordering::SeqCst),
+            "two consecutive regressed verdicts must trip the breaker"
+        );
+        assert!(
+            state
+                .infra
+                .optimizer
+                .breaker
+                .is_open(Duration::from_secs(300))
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn not_improved_verdict_rejects_without_trip() {
+        let state = Arc::new(make_test_state_with_store(guarded_config()).await);
+        let optimizer = Arc::new(ScalarOptimizer::new(state.infra.optimizer.clone()));
+
+        let report = optimizer
+            .run(
+                state.clone(),
+                OptimizerRunParams {
+                    verifier: Some(Arc::new(StubVerifier::new(StubOutcome::NotImproved))),
+                    ..Default::default()
+                },
+            )
+            .await;
+
+        assert_eq!(report.reason, "verdict_not_improved");
+        assert!(report.applied.is_empty());
+        assert_eq!(report.rejected[0].reason, "verdict_not_improved");
+
+        // A non-improvement is a conservative reject — no breaker trip.
+        let snap = state.infra.optimizer.breaker.snapshot().await;
+        assert_eq!(snap.failures, 0);
+        assert!(!snap.tripped);
+        assert!(!state.infra.optimizer.paused.load(Ordering::SeqCst));
+
+        // A `gate_fail` trace was recorded with the comparison evidence.
+        let traces = state
+            .infra
+            .decision_trace_store
+            .as_ref()
+            .unwrap()
+            .list(None, 10)
+            .await
+            .unwrap();
+        assert_eq!(traces[0].kind, TraceKind::GateFail);
+        assert_eq!(traces[0].evidence["gate"], "verdict");
+        assert_eq!(traces[0].evidence["verdict"], "not_improved");
+    }
+
+    #[tokio::test]
+    async fn no_evidence_verdict_rejects_when_enabled() {
+        // verdict.enabled with no suite → NoopVerifier → no evidence → reject.
+        let mut cfg = enabled_config();
+        cfg.eval.optimizer.verdict.enabled = true;
+        cfg.eval.optimizer.verdict.suite = None;
+        let state = Arc::new(make_test_state_with_store(cfg).await);
+        let optimizer = Arc::new(ScalarOptimizer::new(state.infra.optimizer.clone()));
+
+        let report = optimizer
+            .run(state.clone(), OptimizerRunParams::default())
+            .await;
+
+        assert_eq!(report.reason, "verdict_no_evidence");
+        assert!(report.applied.is_empty());
+        assert_eq!(report.rejected[0].reason, "verdict_no_evidence");
+        assert!(!state.infra.optimizer.paused.load(Ordering::SeqCst));
+
+        let traces = state
+            .infra
+            .decision_trace_store
+            .as_ref()
+            .unwrap()
+            .list(None, 10)
+            .await
+            .unwrap();
+        assert_eq!(traces[0].kind, TraceKind::GateFail);
+        assert_eq!(traces[0].evidence["verdict"], "no_evidence");
+    }
+
+    #[tokio::test]
+    async fn injected_no_evidence_verdict_rejects() {
+        let state = Arc::new(make_test_state_with_store(guarded_config()).await);
+        let optimizer = Arc::new(ScalarOptimizer::new(state.infra.optimizer.clone()));
+
+        let report = optimizer
+            .run(
+                state.clone(),
+                OptimizerRunParams {
+                    verifier: Some(Arc::new(StubVerifier::new(StubOutcome::NoEvidence))),
+                    ..Default::default()
+                },
+            )
+            .await;
+
+        assert_eq!(report.reason, "verdict_no_evidence");
+        assert!(report.applied.is_empty());
+        assert_eq!(report.rejected[0].reason, "verdict_no_evidence");
+        // No evidence → conservative reject, no breaker trip.
+        let snap = state.infra.optimizer.breaker.snapshot().await;
+        assert_eq!(snap.failures, 0);
+        assert!(!snap.tripped);
+    }
+
+    #[tokio::test]
+    async fn verdict_disabled_applies_via_shadow_gate() {
+        // Verdict disabled + no injected verifier → the old path: shadow gate
+        // (passes) then apply, exactly as before.
+        let state = Arc::new(make_test_state_with_store(guarded_config()).await);
+        let optimizer = Arc::new(ScalarOptimizer::new(state.infra.optimizer.clone()));
+
+        let before = state.config.read().await.default_agent.temperature;
+        let report = optimizer
+            .run(
+                state.clone(),
+                OptimizerRunParams {
+                    shadow: Some(Arc::new(PassEvaluator)),
+                    ..Default::default()
+                },
+            )
+            .await;
+
+        assert_eq!(report.reason, "completed");
+        assert_eq!(report.applied.len(), 1);
+        assert_ne!(state.config.read().await.default_agent.temperature, before);
+
+        // The apply trace has no verdict evidence (gate inactive).
+        let traces = state
+            .infra
+            .decision_trace_store
+            .as_ref()
+            .unwrap()
+            .list(None, 10)
+            .await
+            .unwrap();
+        assert_eq!(traces[0].kind, TraceKind::OptimizerApply);
+        assert!(traces[0].evidence["verdict"].is_null());
     }
 }

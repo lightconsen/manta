@@ -99,9 +99,9 @@ Harness 不是一组零件，而是把模型与外部世界连接起来的**带�
 | 组件 | 现状 | 差距 |
 |------|------|------|
 | 反馈生产线 | 仅 eval 通道可用 | `feedback ops` / `feedback model` 仍为占位 |
-| 回归集治理 | `recycle.rs::load_governed_badcase_suite` + `BadcaseGovernance`：过期淘汰（`filter_expired`，默认 90 天）、同输入去重（`is_duplicate`，默认 3 次）、高频任务降级（`effective_pass_rate`），套件加载时实际应用 | 治理参数是代码默认值，未进 config.toml；仍缺样本难度分层/覆盖标签 |
-| 上下文压缩 | `compressor.rs` 已实现 | 压缩质量缺量化指标，未纳入 eval 门禁 |
-| 人工复核覆盖 | store + 路由已实现 | 缺固定抽样率策略（默认只兜低置信/冲突） |
+| 回归集治理 | `recycle.rs::load_governed_badcase_suite` + `BadcaseGovernance`：过期淘汰（`filter_expired`，默认 90 天）、同输入去重（`is_duplicate`，默认 3 次）、高频任务降级（`effective_pass_rate`），套件加载时实际应用；难度/覆盖标签 + 加权 trial 已实现（`weighted_trials`，standalone 按 `task.trials` 执行） | 治理参数仍为代码默认值，`BadcaseGovernance::from_config` 未接生产加载路径 |
+| 上下文压缩 | `compressor.rs` 已实现；`CompressionObservation.retention_ratio` + `quality_flag`（阈值 `min_retention_ratio`）已量化 | eval 门禁侧未校验低保留率（仅记录，未据此失败） |
+| 人工复核覆盖 | store + 路由已实现；固定抽样率 `human_review.sampling_rate` 已实现，`score_and_review` 经 `route_case` 按 base_reason ∪ 抽样率路由 | `LayeredScorer` 未接入 harness 生产构造路径（当前仅 eval 测试覆盖） |
 
 ---
 
@@ -252,16 +252,19 @@ daemon 的后台批量任务触发（§十二 ⑤⑦ 的自动优化器 / 门禁
 - badcase 回收 → RCA → action-items → 回归套件
 - daemon 发布门禁（失败可拒启）
 - 反思引擎（后台轨迹自我批判）
+- 反馈闭环：`feedback.vote` WS + Web Like/Dislike 按钮（§十二），down 票转 `human:dislike` 待确认 badcase
+- 在线质量监控：post-turn RiskSignalChecker 粗筛，高风险命中触发 LLM Judge 深评（`scan_turn_for_badcase`，§八）
+- 回归集治理：badcase 难度/覆盖标签 + 加权 trial（`BadcaseGovernance::weighted_trials`，standalone 按 `task.trials` 执行）
+- 调优纪律：optimizer/proposer 候选走 harness + `compare_versions` bootstrap verdict，仅 `Improved` 出 patch（`verdict.rs` Gate 1.5，§十二 ⑤⑥）
+- 压缩质量量化：`CompressionObservation.retention_ratio` + `quality_flag`（阈值 `min_retention_ratio`，§三）
+- 人工复核抽样：`human_review.sampling_rate` 固定抽样，`score_and_review` 经 `route_case` 路由（§三）
 
 ### ❌ 缺失（把 harness 从"评测期好用"推向"生产期好用"）
 
 | 缺失项 | 说明 | 建议补法 |
 |--------|------|----------|
-| 在线质量监控 | 生产真实用户流量无采样评分；`EvalTaskSource::Online` 只是数据类型，未接入 live path | 网关层对输出做低成本的粗筛采样（RiskSignalChecker 已在 `scorer.rs`，可复用），命中高风险才触发 LLM Judge |
-| 评测看板 | 无可视化（仅 `model_router/usage_fetcher` 有用量看板，非评测） | 基于 eval 产物（pass rate / 维度分 / badcase 聚类 / 对比 verdict）出简单趋势页 |
+| 评测看板 | 有基础 eval dashboard（Web），缺趋势/对比可视化 | 基于 eval 产物（pass rate / 维度分 / badcase 聚类 / 对比 verdict）出简单趋势页 |
 | Shadow / A-B | 离线 diff 有了（`comparison.rs`），无线上 shadow 分流对比 | 灰度流量按版本分流，用同一判分器离线对比 |
-| 运营/模型反馈通道 | `feedback ops` / `feedback model` 为占位 | 打通人工反馈与线上 badcase 收集的入站口：落地为 `feedback.vote` WS 方法 + Like/Dislike 按钮（§十二），dislike 经 `human_review` 复核转 badcase |
-| 回归集难度分层 | 去重/过期/降级已有（`BadcaseGovernance`），缺难度分层与覆盖标签 | 给 badcase 加难度与覆盖标签，按难度加权进套件 |
 
 ---
 
@@ -417,7 +420,7 @@ badcase 指向某参数时，按此表确定落点。**config.toml 覆盖了大�
 | 工具 schema | JSON schema + 描述写死在 `tools/` | ✅ 描述 / 参数说明可拆成多版本候选 | 工具描述作为数据存注册表，版本化 + eval 选优 |
 | prompt 措辞 | `system_prompt` / `skills_prompt` 组装 | ✅ 已是 config.toml 数据（§十） | `full_system_prompt()` = base + skills_prompt，每个槽位可有多版本候选 |
 | RAG 检索（HyDE / reranker / context_window / multi_query） | `[vector_memory.query_transformer]` / `reranker` / `context_window` / `multi_query` | ✅ 已参数化 | `VectorMemoryConfig`（`gateway/config.rs:363`）真实反序列化 |
-| RAG 切块（chunk_size / overlap / separators） | ⚠️ `EmbeddingConfig`（`rag/config.rs:46`）在 `gateway/init/services.rs:112,487` **代码硬编码**，不从 toml 加载 | ⚠️ 尚未参数化 | `config-guide.md:111` 的 `[vector_memory.chunk_strategy]` 是文档漂移；补 `[vector_memory.embedding]` 节即可参数化 |
+| RAG 切块（chunk_size / overlap / separators） | ✅ `[vector_memory.embedding]`（`EmbeddingParams`，`gateway/config.rs`）真实反序列化，`services.rs` 读取 config 值 | ✅ 已参数化 | `config-guide.md:111` 补 `[vector_memory.embedding]` 示例（chunk_size / overlap / strategy） |
 | 流程 SOP | goal / standing_orders / planner 分解规则 | ✅ 规则写成数据 + 版本号 | 任务说明作为数据文件，可替换、可对比 |
 
 **统一机制：LLM 提议 + eval 验证 + CI 判定**

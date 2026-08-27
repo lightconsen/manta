@@ -52,6 +52,7 @@ pub(crate) mod multi_judge;
 pub(crate) mod optimizer;
 pub(crate) mod pending_badcase;
 pub(crate) mod proposer;
+pub(crate) mod verdict;
 
 pub use action::{
     generate_action_items, load_action_items, write_action_items, ActionItem, ActionLevel,
@@ -115,4 +116,7 @@ pub use scorer::{
 pub use skill_scorer::{
     ExecutionCheckResult, QualityCheckResult, ResilienceCheckResult, SkillCheckResult, SkillScorer,
     TriggerCheckResult,
+};
+pub use verdict::{
+    CandidateVerdict, CandidateVerifier, HarnessCandidateVerifier, NoopVerifier, VerdictSubject,
 };

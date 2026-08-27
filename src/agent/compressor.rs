@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use tracing::{debug, info, warn};
 
+use crate::observe::record::CompressionObservation;
 use crate::providers::{Message, Provider, Role};
 
 /// Estimated tokens per character (approximation)
@@ -501,6 +502,29 @@ impl std::fmt::Display for CompressionStats {
             self.reduction_percent
         )
     }
+}
+
+/// Build a [`CompressionObservation`] for a compaction, computing the retention
+/// quality metrics (§三) from the raw token counts.
+///
+/// The `min_retention_ratio` threshold is taken from
+/// [`DEFAULT_MIN_RETENTION_RATIO`](crate::observe::record::DEFAULT_MIN_RETENTION_RATIO)
+/// because the gateway `CompressionQualityConfig` is not threaded into the
+/// compression call sites (which live in `agent_engine` / the observe
+/// collector).
+pub fn build_compression_observation(
+    triggered_at_ms: u64,
+    tokens_before: usize,
+    tokens_after: usize,
+    strategy: impl Into<String>,
+) -> CompressionObservation {
+    CompressionObservation::from_counts(
+        triggered_at_ms,
+        tokens_before,
+        tokens_after,
+        strategy,
+        crate::observe::record::DEFAULT_MIN_RETENTION_RATIO,
+    )
 }
 
 #[cfg(test)]
@@ -1094,5 +1118,63 @@ mod tests {
         let tail_start = &compacted[2]; // head(1) + summary + tail
         assert_eq!(tail_start.role, Role::User);
         assert_eq!(tail_start.content, "u3");
+    }
+
+    // ── compression quality (§三) ─────────────────────────────────────────────
+
+    fn assert_ratio(actual: f64, expected: f64) {
+        assert!((actual - expected).abs() < 1e-9, "retention_ratio {} != {}", actual, expected);
+    }
+
+    #[test]
+    fn build_observation_computes_retention_ratio() {
+        let obs = build_compression_observation(0, 200, 100, "llm_summary");
+        assert_ratio(obs.retention_ratio, 0.5);
+        assert_eq!(obs.freed_tokens, 100);
+        // 0.5 is not below the 0.5 default -> no flag.
+        assert_eq!(obs.quality_flag, None);
+
+        let full = build_compression_observation(0, 200, 0, "llm_summary");
+        assert_ratio(full.retention_ratio, 0.0);
+        assert_eq!(full.quality_flag.as_deref(), Some("low_retention"));
+
+        let none = build_compression_observation(0, 200, 200, "llm_summary");
+        assert_ratio(none.retention_ratio, 1.0);
+        assert_eq!(none.quality_flag, None);
+
+        let zero = build_compression_observation(0, 0, 0, "heuristic_summary");
+        assert_ratio(zero.retention_ratio, 0.0);
+        assert_eq!(zero.quality_flag.as_deref(), Some("low_retention"));
+        assert_eq!(zero.strategy, "heuristic_summary");
+    }
+
+    #[tokio::test]
+    async fn compacted_history_yields_observation_with_quality_metrics() {
+        let compressor = ContextCompressor::new(4096);
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider {
+            response: Some("Summary of the conversation".to_string()),
+            should_fail: false,
+        });
+        let messages = create_test_messages(30);
+        let before = compressor.estimate_tokens(&messages);
+        let compacted = compressor
+            .compact_with_llm(&messages, &provider, None, 2, 6)
+            .await;
+        let after = compressor.estimate_tokens(&compacted);
+
+        // The compaction must have reclaimed tokens for a meaningful observation.
+        assert!(after < before, "compaction should shrink the history");
+
+        let obs = build_compression_observation(0, before, after, "llm_summary");
+        assert_eq!(obs.tokens_before, before);
+        assert_eq!(obs.tokens_after, after);
+        assert_eq!(obs.freed_tokens, before - after);
+        assert_ratio(obs.retention_ratio, after as f64 / before as f64);
+        // The flag is consistent with the default 0.5 threshold.
+        if obs.retention_ratio < crate::observe::record::DEFAULT_MIN_RETENTION_RATIO {
+            assert_eq!(obs.quality_flag.as_deref(), Some("low_retention"));
+        } else {
+            assert_eq!(obs.quality_flag, None);
+        }
     }
 }

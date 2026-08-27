@@ -632,6 +632,8 @@ async fn cmd_badcase_submit(
         description: stub_task.description.clone(),
         failure_reason: failure_reason.unwrap_or_else(|| "Manual submission".into()),
         response,
+        difficulty: "medium".into(),
+        coverage: Vec::new(),
         rca_performed: false,
         rca_result: None,
         collected_at: SystemTime::now(),

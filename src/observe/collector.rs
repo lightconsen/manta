@@ -17,7 +17,7 @@ use crate::providers::Usage;
 use super::record::{
     json_value_or_string, ChannelObservation, CompressionObservation, ErrorSource, FullTraceEvent,
     LlmRoundRecord, ObservedError, ObservedToolCall, ObservedUsage, PlanSnapshot, RouteRecord,
-    TurnEndState, TurnRecord, SCHEMA_VERSION,
+    TurnEndState, TurnRecord, DEFAULT_MIN_RETENTION_RATIO, SCHEMA_VERSION,
 };
 use super::writer::TurnMetricsWriter;
 use super::TurnMetricsSink;
@@ -163,20 +163,21 @@ impl TurnMetricsCollector {
     }
 
     /// Record a context-compression event. `triggered_at_ms` is computed as the
-    /// elapsed time since the turn started.
+    /// elapsed time since the turn started; `retention_ratio` and
+    /// `quality_flag` are derived from the token counts (§三).
     pub fn record_compression(
         &mut self,
         tokens_before: usize,
         tokens_after: usize,
         strategy: impl Into<String>,
     ) {
-        self.compressions.push(CompressionObservation {
-            triggered_at_ms: self.start.elapsed().as_millis() as u64,
+        self.compressions.push(CompressionObservation::from_counts(
+            self.start.elapsed().as_millis() as u64,
             tokens_before,
             tokens_after,
-            freed_tokens: tokens_before.saturating_sub(tokens_after),
-            strategy: strategy.into(),
-        });
+            strategy,
+            DEFAULT_MIN_RETENTION_RATIO,
+        ));
     }
 
     /// Record the planner DAG snapshot for this turn.

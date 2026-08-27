@@ -18,12 +18,13 @@
 //!   mismatch.
 //! - RCA integration is optional (`Option<Arc<RcaPipeline>>`).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::eval::dataset::{EvalSuite, EvalTask, EvalTaskSource, SuiteCategory};
 use crate::eval::harness::{EvalSummary, TrialResult};
@@ -74,6 +75,20 @@ pub struct BadcaseRecord {
     pub fix_status: BadcaseFixStatus,
     /// Badcase entry source.
     pub entry: BadcaseEntry,
+    /// Difficulty label for regression weighting (§八): `"easy"` | `"medium"`
+    /// | `"hard"`. Defaults to `"medium"` so pre-existing badcase YAML still
+    /// parses.
+    #[serde(default = "default_badcase_difficulty")]
+    pub difficulty: String,
+    /// Coverage tags for regression attribution (§八), e.g. `tools`,
+    /// `routing`, `prompt`, `retrieval`, `compression`. Defaults to empty.
+    #[serde(default)]
+    pub coverage: Vec<String>,
+}
+
+/// Default difficulty applied to badcases without an explicit label (§八).
+fn default_badcase_difficulty() -> String {
+    "medium".to_string()
 }
 
 /// A cluster of similar badcases grouped by phenomenon and module.
@@ -108,6 +123,18 @@ pub struct BadcaseGovernance {
     pub downgrade_threshold: usize,
     /// The reduced pass rate applied to downgraded tasks.
     pub downgraded_pass_rate: f64,
+    /// Difficulty label → trial-count multiplier (§八). Harder cases get
+    /// proportionally more trials in the governed regression suite.
+    #[serde(default)]
+    pub difficulty_weights: HashMap<String, f64>,
+    /// Multiplier applied when a badcase difficulty has no explicit entry.
+    #[serde(default = "default_badcase_default_weight")]
+    pub default_weight: f64,
+}
+
+/// Default multiplier for difficulties without an explicit weight (§八).
+fn default_badcase_default_weight() -> f64 {
+    1.0
 }
 
 impl Default for BadcaseGovernance {
@@ -117,6 +144,8 @@ impl Default for BadcaseGovernance {
             max_duplicate_inputs: 3,
             downgrade_threshold: 10,
             downgraded_pass_rate: 0.7,
+            difficulty_weights: HashMap::new(),
+            default_weight: default_badcase_default_weight(),
         }
     }
 }
@@ -157,6 +186,37 @@ impl BadcaseGovernance {
             self.downgraded_pass_rate.min(default_min)
         } else {
             default_min
+        }
+    }
+
+    /// Resolve the trial-count multiplier for a difficulty label (§八).
+    ///
+    /// Returns the configured weight for `difficulty`, falling back to
+    /// `default_weight` when the label has no explicit entry.
+    pub fn weight_for(&self, difficulty: &str) -> f64 {
+        self.difficulty_weights
+            .get(difficulty)
+            .copied()
+            .unwrap_or(self.default_weight)
+    }
+
+    /// Compute the weighted trial count for a badcase task (§八).
+    ///
+    /// Scales `base_trials` by [`Self::weight_for`] and floors at 1 so a
+    /// weight of zero never drops the task out of the suite entirely.
+    pub fn weighted_trials(&self, difficulty: &str, base_trials: usize) -> usize {
+        (base_trials as f64 * self.weight_for(difficulty))
+            .round()
+            .max(1.0) as usize
+    }
+
+    /// Build governance from the gateway config's badcase-governance section,
+    /// merging the configured difficulty weights into the code defaults (§八).
+    pub fn from_config(c: &crate::gateway::config::BadcaseGovernanceConfig) -> Self {
+        Self {
+            difficulty_weights: c.difficulty_weights.clone(),
+            default_weight: c.default_weight,
+            ..Self::default()
         }
     }
 }
@@ -245,6 +305,8 @@ impl BadcaseCollector {
                 collected_at: SystemTime::now(),
                 fix_status: BadcaseFixStatus::Unconfirmed,
                 entry: BadcaseEntry::AutoDetected,
+                difficulty: task.difficulty.clone(),
+                coverage: task.coverage.clone(),
             };
 
             // Persist as YAML
@@ -323,6 +385,8 @@ impl BadcaseCollector {
                 collected_at: SystemTime::now(),
                 fix_status: BadcaseFixStatus::Unconfirmed,
                 entry: BadcaseEntry::AutoDetected,
+                difficulty: task.difficulty.clone(),
+                coverage: task.coverage.clone(),
             };
 
             write_badcase_yaml(&record, task, &self.output_dir)?;
@@ -396,8 +460,6 @@ fn determine_failure_reason(trial: &TrialResult) -> String {
 /// easy to identify systemic issues vs one-off failures.
 #[allow(dead_code)]
 pub fn cluster_badcases(records: &[BadcaseRecord]) -> Vec<BadcaseCluster> {
-    use std::collections::HashMap;
-
     #[derive(Hash, Eq, PartialEq, Clone)]
     struct ClusterKey {
         phenomenon: String,
@@ -548,6 +610,12 @@ fn build_badcase_yaml_task(record: &BadcaseRecord, original: &EvalTask) -> serde
 
     // source: always "badcase"
     task.insert("source".into(), "badcase".into());
+
+    // difficulty + coverage (§八) — round-trip the regression labels
+    task.insert("difficulty".into(), record.difficulty.clone().into());
+    if !record.coverage.is_empty() {
+        task.insert("coverage".into(), record.coverage.clone().into());
+    }
 
     // failure_reason
     task.insert("failure_reason".into(), record.failure_reason.clone().into());
@@ -761,6 +829,24 @@ pub fn load_governed_badcase_suite(
         governance.effective_pass_rate("__suite__", &active_records, suite.min_pass_rate);
     suite.min_pass_rate = downgraded_min;
 
+    // ── Apply difficulty weighting (§八) ──
+    // Harder badcases get proportionally more trials in the governed
+    // regression suite via `weighted_trials`. The base is the suite's trial
+    // count; the weighted per-task count is recorded on the task so the
+    // harness can honor it (currently consumed at the suite level only).
+    let base_trials = suite.trials;
+    for task in &mut suite.tasks {
+        let difficulty = task.difficulty.as_str();
+        let weighted = governance.weighted_trials(difficulty, base_trials);
+        task.trials = Some(weighted);
+        if !task.coverage.is_empty() {
+            debug!(
+                "Badcase task '{}' weighted into suite: difficulty={}, trials={}->{}, coverage={:?}",
+                task.id, difficulty, base_trials, weighted, task.coverage
+            );
+        }
+    }
+
     Ok(suite)
 }
 
@@ -972,6 +1058,8 @@ mod tests {
                 collected_at: SystemTime::now(),
                 fix_status: BadcaseFixStatus::Unconfirmed,
                 entry: BadcaseEntry::AutoDetected,
+                difficulty: "medium".into(),
+                coverage: Vec::new(),
             },
             BadcaseRecord {
                 id: "test_2".into(),
@@ -985,6 +1073,8 @@ mod tests {
                 collected_at: SystemTime::now(),
                 fix_status: BadcaseFixStatus::Unconfirmed,
                 entry: BadcaseEntry::AutoDetected,
+                difficulty: "medium".into(),
+                coverage: Vec::new(),
             },
         ];
         // Without RCA results, all cluster as "unknown/unknown"
@@ -1027,6 +1117,8 @@ mod tests {
                 collected_at: SystemTime::now(),
                 fix_status: BadcaseFixStatus::Unconfirmed,
                 entry: BadcaseEntry::AutoDetected,
+                difficulty: "medium".into(),
+                coverage: Vec::new(),
             },
             BadcaseRecord {
                 id: "r2".into(),
@@ -1040,6 +1132,8 @@ mod tests {
                 collected_at: SystemTime::now(),
                 fix_status: BadcaseFixStatus::Unconfirmed,
                 entry: BadcaseEntry::AutoDetected,
+                difficulty: "medium".into(),
+                coverage: Vec::new(),
             },
             BadcaseRecord {
                 id: "r3".into(),
@@ -1053,6 +1147,8 @@ mod tests {
                 collected_at: SystemTime::now(),
                 fix_status: BadcaseFixStatus::Unconfirmed,
                 entry: BadcaseEntry::AutoDetected,
+                difficulty: "medium".into(),
+                coverage: Vec::new(),
             },
         ];
 
@@ -1094,6 +1190,8 @@ mod tests {
             collected_at: SystemTime::now(),
             fix_status: BadcaseFixStatus::Unconfirmed,
             entry: BadcaseEntry::AutoDetected,
+            difficulty: "medium".into(),
+            coverage: Vec::new(),
         };
         let old_record = BadcaseRecord {
             id: "stale".into(),
@@ -1163,6 +1261,152 @@ mod tests {
         assert!((rate_normal - 0.9).abs() < 1e-6);
     }
 
+    #[test]
+    fn test_weight_for_maps_difficulty() {
+        let mut weights = HashMap::new();
+        weights.insert("hard".to_string(), 2.0);
+        weights.insert("medium".to_string(), 1.5);
+        weights.insert("easy".to_string(), 0.5);
+        let g = BadcaseGovernance {
+            difficulty_weights: weights,
+            default_weight: 1.0,
+            ..Default::default()
+        };
+
+        assert!((g.weight_for("hard") - 2.0).abs() < 1e-6);
+        assert!((g.weight_for("medium") - 1.5).abs() < 1e-6);
+        assert!((g.weight_for("easy") - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_weight_for_unknown_uses_default_weight() {
+        let g = BadcaseGovernance {
+            difficulty_weights: HashMap::new(),
+            default_weight: 1.0,
+            ..Default::default()
+        };
+        // Unknown label falls back to default_weight.
+        assert!((g.weight_for("hard") - 1.0).abs() < 1e-6);
+        assert!((g.weight_for("totally_unknown") - 1.0).abs() < 1e-6);
+
+        // Default governance has no weights → everything maps to 1.0.
+        let g = BadcaseGovernance::default();
+        assert!((g.weight_for("hard") - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_weighted_trials_scales() {
+        let mut weights = HashMap::new();
+        weights.insert("hard".to_string(), 2.0);
+        let g = BadcaseGovernance {
+            difficulty_weights: weights,
+            default_weight: 1.0,
+            ..Default::default()
+        };
+
+        // 2 base trials * weight 2.0 → 4.
+        assert_eq!(g.weighted_trials("hard", 2), 4);
+        // 3 base trials * weight 2.0 → 6.
+        assert_eq!(g.weighted_trials("hard", 3), 6);
+        // Unknown difficulty keeps the base trial count.
+        assert_eq!(g.weighted_trials("medium", 3), 3);
+    }
+
+    #[test]
+    fn test_weighted_trials_floors_at_one() {
+        let mut weights = HashMap::new();
+        weights.insert("easy".to_string(), 0.0);
+        let g = BadcaseGovernance {
+            difficulty_weights: weights,
+            default_weight: 0.0,
+            ..Default::default()
+        };
+
+        // A zero weight must not drop the task out of the suite entirely.
+        assert_eq!(g.weighted_trials("easy", 5), 1);
+    }
+
+    #[test]
+    fn test_from_config_merges_weights() {
+        use crate::gateway::config::BadcaseGovernanceConfig;
+
+        let mut weights = HashMap::new();
+        weights.insert("hard".to_string(), 3.0);
+        let cfg = BadcaseGovernanceConfig {
+            difficulty_weights: weights,
+            default_weight: 1.5,
+        };
+
+        let g = BadcaseGovernance::from_config(&cfg);
+
+        // Config weights merged into the default governance values.
+        assert_eq!(g.max_age_days, 90);
+        assert!((g.weight_for("hard") - 3.0).abs() < 1e-6);
+        assert!((g.default_weight - 1.5).abs() < 1e-6);
+        assert!((g.weight_for("medium") - 1.5).abs() < 1e-6);
+
+        // Empty config keeps default governance behaviour.
+        let g = BadcaseGovernance::from_config(&BadcaseGovernanceConfig::default());
+        assert!((g.weight_for("hard") - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_badcase_record_default_labels() {
+        // Old badcase YAML entries lack difficulty/coverage — they must parse
+        // with the defaults (`medium`, empty coverage) so the regression
+        // suite keeps loading pre-existing files.
+        let yaml = r#"
+            id: legacy_bc
+            task_id: legacy_task
+            input: hello
+            description: legacy
+            failure_reason: crit
+            response: resp
+            rca_performed: false
+            fix_status: Unconfirmed
+            entry: AutoDetected
+            collected_at:
+              secs_since_epoch: 1784000000
+              nanos_since_epoch: 0
+        "#;
+        let record: BadcaseRecord = serde_yml::from_str(yaml).unwrap();
+        assert_eq!(record.difficulty, "medium");
+        assert!(record.coverage.is_empty());
+
+        // Round-trip: the YAML writer emits the labels so they survive the
+        // write → read cycle.
+        let mut labeled = make_record();
+        labeled.difficulty = "hard".into();
+        labeled.coverage = vec!["tools".into(), "routing".into()];
+        let value = build_badcase_yaml_task(&labeled, &crate::eval::EvalTask::default());
+        let key = |s: &str| serde_yml::Value::String(s.to_string());
+        let mapping = value.as_mapping().unwrap();
+        assert_eq!(mapping.get(&key("difficulty")), Some(&serde_yml::Value::String("hard".into())));
+        let coverage = mapping.get(&key("coverage")).expect("coverage key");
+        assert_eq!(
+            coverage
+                .as_sequence()
+                .unwrap()
+                .iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>(),
+            vec!["tools", "routing"]
+        );
+    }
+
+    #[test]
+    fn test_eval_task_default_labels() {
+        // Old task YAML without the new fields deserializes with defaults.
+        let yaml = r#"
+            id: legacy
+            input: hi
+        "#;
+        let task: crate::eval::EvalTask = serde_yml::from_str(yaml).unwrap();
+        assert_eq!(task.difficulty, "medium");
+        assert!(task.coverage.is_empty());
+        assert!(task.trials.is_none());
+    }
+
     /// Helper: minimal BadcaseRecord for tests.
     fn make_record() -> BadcaseRecord {
         BadcaseRecord {
@@ -1177,6 +1421,8 @@ mod tests {
             collected_at: SystemTime::now(),
             fix_status: BadcaseFixStatus::Unconfirmed,
             entry: BadcaseEntry::AutoDetected,
+            difficulty: "medium".into(),
+            coverage: Vec::new(),
         }
     }
 }

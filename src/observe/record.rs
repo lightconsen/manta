@@ -13,6 +13,12 @@ pub const MAX_FIELD_BYTES: usize = 4096;
 /// Current turn record schema version.
 pub const SCHEMA_VERSION: u32 = 1;
 
+/// Default minimum token retention ratio below which a compaction is flagged
+/// `low_retention`. Mirrors `CompressionQualityConfig::min_retention_ratio`
+/// (default `0.5`); the gateway config is not threaded into the compression
+/// observation builders, so this constant is the value used there.
+pub const DEFAULT_MIN_RETENTION_RATIO: f64 = 0.5;
+
 /// How a turn ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -143,7 +149,8 @@ pub struct RouteRecord {
 }
 
 /// A context-compression event: how many tokens were reclaimed and with which
-/// strategy. Captured in `compact_context_forced`.
+/// strategy, plus the quantified retention quality (§三). Captured in
+/// `compact_context_forced`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompressionObservation {
     /// Milliseconds since the start of the turn.
@@ -157,6 +164,50 @@ pub struct CompressionObservation {
     /// `"llm_summary"` when an LLM wrote the summary, `"heuristic_summary"`
     /// for the middle-drop fallback.
     pub strategy: String,
+    /// Fraction of tokens retained after compaction: `tokens_after / tokens_before`.
+    /// `1.0` when nothing was reclaimed; `0.0` when `tokens_before == 0`.
+    /// Additive field: legacy records without it deserialize to `0.0`.
+    #[serde(default)]
+    pub retention_ratio: f64,
+    /// `Some("low_retention")` when `retention_ratio` is below the configured
+    /// `min_retention_ratio` (default [`DEFAULT_MIN_RETENTION_RATIO`]), else
+    /// `None`. This is the measurable signal an eval gate consumes (§三).
+    /// Additive field: legacy records without it deserialize to `None`.
+    #[serde(default)]
+    pub quality_flag: Option<String>,
+}
+
+impl CompressionObservation {
+    /// Build an observation from the raw token counts, computing
+    /// [`retention_ratio`](Self::retention_ratio) and the `low_retention`
+    /// quality flag against `min_retention_ratio`.
+    pub fn from_counts(
+        triggered_at_ms: u64,
+        tokens_before: usize,
+        tokens_after: usize,
+        strategy: impl Into<String>,
+        min_retention_ratio: f64,
+    ) -> Self {
+        let retention_ratio = if tokens_before == 0 {
+            0.0
+        } else {
+            tokens_after as f64 / tokens_before as f64
+        };
+        let quality_flag = if retention_ratio < min_retention_ratio {
+            Some("low_retention".to_string())
+        } else {
+            None
+        };
+        Self {
+            triggered_at_ms,
+            tokens_before,
+            tokens_after,
+            freed_tokens: tokens_before.saturating_sub(tokens_after),
+            strategy: strategy.into(),
+            retention_ratio,
+            quality_flag,
+        }
+    }
 }
 
 /// One step of a plan snapshot.
@@ -342,6 +393,8 @@ mod tests {
                 tokens_after: 200,
                 freed_tokens: 800,
                 strategy: "llm_summary".into(),
+                retention_ratio: 0.2,
+                quality_flag: Some("low_retention".into()),
             }],
             plan_snapshot: Some(PlanSnapshot {
                 plan_id: "p1".into(),
@@ -403,5 +456,107 @@ mod tests {
         assert!(back.compressions.is_empty());
         assert!(back.plan_snapshot.is_none());
         assert!(back.channel.is_none());
+    }
+
+    // ── compression quality (§三) ─────────────────────────────────────────────
+
+    fn assert_ratio(actual: f64, expected: f64) {
+        assert!((actual - expected).abs() < 1e-9, "retention_ratio {} != {}", actual, expected);
+    }
+
+    #[test]
+    fn compression_retention_ratio_half_tokens() {
+        // Half the tokens retained -> 0.5.
+        let obs = CompressionObservation::from_counts(0, 200, 100, "llm_summary", 0.5);
+        assert_ratio(obs.retention_ratio, 0.5);
+        assert_eq!(obs.freed_tokens, 100);
+    }
+
+    #[test]
+    fn compression_retention_ratio_full_reclaim() {
+        // Everything reclaimed -> 0.0.
+        let obs = CompressionObservation::from_counts(0, 200, 0, "llm_summary", 0.5);
+        assert_ratio(obs.retention_ratio, 0.0);
+        assert_eq!(obs.freed_tokens, 200);
+    }
+
+    #[test]
+    fn compression_retention_ratio_nothing_reclaimed() {
+        // Nothing reclaimed -> 1.0.
+        let obs = CompressionObservation::from_counts(0, 200, 200, "llm_summary", 0.5);
+        assert_ratio(obs.retention_ratio, 1.0);
+        assert_eq!(obs.freed_tokens, 0);
+    }
+
+    #[test]
+    fn compression_retention_ratio_zero_before() {
+        // No before tokens -> 0.0 (cannot measure retention).
+        let obs = CompressionObservation::from_counts(0, 0, 0, "llm_summary", 0.5);
+        assert_ratio(obs.retention_ratio, 0.0);
+        assert_eq!(obs.freed_tokens, 0);
+    }
+
+    #[test]
+    fn compression_quality_flag_below_threshold() {
+        let obs = CompressionObservation::from_counts(0, 1000, 200, "llm_summary", 0.5);
+        assert_ratio(obs.retention_ratio, 0.2);
+        assert_eq!(obs.quality_flag.as_deref(), Some("low_retention"));
+    }
+
+    #[test]
+    fn compression_quality_flag_at_threshold_is_clean() {
+        // Exactly at the threshold is NOT low retention.
+        let obs = CompressionObservation::from_counts(0, 1000, 500, "llm_summary", 0.5);
+        assert_ratio(obs.retention_ratio, 0.5);
+        assert_eq!(obs.quality_flag, None);
+    }
+
+    #[test]
+    fn compression_quality_flag_above_threshold_is_clean() {
+        let obs = CompressionObservation::from_counts(0, 1000, 800, "llm_summary", 0.5);
+        assert_ratio(obs.retention_ratio, 0.8);
+        assert_eq!(obs.quality_flag, None);
+    }
+
+    #[test]
+    fn compression_quality_flag_default_threshold() {
+        // DEFAULT_MIN_RETENTION_RATIO drives the flag when the caller relies on it.
+        let low = CompressionObservation::from_counts(
+            0,
+            1000,
+            300,
+            "heuristic_summary",
+            DEFAULT_MIN_RETENTION_RATIO,
+        );
+        assert_eq!(low.quality_flag.as_deref(), Some("low_retention"));
+    }
+
+    #[test]
+    fn legacy_compression_observation_json_round_trips() {
+        // A legacy observation without the additive quality fields deserializes
+        // with defaults (0.0 / None), so old stored JSON keeps parsing.
+        let json = r#"{
+            "triggered_at_ms": 5,
+            "tokens_before": 1000,
+            "tokens_after": 200,
+            "freed_tokens": 800,
+            "strategy": "llm_summary"
+        }"#;
+        let obs: CompressionObservation = serde_json::from_str(json).unwrap();
+        assert_eq!(obs.triggered_at_ms, 5);
+        assert_eq!(obs.tokens_before, 1000);
+        assert_eq!(obs.freed_tokens, 800);
+        assert_eq!(obs.strategy, "llm_summary");
+        assert_ratio(obs.retention_ratio, 0.0);
+        assert_eq!(obs.quality_flag, None);
+    }
+
+    #[test]
+    fn compression_observation_serde_round_trip_with_new_fields() {
+        let obs = CompressionObservation::from_counts(7, 1000, 200, "llm_summary", 0.5);
+        let json = serde_json::to_string(&obs).unwrap();
+        let back: CompressionObservation = serde_json::from_str(&json).unwrap();
+        assert_ratio(back.retention_ratio, 0.2);
+        assert_eq!(back.quality_flag.as_deref(), Some("low_retention"));
     }
 }

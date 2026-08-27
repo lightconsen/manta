@@ -272,6 +272,11 @@ pub struct Agent {
     /// Pending-badcase pool that online risk signals (and human 👎 votes)
     /// land in, awaiting confirmation.
     pending_badcase_store: Option<Arc<crate::eval::PendingBadcaseStore>>,
+    /// 在线质量监控（§八）：高风险命中时用 LLM Judge 深评该 turn。
+    ///
+    /// Snapshot at spawn time from `GatewayConfig.eval.online_monitoring`; the
+    /// judge trigger in `scan_turn_for_badcase` reads this without any lock.
+    online_monitoring: crate::gateway::config::OnlineMonitoringConfig,
 }
 
 /// RAII guard that reinserts a Thread into `thread_map` on drop.

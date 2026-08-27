@@ -102,10 +102,28 @@ pub struct EvalTask {
     /// Session-level conditions checked after all turns complete (§03).
     #[serde(default)]
     pub session_conditions: Vec<GoalCondition>,
+    /// Difficulty label for regression weighting (§八): `"easy"` | `"medium"`
+    /// | `"hard"`. Defaults to `"medium"` so pre-existing YAML still parses.
+    #[serde(default = "default_task_difficulty")]
+    pub difficulty: String,
+    /// Coverage tags for regression attribution (§八), e.g. `tools`,
+    /// `routing`, `prompt`, `retrieval`, `compression`. Defaults to empty.
+    #[serde(default)]
+    pub coverage: Vec<String>,
+    /// Per-task trial override. Set by `BadcaseGovernance::weighted_trials`
+    /// so harder badcases receive more trials in the governed regression
+    /// suite (§八). `None` = inherit the suite-level trial count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trials: Option<usize>,
 }
 
 fn default_user_id() -> String {
     "eval_user".to_string()
+}
+
+/// Default difficulty label applied to tasks without an explicit one (§八).
+pub(crate) fn default_task_difficulty() -> String {
+    "medium".to_string()
 }
 
 impl Default for EvalTask {
@@ -125,6 +143,9 @@ impl Default for EvalTask {
             agent_type: None,
             turns: Vec::new(),
             session_conditions: Vec::new(),
+            difficulty: default_task_difficulty(),
+            coverage: Vec::new(),
+            trials: None,
         }
     }
 }

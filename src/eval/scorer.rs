@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::agent::reflection::critic::Critic;
 use crate::agent::reflection::types::{Critique, QualityCriteria};
-use crate::eval::human_review::{HumanReviewCase, HumanReviewStore, ReviewStatus};
+use crate::eval::human_review::{route_case, HumanReviewCase, HumanReviewStore, ReviewStatus};
 use crate::eval::rca::ProblemPhenomenon;
 use crate::goal::condition::{CheckResult, GoalCondition};
 
@@ -192,6 +192,8 @@ pub struct LayeredScorer {
     config: ScorerConfig,
     risk_checker: RiskSignalChecker,
     review_store: Option<HumanReviewStore>,
+    /// Fixed sampling rate for routing ordinary cases to human review (§三).
+    sampling_rate: Option<f64>,
 }
 
 impl LayeredScorer {
@@ -201,6 +203,7 @@ impl LayeredScorer {
             config,
             risk_checker: RiskSignalChecker::default(),
             review_store: None,
+            sampling_rate: None,
         }
     }
 
@@ -216,6 +219,15 @@ impl LayeredScorer {
         self
     }
 
+    /// Enable fixed-rate sampling of ordinary (non low-confidence) cases into
+    /// human review (§三). `None` or `Some(0.0)` disables sampling; `Some(1.0)`
+    /// always routes ordinary cases; intermediate values route with probability
+    /// `rate`.
+    pub fn with_sampling_rate(mut self, rate: Option<f64>) -> Self {
+        self.sampling_rate = rate;
+        self
+    }
+
     /// Run score() and automatically persist InsufficientInfo results.
     ///
     /// When the verdict is `InsufficientInfo` and a `HumanReviewStore` is
@@ -225,22 +237,23 @@ impl LayeredScorer {
             .score(trial.conditions, trial.criteria, trial.response, trial.trajectory)
             .await;
 
-        if output.verdict == Verdict::InsufficientInfo {
-            if let Some(ref store) = self.review_store {
-                let case = HumanReviewCase {
-                    task_id: trial.task_id.to_string(),
-                    trial_index: trial.trial_index,
-                    input: trial.input.to_string(),
-                    response: trial.response.to_string(),
-                    scoring_output: output.clone(),
-                    status: ReviewStatus::Pending,
-                    created_at: std::time::SystemTime::now(),
-                    human_verdict: None,
-                    human_comment: None,
-                };
-                if let Err(e) = store.write_case(&case) {
-                    tracing::warn!("Failed to persist review case: {}", e);
-                }
+        if let Some(ref store) = self.review_store {
+            let case = HumanReviewCase {
+                task_id: trial.task_id.to_string(),
+                trial_index: trial.trial_index,
+                input: trial.input.to_string(),
+                response: trial.response.to_string(),
+                scoring_output: output.clone(),
+                status: ReviewStatus::Pending,
+                created_at: std::time::SystemTime::now(),
+                human_verdict: None,
+                human_comment: None,
+            };
+            // Route low-confidence / conflict cases unconditionally, and
+            // ordinary cases with probability `sampling_rate` (§三).
+            let mut rng = rand::thread_rng();
+            if let Err(e) = route_case(store, &case, self.sampling_rate, &mut rng) {
+                tracing::warn!("Failed to persist review case: {}", e);
             }
         }
 

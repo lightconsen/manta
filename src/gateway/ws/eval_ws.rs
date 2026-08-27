@@ -58,6 +58,7 @@ pub(super) async fn handle_eval_optimizer_run(
         max_steps: params.max_steps,
         force: params.force.unwrap_or(false),
         shadow: None,
+        verifier: None,
     };
     let handle = tokio::spawn(async move {
         optimizer.run(run_state, run_params).await;

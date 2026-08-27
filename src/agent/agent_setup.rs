@@ -70,6 +70,7 @@ impl Agent {
             concurrency_guards: Arc::new(Mutex::new(HashMap::new())),
             risk_checker: None,
             pending_badcase_store: None,
+            online_monitoring: crate::gateway::config::OnlineMonitoringConfig::default(),
         }
     }
 

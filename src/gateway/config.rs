@@ -130,6 +130,21 @@ pub struct EvalConfig {
     /// Scalar optimizer that probes and hot-updates default-agent scalars.
     #[serde(default)]
     pub optimizer: ScalarOptimizerConfig,
+    /// 回归集治理：难度分层 + 覆盖标签加权进套件（§八）。
+    #[serde(default)]
+    pub badcase_governance: BadcaseGovernanceConfig,
+    /// 人工复核固定抽样率（§三）。
+    #[serde(default)]
+    pub human_review: HumanReviewConfig,
+    /// 在线质量监控：高风险命中 → LLM Judge 深评（§八）。
+    #[serde(default)]
+    pub online_monitoring: OnlineMonitoringConfig,
+    /// 压缩质量量化指标与门槛（§三）。
+    #[serde(default)]
+    pub compression_quality: CompressionQualityConfig,
+    /// 结构提议器（工具描述 / prompt / SOP 改版候选，§十二 ⑤）。
+    #[serde(default)]
+    pub proposer: StructuralProposerConfig,
 }
 
 /// Configuration for the background scalar optimizer.
@@ -154,6 +169,10 @@ pub struct ScalarOptimizerConfig {
     /// Guardrails between candidate generation and application (§十二 护栏).
     #[serde(default)]
     pub guardrails: OptimizerGuardrailConfig,
+    /// 统计判定：候选过治理后回归套件跑 harness + bootstrap，仅 Improved 出
+    /// patch（§十二 ⑤⑥ 纪律）。关闭时回退到 guardrails 闸门行为。
+    #[serde(default)]
+    pub verdict: OptimizerVerdictConfig,
 }
 
 impl Default for ScalarOptimizerConfig {
@@ -165,6 +184,7 @@ impl Default for ScalarOptimizerConfig {
             delta: default_optimizer_delta(),
             temperature_bounds: default_optimizer_temp_bounds(),
             guardrails: OptimizerGuardrailConfig::default(),
+            verdict: OptimizerVerdictConfig::default(),
         }
     }
 }
@@ -253,6 +273,180 @@ fn default_guardrail_max_online_risks() -> u32 {
 
 fn default_guardrail_window_hours() -> u64 {
     24
+}
+
+/// 标量优化器的统计判定（§十二 ⑤⑥ 纪律）。
+///
+/// 开启后，候选会经治理后回归套件跑 harness（多 trial）+ `compare_versions`
+/// bootstrap 判定，**仅 `Improved` 出 patch**；关闭（默认）时回退到 guardrails
+/// 闸门行为（启发式候选 + 三闸守护）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OptimizerVerdictConfig {
+    /// 统计判定主开关。
+    #[serde(default)]
+    pub enabled: bool,
+    /// 治理后回归套件 id（如 `"badcases"`）。`None` = 不跑 harness（回退闸门）。
+    #[serde(default)]
+    pub suite: Option<String>,
+    /// 每任务 trial 数（bootstrap 需要 ≥2）。
+    #[serde(default = "default_verdict_trials")]
+    pub trials: usize,
+    /// bootstrap 重采样次数。
+    #[serde(default = "default_verdict_iterations")]
+    pub bootstrap_iterations: usize,
+    /// 置信水平（默认 0.95）。
+    #[serde(default = "default_verdict_confidence")]
+    pub confidence_level: f64,
+}
+
+impl Default for OptimizerVerdictConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            suite: None,
+            trials: default_verdict_trials(),
+            bootstrap_iterations: default_verdict_iterations(),
+            confidence_level: default_verdict_confidence(),
+        }
+    }
+}
+
+fn default_verdict_trials() -> usize {
+    2
+}
+
+fn default_verdict_iterations() -> usize {
+    1000
+}
+
+fn default_verdict_confidence() -> f64 {
+    0.95
+}
+
+/// 结构提议器配置（§十二 ⑤：工具描述 / prompt / SOP 改版）。
+///
+/// 开启 `verdict_enabled` 后，候选经 harness + bootstrap verdict，仅 `Improved`
+/// 采纳；关闭时回退到确定性启发 `judge`。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StructuralProposerConfig {
+    /// 统计判定开关：候选跑 harness + bootstrap verdict。
+    #[serde(default)]
+    pub verdict_enabled: bool,
+    /// 回归套件 id。
+    #[serde(default)]
+    pub suite: Option<String>,
+    #[serde(default = "default_verdict_trials")]
+    pub trials: usize,
+    #[serde(default = "default_verdict_iterations")]
+    pub bootstrap_iterations: usize,
+    #[serde(default = "default_verdict_confidence")]
+    pub confidence_level: f64,
+    /// 单次提议候选上限（cap）。
+    #[serde(default = "default_proposer_max_candidates")]
+    pub max_candidates: usize,
+}
+
+impl Default for StructuralProposerConfig {
+    fn default() -> Self {
+        Self {
+            verdict_enabled: false,
+            suite: None,
+            trials: default_verdict_trials(),
+            bootstrap_iterations: default_verdict_iterations(),
+            confidence_level: default_verdict_confidence(),
+            max_candidates: default_proposer_max_candidates(),
+        }
+    }
+}
+
+fn default_proposer_max_candidates() -> usize {
+    4
+}
+
+/// 回归集治理：难度分层 + 覆盖标签加权（§八）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BadcaseGovernanceConfig {
+    /// 难度标签 → trial 数乘子（如 `{"hard": 2.0, "medium": 1.5}`）。
+    /// 命中的 badcase 按乘子放大其 trial 数（加权进套件）。
+    #[serde(default)]
+    pub difficulty_weights: HashMap<String, f64>,
+    /// 未命中难度标签的默认权重。
+    #[serde(default = "default_governance_default_weight")]
+    pub default_weight: f64,
+}
+
+impl Default for BadcaseGovernanceConfig {
+    fn default() -> Self {
+        Self {
+            difficulty_weights: HashMap::new(),
+            default_weight: default_governance_default_weight(),
+        }
+    }
+}
+
+fn default_governance_default_weight() -> f64 {
+    1.0
+}
+
+/// 人工复核固定抽样率（§三）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HumanReviewConfig {
+    /// 固定抽样率 (0.0–1.0)。`Some(rate)` 时普通 case 也按 `rate` 抽样送人工
+    /// 复核；`None`（默认）维持只兜低置信/冲突。
+    #[serde(default)]
+    pub sampling_rate: Option<f64>,
+}
+
+/// 在线质量监控（§八 在线质量监控）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OnlineMonitoringConfig {
+    /// 高风险命中 → 触发 LLM Judge 深评。
+    #[serde(default)]
+    pub enabled: bool,
+    /// 单 turn 命中风险数 ≥ 该值触发 LLM Judge。
+    #[serde(default = "default_monitoring_risk_threshold")]
+    pub llm_judge_risk_threshold: usize,
+    /// Judge 模型覆盖（默认用 critic 模型）。
+    #[serde(default)]
+    pub judge_model: Option<String>,
+}
+
+impl Default for OnlineMonitoringConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            llm_judge_risk_threshold: default_monitoring_risk_threshold(),
+            judge_model: None,
+        }
+    }
+}
+
+fn default_monitoring_risk_threshold() -> usize {
+    2
+}
+
+/// 压缩质量量化（§三）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompressionQualityConfig {
+    /// 记录压缩质量指标到 CompressionObservation。
+    #[serde(default)]
+    pub enabled: bool,
+    /// token 保留率低于该值时标记质量告警（0.0 = 关闭告警）。
+    #[serde(default = "default_compression_min_retention")]
+    pub min_retention_ratio: f64,
+}
+
+impl Default for CompressionQualityConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            min_retention_ratio: default_compression_min_retention(),
+        }
+    }
+}
+
+fn default_compression_min_retention() -> f64 {
+    0.5
 }
 
 fn default_optimizer_cadence() -> String {

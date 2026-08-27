@@ -323,12 +323,15 @@ pub async fn run_standalone_suite(
 
     for task in &tasks_to_run {
         println!("── Task: {} — {} ──", task.id, task.description);
-        print!("  Running {} trials...", effective_trials);
+        // A task-level trial override (e.g. difficulty-weighted trials from
+        // `load_governed_badcase_suite`) wins over the suite default.
+        let task_trials = task.trials.unwrap_or(effective_trials);
+        print!("  Running {} trials...", task_trials);
         // Flush stdout so the message appears before potentially long execution
         use std::io::Write;
         let _ = std::io::stdout().flush();
 
-        match harness.run(task.clone(), effective_trials).await {
+        match harness.run(task.clone(), task_trials).await {
             Ok(summary) => {
                 println!(" done\n");
                 println!("{}", summary);

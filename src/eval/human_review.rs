@@ -5,6 +5,13 @@
 //! risk signals), the case is written to `evals/review/` as a JSON file.
 //! A CLI subcommand (`syscity eval review`) lists pending cases.
 //!
+//! §三 also supports a fixed sampling rate: when
+//! `cfg.eval.human_review.sampling_rate` is `Some(rate)`, ordinary (non
+//! low-confidence/conflict) cases are additionally routed with probability
+//! `rate`. [`should_route_to_review`] / [`route_case`] implement the decision;
+//! the call site lives in `LayeredScorer::score_and_review`
+//! (`src/eval/scorer.rs`).
+//!
 //! # File format
 //!
 //! Each review case is a single JSON file at
@@ -27,7 +34,7 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
-use crate::eval::scorer::ScoringOutput;
+use crate::eval::scorer::{ScoringOutput, Verdict};
 use crate::Result;
 
 /// Review status of a human review case.
@@ -165,6 +172,60 @@ impl HumanReviewStore {
     }
 }
 
+// ── Fixed sampling-rate routing (§三) ──────────────────────────────────
+
+/// Decide whether a single ordinary (non low-confidence/conflict) case is
+/// sampled into human review by the configured fixed rate.
+///
+/// * `None` — no fixed sampling; ordinary cases are never routed by rate.
+/// * `Some(r)` with `r <= 0.0` — never sample ordinary cases.
+/// * `Some(r)` with `r >= 1.0` — always sample ordinary cases.
+/// * `Some(r)` with `0.0 < r < 1.0` — sample with probability `r`.
+///
+/// Low-confidence/conflict cases are orthogonal and are always routed by
+/// [`should_route_to_review`] regardless of this decision.
+pub fn sampling_rate_hit(rate: Option<f64>, rng: &mut impl rand::Rng) -> bool {
+    match rate {
+        None => false,
+        Some(r) if r <= 0.0 => false,
+        Some(r) if r >= 1.0 => true,
+        Some(r) => rng.gen::<f64>() < r,
+    }
+}
+
+/// Decide whether a scored case should be routed to human review.
+///
+/// Returns `true` when `base_reason` holds (low-confidence / risk / conflict
+/// routing today) or, failing that, when the configured fixed sampling rate
+/// [`sampling_rate_hit`] selects the case.
+pub fn should_route_to_review(
+    base_reason: bool,
+    sampling_rate: Option<f64>,
+    rng: &mut impl rand::Rng,
+) -> bool {
+    base_reason || sampling_rate_hit(sampling_rate, rng)
+}
+
+/// Route a case to human review, persisting it when the decision is `true`.
+///
+/// `base_reason` is derived from the case itself: a `Verdict::InsufficientInfo`
+/// verdict (low confidence / conflict) always routes. When that does not hold,
+/// the configured `sampling_rate` decides. Returns `Ok(true)` when the case was
+/// written to disk, `Ok(false)` when it was skipped.
+pub fn route_case(
+    store: &HumanReviewStore,
+    case: &HumanReviewCase,
+    sampling_rate: Option<f64>,
+    rng: &mut impl rand::Rng,
+) -> Result<bool> {
+    let base_reason = case.scoring_output.verdict == Verdict::InsufficientInfo;
+    if !should_route_to_review(base_reason, sampling_rate, rng) {
+        return Ok(false);
+    }
+    store.write_case(case)?;
+    Ok(true)
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 fn short_timestamp() -> String {
@@ -201,6 +262,32 @@ mod tests {
             confidence: 0.3,
             judgment_basis: "Low confidence, needs review".into(),
             screening_layer: ScreeningLayer::Fine,
+        }
+    }
+
+    /// An ordinary (non low-confidence/conflict) scoring output.
+    fn dummy_scoring_output_pass() -> ScoringOutput {
+        ScoringOutput {
+            verdict: Verdict::Pass,
+            score: 0.9,
+            problem_category: None,
+            confidence: 0.9,
+            judgment_basis: "Confident pass".into(),
+            screening_layer: ScreeningLayer::Fine,
+        }
+    }
+
+    fn dummy_case(task_id: &str, output: ScoringOutput) -> HumanReviewCase {
+        HumanReviewCase {
+            task_id: task_id.into(),
+            trial_index: 0,
+            input: "input".into(),
+            response: "response".into(),
+            scoring_output: output,
+            status: ReviewStatus::Pending,
+            created_at: SystemTime::now(),
+            human_verdict: None,
+            human_comment: None,
         }
     }
 
@@ -311,5 +398,124 @@ mod tests {
 
         let loaded = HumanReviewStore::load_case(&path).unwrap();
         assert_eq!(loaded.status, ReviewStatus::Reviewed);
+    }
+
+    // ── Fixed sampling-rate routing (§三) ───────────────────────────────
+
+    #[test]
+    fn should_route_no_sampling_none_rate() {
+        let mut rng = rand::thread_rng();
+        // Ordinary case (base=false) is never routed when sampling is disabled.
+        for _ in 0..100 {
+            assert!(!should_route_to_review(false, None, &mut rng));
+        }
+        // base=true always routes regardless of sampling.
+        for _ in 0..100 {
+            assert!(should_route_to_review(true, None, &mut rng));
+        }
+    }
+
+    #[test]
+    fn should_route_sampling_zero_and_one() {
+        let mut rng = rand::thread_rng();
+        // Some(0.0) never routes ordinary cases.
+        for _ in 0..50 {
+            assert!(!should_route_to_review(false, Some(0.0), &mut rng));
+        }
+        // Some(1.0) always routes ordinary cases.
+        for _ in 0..50 {
+            assert!(should_route_to_review(false, Some(1.0), &mut rng));
+        }
+        // base=true always wins even when sampling is 0.0.
+        for _ in 0..20 {
+            assert!(should_route_to_review(true, Some(0.0), &mut rng));
+        }
+    }
+
+    #[test]
+    fn should_route_sampling_roughly_half() {
+        let mut rng = rand::thread_rng();
+        let mut hits = 0usize;
+        for _ in 0..100 {
+            if should_route_to_review(false, Some(0.5), &mut rng) {
+                hits += 1;
+            }
+        }
+        assert!((20..=80).contains(&hits), "hits={hits}");
+    }
+
+    #[test]
+    fn sampling_rate_hit_deterministic_boundaries() {
+        // A stub RNG that always yields the same u64 pins the exact boundary of
+        // `rng.gen::<f64>() < r`.
+        let mut lo = ConstantRng(0); // gen::<f64>() == 0.0
+        let mut hi = ConstantRng(u64::MAX); // gen::<f64>() ≈ 1.0
+
+        assert!(sampling_rate_hit(Some(0.5), &mut lo));
+        assert!(!sampling_rate_hit(Some(0.5), &mut hi));
+        // Fast paths never consult the RNG.
+        assert!(!sampling_rate_hit(None, &mut lo));
+        assert!(!sampling_rate_hit(Some(0.0), &mut hi));
+        assert!(sampling_rate_hit(Some(1.0), &mut hi));
+    }
+
+    #[test]
+    fn route_case_writes_when_routed() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = HumanReviewStore::new(dir.path());
+        let ordinary = dummy_case("sampled", dummy_scoring_output_pass());
+
+        let mut rng = rand::thread_rng();
+        let routed = route_case(&store, &ordinary, Some(1.0), &mut rng).unwrap();
+        assert!(routed);
+        assert_eq!(store.list_cases(None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn route_case_skips_when_not_routed() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = HumanReviewStore::new(dir.path());
+        let ordinary = dummy_case("skipped", dummy_scoring_output_pass());
+
+        let mut rng = rand::thread_rng();
+        let routed = route_case(&store, &ordinary, None, &mut rng).unwrap();
+        assert!(!routed);
+        assert_eq!(store.list_cases(None).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn route_case_routes_low_confidence_without_sampling() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = HumanReviewStore::new(dir.path());
+        let low_conf = dummy_case("lowconf", dummy_scoring_output());
+
+        let mut rng = rand::thread_rng();
+        let routed = route_case(&store, &low_conf, None, &mut rng).unwrap();
+        assert!(routed);
+        assert_eq!(store.list_cases(None).unwrap().len(), 1);
+    }
+
+    /// Deterministic `RngCore` stub for tests: always returns a fixed value.
+    struct ConstantRng(u64);
+
+    impl rand::RngCore for ConstantRng {
+        fn next_u32(&mut self) -> u32 {
+            self.0 as u32
+        }
+
+        fn next_u64(&mut self) -> u64 {
+            self.0
+        }
+
+        fn fill_bytes(&mut self, dest: &mut [u8]) {
+            for b in dest {
+                *b = self.0 as u8;
+            }
+        }
+
+        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> std::result::Result<(), rand::Error> {
+            self.fill_bytes(dest);
+            Ok(())
+        }
     }
 }

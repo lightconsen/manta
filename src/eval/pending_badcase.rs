@@ -318,6 +318,8 @@ impl PendingBadcaseStore {
                 risk_signals.join("; ")
             },
             response: response.clone(),
+            difficulty: "medium".into(),
+            coverage: Vec::new(),
             rca_performed: false,
             rca_result: None,
             collected_at: std::time::SystemTime::now(),
