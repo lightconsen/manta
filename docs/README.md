@@ -13,6 +13,7 @@ agents perceive and act on your computer.
 | [Architecture](arch.md) | System overview, control plane, pipelines |
 | [Slash Commands](command.md) | `/` commands available in chat, TUI, and channels |
 | [Goal-Based Execution](goal.md) | `/goal` autonomous execution with stop conditions |
+| [Channels Setup](channels.md) | Supported channels, credentials, and webhook configuration |
 
 ## Core concepts
 
