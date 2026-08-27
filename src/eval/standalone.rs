@@ -20,7 +20,9 @@ use crate::eval::loader::{default_evals_dir, load_suite};
 use crate::eval::rca::RcaPipeline;
 use crate::eval::recycle::{extract_rca_results_from_badcases, BadcaseCollector};
 use crate::eval::EvalTask;
-use crate::eval::{generate_action_items, write_action_items};
+use crate::eval::{
+    generate_action_items, write_action_items, HumanReviewStore, LayeredScorer, ScorerConfig,
+};
 use crate::gateway::config::GatewayConfig;
 use crate::providers::resolver::resolve_provider;
 use crate::tools::file::{FileEditTool, FileReadTool, FileWriteTool, GlobTool};
@@ -111,6 +113,11 @@ pub async fn run_standalone_suite(
 
     // ── Step 1: Try to load GatewayConfig from the config file ──────────────
     let gateway_cfg = try_load_gateway_config().await;
+    // Human-review sampling rate (§三): when configured, ordinary (non
+    // low-confidence/conflict) cases are additionally routed to review.
+    let human_review_rate = gateway_cfg
+        .as_ref()
+        .and_then(|c| c.eval.human_review.sampling_rate);
 
     // ── Step 2: Resolve provider config ─────────────────────────────────────
     let provider_type = provider_override.clone().unwrap_or_else(|| {
@@ -285,11 +292,29 @@ pub async fn run_standalone_suite(
         consecutive_failures: 0,
         continuous_success_required: suite.continuous_success_required,
     };
-    let harness = EvalHarness::new(agent.clone(), critic)
+    let mut harness = EvalHarness::new(agent.clone(), critic)
         .with_default_trials(effective_trials)
         .with_skill_designs(suite.skill_designs.clone())
         .with_rca_pipeline(rca_pipeline.clone())
         .with_early_stop(early_stop);
+
+    // Attach the layered scorer's routing hook only when a fixed sampling rate
+    // is configured. Clean passes / deterministic all-fails route with the
+    // configured probability; mixed conditions or judge-flagged trials route
+    // unconditionally (base_reason=true) via `route_scored` in the harness.
+    if let Some(rate) = human_review_rate {
+        if rate > 0.0 {
+            let scorer = LayeredScorer::new(None, ScorerConfig::default())
+                .with_review_store(HumanReviewStore::new(&evals_dir))
+                .with_sampling_rate(Some(rate));
+            harness = harness.with_scorer(scorer);
+            println!(
+                "  Human review: sampling {:.0}% -> {}",
+                rate * 100.0,
+                evals_dir.join("review").display()
+            );
+        }
+    }
 
     // ── Step 8: Apply sampling rate (§10) ───────────────────────────────────
     let effective_sampling_rate = sampling_rate_override.unwrap_or(suite.sampling_rate);

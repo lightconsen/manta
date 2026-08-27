@@ -9,8 +9,9 @@
 //! `cfg.eval.human_review.sampling_rate` is `Some(rate)`, ordinary (non
 //! low-confidence/conflict) cases are additionally routed with probability
 //! `rate`. [`should_route_to_review`] / [`route_case`] implement the decision;
-//! the call site lives in `LayeredScorer::score_and_review`
-//! (`src/eval/scorer.rs`).
+//! call sites: `LayeredScorer::score_and_review` (`src/eval/scorer.rs`) and the
+//! harness post-score hook `LayeredScorer::route_scored`
+//! (`src/eval/harness.rs`).
 //!
 //! # File format
 //!
@@ -34,7 +35,7 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
-use crate::eval::scorer::{ScoringOutput, Verdict};
+use crate::eval::scorer::ScoringOutput;
 use crate::Result;
 
 /// Review status of a human review case.
@@ -59,6 +60,10 @@ pub struct HumanReviewCase {
     pub input: String,
     /// Agent response.
     pub response: String,
+    /// Action/observation trajectory leading to `response` (for review
+    /// context). Absent on older on-disk cases.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trajectory: Option<String>,
     /// The scoring output (verdict, confidence, etc.).
     pub scoring_output: ScoringOutput,
     /// Review status.
@@ -208,17 +213,17 @@ pub fn should_route_to_review(
 
 /// Route a case to human review, persisting it when the decision is `true`.
 ///
-/// `base_reason` is derived from the case itself: a `Verdict::InsufficientInfo`
-/// verdict (low confidence / conflict) always routes. When that does not hold,
-/// the configured `sampling_rate` decides. Returns `Ok(true)` when the case was
-/// written to disk, `Ok(false)` when it was skipped.
+/// `base_reason` marks the case as low-confidence / conflict: it always routes.
+/// When it is `false`, the configured `sampling_rate` decides whether the
+/// ordinary case is sampled. Returns `Ok(true)` when the case was written to
+/// disk, `Ok(false)` when it was skipped.
 pub fn route_case(
     store: &HumanReviewStore,
     case: &HumanReviewCase,
+    base_reason: bool,
     sampling_rate: Option<f64>,
     rng: &mut impl rand::Rng,
 ) -> Result<bool> {
-    let base_reason = case.scoring_output.verdict == Verdict::InsufficientInfo;
     if !should_route_to_review(base_reason, sampling_rate, rng) {
         return Ok(false);
     }
@@ -283,6 +288,7 @@ mod tests {
             trial_index: 0,
             input: "input".into(),
             response: "response".into(),
+            trajectory: None,
             scoring_output: output,
             status: ReviewStatus::Pending,
             created_at: SystemTime::now(),
@@ -298,6 +304,7 @@ mod tests {
             trial_index: 1,
             input: "Hello".into(),
             response: "Hi there".into(),
+            trajectory: None,
             scoring_output: dummy_scoring_output(),
             status: ReviewStatus::Pending,
             created_at: SystemTime::now(),
@@ -322,6 +329,7 @@ mod tests {
             trial_index: 0,
             input: "test input".into(),
             response: "test response".into(),
+            trajectory: None,
             scoring_output: dummy_scoring_output(),
             status: ReviewStatus::Pending,
             created_at: SystemTime::now(),
@@ -349,6 +357,7 @@ mod tests {
             trial_index: 0,
             input: "i1".into(),
             response: "r1".into(),
+            trajectory: None,
             scoring_output: dummy_scoring_output(),
             status: ReviewStatus::Pending,
             created_at: SystemTime::now(),
@@ -360,6 +369,7 @@ mod tests {
             trial_index: 0,
             input: "i2".into(),
             response: "r2".into(),
+            trajectory: None,
             scoring_output: dummy_scoring_output(),
             status: ReviewStatus::Reviewed,
             created_at: SystemTime::now(),
@@ -386,6 +396,7 @@ mod tests {
             trial_index: 0,
             input: "i1".into(),
             response: "r1".into(),
+            trajectory: None,
             scoring_output: dummy_scoring_output(),
             status: ReviewStatus::Pending,
             created_at: SystemTime::now(),
@@ -466,7 +477,7 @@ mod tests {
         let ordinary = dummy_case("sampled", dummy_scoring_output_pass());
 
         let mut rng = rand::thread_rng();
-        let routed = route_case(&store, &ordinary, Some(1.0), &mut rng).unwrap();
+        let routed = route_case(&store, &ordinary, false, Some(1.0), &mut rng).unwrap();
         assert!(routed);
         assert_eq!(store.list_cases(None).unwrap().len(), 1);
     }
@@ -478,7 +489,7 @@ mod tests {
         let ordinary = dummy_case("skipped", dummy_scoring_output_pass());
 
         let mut rng = rand::thread_rng();
-        let routed = route_case(&store, &ordinary, None, &mut rng).unwrap();
+        let routed = route_case(&store, &ordinary, false, None, &mut rng).unwrap();
         assert!(!routed);
         assert_eq!(store.list_cases(None).unwrap().len(), 0);
     }
@@ -490,7 +501,7 @@ mod tests {
         let low_conf = dummy_case("lowconf", dummy_scoring_output());
 
         let mut rng = rand::thread_rng();
-        let routed = route_case(&store, &low_conf, None, &mut rng).unwrap();
+        let routed = route_case(&store, &low_conf, true, None, &mut rng).unwrap();
         assert!(routed);
         assert_eq!(store.list_cases(None).unwrap().len(), 1);
     }

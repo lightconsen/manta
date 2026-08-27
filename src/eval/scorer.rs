@@ -243,6 +243,7 @@ impl LayeredScorer {
                 trial_index: trial.trial_index,
                 input: trial.input.to_string(),
                 response: trial.response.to_string(),
+                trajectory: Some(trial.trajectory.to_string()),
                 scoring_output: output.clone(),
                 status: ReviewStatus::Pending,
                 created_at: std::time::SystemTime::now(),
@@ -252,12 +253,73 @@ impl LayeredScorer {
             // Route low-confidence / conflict cases unconditionally, and
             // ordinary cases with probability `sampling_rate` (§三).
             let mut rng = rand::thread_rng();
-            if let Err(e) = route_case(store, &case, self.sampling_rate, &mut rng) {
+            if let Err(e) = route_case(
+                store,
+                &case,
+                output.verdict == Verdict::InsufficientInfo,
+                self.sampling_rate,
+                &mut rng,
+            ) {
                 tracing::warn!("Failed to persist review case: {}", e);
             }
         }
 
         output
+    }
+
+    /// Route an already-scored trial to human review without re-running the
+    /// scoring pipeline (§三 harness hook).
+    ///
+    /// Unlike [`Self::score_and_review`], this does not call [`Self::score`]
+    /// (which would re-run GoalCondition checks and the LLM Judge). The harness
+    /// computes the signals itself and passes them in:
+    ///
+    /// - `base_reason` — the harness's "uncertain / judge-flagged" signal
+    ///   (conditions mixed, or the LLM Judge did not pass). `true` always
+    ///   routes; `false` routes only when the configured `sampling_rate`
+    ///   selects the ordinary case.
+    ///
+    /// Returns `Ok(true)` when a review case was persisted, `Ok(false)` when
+    /// skipped or no review store is configured. Errors are surfaced to the
+    /// caller (the harness logs and ignores them so a trial never fails on
+    /// review routing).
+    pub async fn route_scored(
+        &self,
+        task_id: &str,
+        trial_index: usize,
+        input: &str,
+        response: &str,
+        trajectory: &str,
+        base_reason: bool,
+    ) -> crate::Result<bool> {
+        let Some(store) = &self.review_store else {
+            return Ok(false);
+        };
+        let case = HumanReviewCase {
+            task_id: task_id.to_string(),
+            trial_index,
+            input: input.to_string(),
+            response: response.to_string(),
+            trajectory: Some(trajectory.to_string()),
+            scoring_output: ScoringOutput {
+                verdict: if base_reason {
+                    Verdict::InsufficientInfo
+                } else {
+                    Verdict::Pass
+                },
+                score: 0.0,
+                problem_category: None,
+                confidence: 0.0,
+                judgment_basis: "Harness post-score human-review routing".to_string(),
+                screening_layer: ScreeningLayer::Fine,
+            },
+            status: ReviewStatus::Pending,
+            created_at: std::time::SystemTime::now(),
+            human_verdict: None,
+            human_comment: None,
+        };
+        let mut rng = rand::thread_rng();
+        route_case(store, &case, base_reason, self.sampling_rate, &mut rng)
     }
 
     /// Run the full layered scoring pipeline.

@@ -27,6 +27,7 @@ use crate::core::models::Id;
 use crate::eval::dataset::{EvalTask, SkillEvalDesign};
 use crate::eval::rca::{rca_input_from_trial, RcaPipeline};
 use crate::eval::skill_scorer::{SkillCheckResult, SkillScorer};
+use crate::eval::LayeredScorer;
 use crate::goal::condition::{CheckResult, GoalCondition};
 use crate::Result;
 
@@ -487,6 +488,10 @@ pub struct EvalHarness {
     rca_pipeline: Option<Arc<RcaPipeline>>,
     /// Early stopping configuration (§10).
     early_stop: EarlyStopConfig,
+    /// Optional human-review router (§三). When set, each trial is routed to
+    /// human review after scoring without changing the harness's pass/fail
+    /// verdict.
+    scorer: Option<LayeredScorer>,
 }
 
 impl EvalHarness {
@@ -502,6 +507,7 @@ impl EvalHarness {
             skill_designs: Vec::new(),
             rca_pipeline: None,
             early_stop: EarlyStopConfig::default(),
+            scorer: None,
         }
     }
 
@@ -526,6 +532,14 @@ impl EvalHarness {
     /// Set early stopping configuration (§10).
     pub fn with_early_stop(mut self, config: EarlyStopConfig) -> Self {
         self.early_stop = config;
+        self
+    }
+
+    /// Attach an optional human-review router (§三). When set, `run_single_trial`
+    /// routes each trial through [`LayeredScorer::route_scored`] after scoring,
+    /// persisting review cases without altering the trial's pass/fail verdict.
+    pub fn with_scorer(mut self, scorer: LayeredScorer) -> Self {
+        self.scorer = Some(scorer);
         self
     }
 
@@ -771,6 +785,9 @@ impl EvalHarness {
             .await;
 
         // ── Step 8: Build trajectory ──────────────────────────────────
+        // Hoisted so the human-review routing hook (Step 10) can persist a
+        // review case with the trajectory even when no turns were captured.
+        let mut trajectory_text = String::new();
         let critique = if let Some(ref turns) = turns {
             if turns.is_empty() {
                 // A turn-less thread means the harness failed to capture the
@@ -780,7 +797,7 @@ impl EvalHarness {
                 None
             } else {
                 let trajectory = Self::build_trajectory_from_turns(turns);
-                let trajectory_text = trajectory.format_for_prompt();
+                trajectory_text = trajectory.format_for_prompt();
 
                 // ── Step 8: Critic evaluation ────────────────────────────
                 if let Some(ref critic) = self.critic {
@@ -811,6 +828,34 @@ impl EvalHarness {
         {
             let mut map = self.agent.thread_map.lock().await;
             map.remove(&conv_id.0);
+        }
+
+        // ── Step 10: Human-review routing (additive, §三) ────────────
+        // Post-score hook that persists a review case without changing the
+        // harness's pass/fail verdict. base_reason (b): the signals are
+        // ambiguous — conditions partially passed, or the LLM Judge did not
+        // pass. Clean passes and deterministic all-fail trials route only via
+        // the configured sampling_rate.
+        if let Some(scorer) = &self.scorer {
+            let passed_count = condition_results.iter().filter(|r| r.passed).count();
+            let conditions_mixed = !condition_results.is_empty()
+                && passed_count > 0
+                && passed_count < condition_results.len();
+            let judge_flagged = critique.as_ref().map(|c| !c.passed).unwrap_or(false);
+            let base_reason = conditions_mixed || judge_flagged;
+            if let Err(e) = scorer
+                .route_scored(
+                    &task.id,
+                    trial,
+                    &task.input,
+                    &final_response,
+                    &trajectory_text,
+                    base_reason,
+                )
+                .await
+            {
+                warn!("Failed to route eval trial to human review: {}", e);
+            }
         }
 
         Ok(TrialResult {

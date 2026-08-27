@@ -111,7 +111,8 @@ pub use recycle::{
     BadcaseCluster, BadcaseCollector, BadcaseFixStatus, BadcaseGovernance, BadcaseRecord,
 };
 pub use scorer::{
-    LayeredScorer, RiskSignalChecker, RiskTurnInput, ScoringOutput, ScreeningLayer, Verdict,
+    LayeredScorer, RiskSignalChecker, RiskTurnInput, ScorerConfig, ScoringOutput, ScreeningLayer,
+    Verdict,
 };
 pub use skill_scorer::{
     ExecutionCheckResult, QualityCheckResult, ResilienceCheckResult, SkillCheckResult, SkillScorer,
