@@ -363,6 +363,95 @@ pub(crate) async fn start_gateway(
         }
     }
 
+    // Start the harness scalar optimizer scheduler (§十二 可调参). Only when
+    // enabled AND a real cadence ("manual" runs are triggered on demand via
+    // `eval.optimizer.run`). The loop honors the shutdown token and the
+    // circuit-breaker pause flag (Phase 4 guardrail hook).
+    if config.eval.optimizer.enabled {
+        if let Some(cadence) = crate::eval::parse_cadence(&config.eval.optimizer.cadence) {
+            let optimizer = crate::eval::ScalarOptimizer::new(state.infra.optimizer.clone());
+            let run_state = state.clone();
+            let shutdown = run_state.shutdown_token.clone();
+            let handle = tokio::spawn(async move {
+                let mut interval = tokio::time::interval(cadence);
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                loop {
+                    tokio::select! {
+                        _ = shutdown.cancelled() => {
+                            debug!("Scalar optimizer scheduler stopped");
+                            break;
+                        }
+                        _ = interval.tick() => {
+                            if run_state.infra.optimizer.paused
+                                .load(std::sync::atomic::Ordering::SeqCst)
+                            {
+                                debug!("Scalar optimizer scheduler paused (circuit breaker)");
+                                continue;
+                            }
+                            let report = optimizer
+                                .run(run_state.clone(), crate::eval::OptimizerRunParams::default())
+                                .await;
+                            // Phase 4 guardrail: after an apply, re-check online
+                            // signals and auto-rollback anything that degraded.
+                            if !report.applied.is_empty() {
+                                let cfg = run_state.config.read().await;
+                                let guard = &cfg.eval.optimizer.guardrails;
+                                let guard_enabled = guard.enabled;
+                                let min_votes = guard.min_votes;
+                                let max_online_risks = guard.max_online_risks;
+                                let window_ms = (guard.window_hours as i64) * 3600 * 1000;
+                                drop(cfg);
+                                if guard_enabled {
+                                    let evaluator = crate::eval::OnlineSignalShadowEvaluator::new(
+                                        run_state.infra.feedback_store.clone(),
+                                        run_state.infra.pending_badcase_store.clone(),
+                                        0.3, // stricter floor for rollback decisions
+                                        min_votes,
+                                        max_online_risks,
+                                        window_ms,
+                                    );
+                                    let anomalous = match evaluator.is_anomalous().await {
+                                        Ok(v) => v,
+                                        Err(e) => {
+                                            warn!("Post-apply signal check failed: {e}");
+                                            false
+                                        }
+                                    };
+                                    if anomalous {
+                                        for applied_patch in &report.applied {
+                                            match optimizer
+                                                .rollback(
+                                                    run_state.clone(),
+                                                    &applied_patch.path,
+                                                    "online_anomaly",
+                                                )
+                                                .await
+                                            {
+                                                Ok(rb) => info!(
+                                                    "Auto-rollback {} {}→{}: {}",
+                                                    rb.subject, rb.from, rb.to, rb.reason
+                                                ),
+                                                Err(e) => warn!(
+                                                    "Auto-rollback failed for {}: {}",
+                                                    applied_patch.path, e
+                                                ),
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+            state
+                .task_registry
+                .insert_join("eval.optimizer.scheduler", handle)
+                .await;
+            info!(cadence_secs = cadence.as_secs(), "Scalar optimizer scheduler started");
+        }
+    }
+
     // Start browser bridge server if enabled
     #[cfg(feature = "browser")]
     if config.browser.bridge_enabled {
@@ -917,6 +1006,14 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
         .route("/api/v1/skills/:name/disable", post(super::disable_skill_handler))
         .route("/api/v1/skills/:name/run", post(super::run_skill_handler))
         .route("/api/v1/skills/:name/uninstall", post(super::uninstall_skill_handler))
+        .route("/api/v1/connectors", get(super::list_connectors_handler))
+        .route("/api/v1/connectors/install", post(super::install_connector_handler))
+        .route("/api/v1/connectors/sync", post(super::sync_connectors_handler))
+        .route("/api/v1/connectors/updates", get(super::connector_updates_handler))
+        .route("/api/v1/connectors/:id/enable", post(super::enable_connector_handler))
+        .route("/api/v1/connectors/:id/disable", post(super::disable_connector_handler))
+        .route("/api/v1/connectors/:id/uninstall", post(super::uninstall_connector_handler))
+        .route("/api/v1/connectors/:id/auth/status", get(super::connector_auth_status_handler))
         .route("/api/v1/device/pairing/pending", get(super::list_device_pending_handler))
         .route("/api/v1/device/pairing/authorized", get(super::list_device_authorized_handler))
         .route("/api/v1/device/pairing/approve", post(super::approve_device_handler))

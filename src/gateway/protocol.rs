@@ -235,7 +235,7 @@ pub const DEFAULT_SCOPES: &[&str] = &[SCOPE_CHAT, SCOPE_READ];
 /// Check if a method requires a specific scope
 pub fn method_scope(method: &str) -> Option<&'static str> {
     match method {
-        "chat.send" | "chat.abort" | "ask.respond" => Some(SCOPE_CHAT),
+        "chat.send" | "chat.abort" | "ask.respond" | "feedback.vote" => Some(SCOPE_CHAT),
         "chat.history"
         | "sessions.list"
         | "agents.list"
@@ -265,7 +265,13 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         | "device.permission.status"
         | "device.adb.status"
         | "device.shortcut.results"
-        | "device.shortcut.inbox" => Some(SCOPE_READ),
+        | "device.shortcut.inbox"
+        | "eval.trace.list"
+        | "eval.dashboard"
+        | "eval.optimizer.status"
+        | "connectors.list"
+        | "connectors.auth_status"
+        | "connectors.updates" => Some(SCOPE_READ),
         "sessions.create"
         | "sessions.delete"
         | "sessions.rename"
@@ -287,7 +293,16 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         | "mcp.auth_cancel"
         | "device.permission.request"
         | "device.adb.pair"
-        | "device.shortcut.run" => Some(SCOPE_WRITE),
+        | "device.shortcut.run"
+        | "eval.optimizer.run"
+        | "eval.optimizer.resume"
+        | "eval.optimizer.rollback"
+        | "eval.propose"
+        | "connectors.install"
+        | "connectors.enable"
+        | "connectors.disable"
+        | "connectors.uninstall"
+        | "connectors.sync" => Some(SCOPE_WRITE),
         "acp.spawn"
         | "acp.terminate"
         | "acp.message"
@@ -448,12 +463,18 @@ pub fn gateway_event_to_ws(event: &GatewayEvent) -> Option<(String, serde_json::
                 "data": data,
             }),
         )),
-        GatewayEvent::Completed { session_id, agent_id, response } => Some((
+        GatewayEvent::Completed {
+            session_id,
+            agent_id,
+            response,
+            turn_id,
+        } => Some((
             "chat.final".to_string(),
             serde_json::json!({
                 "session_id": session_id,
                 "agent_id": agent_id,
                 "response": response,
+                "turn_id": turn_id,
             }),
         )),
         GatewayEvent::ProcessingError { session_id, agent_id, message } => Some((
@@ -682,6 +703,22 @@ pub fn gateway_event_to_ws(event: &GatewayEvent) -> Option<(String, serde_json::
                 "server_id": server_id,
             }),
         )),
+        GatewayEvent::ConnectorChanged { id, state, summary } => Some((
+            match state.as_str() {
+                "installed" => "connector.installed",
+                "enabled" => "connector.enabled",
+                "disabled" => "connector.disabled",
+                "uninstalled" => "connector.uninstalled",
+                "error" => "connector.error",
+                _ => "connector.updated",
+            }
+            .to_string(),
+            serde_json::json!({
+                "id": id,
+                "state": state,
+                "summary": summary,
+            }),
+        )),
         GatewayEvent::DeviceStatusChanged { device_id, status, message } => Some((
             "device.status_changed".to_string(),
             serde_json::json!({
@@ -796,6 +833,7 @@ mod tests {
         assert_eq!(method_scope("chat.send"), Some(SCOPE_CHAT));
         assert_eq!(method_scope("chat.abort"), Some(SCOPE_CHAT));
         assert_eq!(method_scope("ask.respond"), Some(SCOPE_CHAT));
+        assert_eq!(method_scope("feedback.vote"), Some(SCOPE_CHAT));
 
         // SCOPE_READ
         assert_eq!(method_scope("chat.history"), Some(SCOPE_READ));
@@ -826,6 +864,13 @@ mod tests {
         assert_eq!(method_scope("device.adb.status"), Some(SCOPE_READ));
         assert_eq!(method_scope("device.shortcut.results"), Some(SCOPE_READ));
         assert_eq!(method_scope("device.shortcut.inbox"), Some(SCOPE_READ));
+        assert_eq!(method_scope("eval.trace.list"), Some(SCOPE_READ));
+        assert_eq!(method_scope("eval.dashboard"), Some(SCOPE_READ));
+        assert_eq!(method_scope("eval.optimizer.status"), Some(SCOPE_READ));
+        assert_eq!(method_scope("eval.optimizer.run"), Some(SCOPE_WRITE));
+        assert_eq!(method_scope("eval.optimizer.resume"), Some(SCOPE_WRITE));
+        assert_eq!(method_scope("eval.optimizer.rollback"), Some(SCOPE_WRITE));
+        assert_eq!(method_scope("eval.propose"), Some(SCOPE_WRITE));
 
         // SCOPE_WRITE
         assert_eq!(method_scope("sessions.create"), Some(SCOPE_WRITE));

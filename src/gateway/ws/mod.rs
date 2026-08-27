@@ -136,8 +136,11 @@ mod agents;
 mod ask;
 mod chat;
 mod config_ws;
+pub(crate) mod connectors_ws;
 mod core;
 mod device_ws;
+mod eval_ws;
+mod feedback;
 mod handshake;
 mod logs;
 mod mcp_ws;
@@ -147,6 +150,7 @@ mod skills_ws;
 mod tasks;
 mod workspace;
 
+pub(crate) use config_ws::push_default_agent_update;
 pub use core::{ws_auth_middleware, ws_handler};
 
 #[cfg(test)]

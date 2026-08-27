@@ -94,6 +94,7 @@ async fn finalize_hello_ok(
             "agents".to_string(),
             "tools".to_string(),
             "acp".to_string(),
+            "connectors".to_string(),
         ],
         scopes_granted: granted_scopes,
         server: ServerInfo {

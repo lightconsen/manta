@@ -230,6 +230,12 @@ pub enum GatewayEvent {
     McpAuthFailed { server_id: String, reason: String },
     /// MCP OAuth token was silently refreshed
     McpTokenRefreshed { server_id: String },
+    /// A connector's lifecycle state changed (installed/enabled/disabled/updated).
+    ConnectorChanged {
+        id: String,
+        state: String,
+        summary: Option<serde_json::Value>,
+    },
     /// Self-repair action taken (agent or channel restarted)
     RepairAction {
         /// "agent" or "channel"
@@ -244,6 +250,8 @@ pub enum GatewayEvent {
         session_id: String,
         agent_id: String,
         response: String,
+        /// Stable per-turn identifier, surfaced to clients for feedback.vote.
+        turn_id: String,
     },
     /// Agent encountered a processing error during message handling
     ProcessingError {
