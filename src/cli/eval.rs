@@ -77,6 +77,49 @@ pub enum EvalCommands {
         #[arg(long)]
         judge_base_url: Option<String>,
     },
+    /// Run the governed badcase regression suite (expiry/dedup/difficulty
+    /// weighting applied from cfg.eval.badcase_governance, or defaults)
+    BadcaseRun {
+        /// Path to evals directory (defaults to `./evals`)
+        #[arg(short, long)]
+        dir: Option<PathBuf>,
+        /// Number of trials per task (overrides governance weighting)
+        #[arg(short, long)]
+        trials: Option<usize>,
+        /// LLM provider (e.g. "anthropic", "openai")
+        #[arg(long)]
+        provider: Option<String>,
+        /// Model name (e.g. "claude-sonnet-4-20250514")
+        #[arg(long)]
+        model: Option<String>,
+        /// API key (overrides env var / config file)
+        #[arg(long)]
+        api_key: Option<String>,
+        /// API base URL (for custom/self-hosted providers)
+        #[arg(long)]
+        base_url: Option<String>,
+        /// Show detailed skill evaluation breakdown per dimension
+        #[arg(long)]
+        skill_breakdown: bool,
+        /// Collect new badcases from failed trials into evals/badcases/
+        #[arg(long)]
+        collect_badcases: bool,
+        /// Fraction of tasks to run (0.0–1.0). 1.0 = all tasks (§10).
+        #[arg(long)]
+        sampling_rate: Option<f64>,
+        /// Judge (Critic) provider preset (defaults to the agent's provider)
+        #[arg(long)]
+        judge_provider: Option<String>,
+        /// Judge model (e.g. a cheaper/faster model than the agent's)
+        #[arg(long)]
+        judge_model: Option<String>,
+        /// Judge API key (overrides env var / agent key)
+        #[arg(long)]
+        judge_api_key: Option<String>,
+        /// Judge API base URL
+        #[arg(long)]
+        judge_base_url: Option<String>,
+    },
     /// List collected badcases
     BadcaseList {
         /// Path to evals directory (defaults to `./evals`)
@@ -211,6 +254,45 @@ impl EvalCommands {
                     config,
                     suite.clone(),
                     *full,
+                    eval::standalone::SuiteRunOptions {
+                        evals_dir: dir.clone(),
+                        trials_override: *trials,
+                        sampling_rate_override: *sampling_rate,
+                        skill_breakdown: *skill_breakdown,
+                        collect_badcases: *collect_badcases,
+                        judge: eval::standalone::ProviderSelection {
+                            provider: judge_provider.clone(),
+                            model: judge_model.clone(),
+                            api_key: judge_api_key.clone(),
+                            base_url: judge_base_url.clone(),
+                        },
+                    },
+                    eval::standalone::ProviderSelection {
+                        provider: provider.clone(),
+                        model: model.clone(),
+                        api_key: api_key.clone(),
+                        base_url: base_url.clone(),
+                    },
+                )
+                .await
+            }
+            Self::BadcaseRun {
+                dir,
+                trials,
+                provider,
+                model,
+                api_key,
+                base_url,
+                skill_breakdown,
+                collect_badcases,
+                sampling_rate,
+                judge_provider,
+                judge_model,
+                judge_api_key,
+                judge_base_url,
+            } => {
+                cmd_badcase_run(
+                    config,
                     eval::standalone::SuiteRunOptions {
                         evals_dir: dir.clone(),
                         trials_override: *trials,
@@ -448,6 +530,19 @@ async fn cmd_run(
     println!("  Use --full flag to execute (standalone, no daemon needed).");
 
     Ok(())
+}
+
+/// `eval badcase-run` — run the governed badcase regression suite.
+///
+/// Governance (expiry / dedup / downgrade / difficulty-weighted trials) comes
+/// from `cfg.eval.badcase_governance` when a config file is present, else code
+/// defaults. Delegates execution to the standalone harness core.
+async fn cmd_badcase_run(
+    config: &Config,
+    opts: eval::standalone::SuiteRunOptions,
+    selection: eval::standalone::ProviderSelection,
+) -> Result<()> {
+    eval::standalone::run_governed_badcase_suite(config, opts, selection).await
 }
 
 /// `eval badcase-list` — show collected badcases.

@@ -15,6 +15,7 @@ use tracing::{info, warn};
 use crate::acp::AcpControlPlane;
 use crate::agent::reflection::critic::Critic;
 use crate::agent::Agent;
+use crate::eval::dataset::EvalSuite;
 use crate::eval::harness::{EarlyStopConfig, EvalHarness};
 use crate::eval::loader::{default_evals_dir, load_suite};
 use crate::eval::rca::RcaPipeline;
@@ -68,13 +69,43 @@ pub struct SuiteRunOptions {
 
 /// Run a full eval suite standalone (no daemon needed).
 ///
+/// Loads the suite by name from `{evals_dir}/suites/{name}.yaml` and runs it
+/// through [`run_suite`].
+pub async fn run_standalone_suite(
+    _config: &crate::config::Config,
+    suite_name: &str,
+    opts: SuiteRunOptions,
+    selection: ProviderSelection,
+) -> Result<()> {
+    let evals_dir = opts.evals_dir.clone().unwrap_or_else(default_evals_dir);
+    let manifest_path = evals_dir
+        .join("suites")
+        .join(format!("{}.yaml", suite_name));
+
+    if !manifest_path.exists() {
+        return Err(crate::error::SyscityError::Validation(format!(
+            "Suite '{}' not found at {:?}",
+            suite_name, manifest_path
+        )));
+    }
+
+    let suite = load_suite(&manifest_path, suite_name)?;
+    run_suite(_config, suite, opts, selection).await
+}
+
+/// Run a pre-built eval suite through the standalone harness (no daemon
+/// needed).
+///
+/// Shared core of [`run_standalone_suite`] and [`run_governed_badcase_suite`]:
+/// provider/agent/critic/harness setup, per-task execution, and summary.
+///
 /// 1. Loads GatewayConfig from the config file (or env var fallback).
 /// 2. Creates a provider, tool registry, Agent, and optional Critic.
 /// 3. Runs `EvalHarness` for each task in the suite.
 /// 4. Prints per-task and summary results.
-pub async fn run_standalone_suite(
+pub async fn run_suite(
     _config: &crate::config::Config,
-    suite_name: &str,
+    suite: EvalSuite,
     opts: SuiteRunOptions,
     selection: ProviderSelection,
 ) -> Result<()> {
@@ -93,18 +124,6 @@ pub async fn run_standalone_suite(
         base_url: base_url_override,
     } = selection;
     let evals_dir = evals_dir_override.unwrap_or_else(default_evals_dir);
-    let manifest_path = evals_dir
-        .join("suites")
-        .join(format!("{}.yaml", suite_name));
-
-    if !manifest_path.exists() {
-        return Err(crate::error::SyscityError::Validation(format!(
-            "Suite '{}' not found at {:?}",
-            suite_name, manifest_path
-        )));
-    }
-
-    let suite = load_suite(&manifest_path, suite_name)?;
 
     println!("\n═══ Eval Suite: {} ═══", suite.name);
     println!("  Tasks:    {}", suite.tasks.len());
@@ -470,6 +489,57 @@ pub async fn run_standalone_suite(
     }
 
     Ok(())
+}
+
+/// Run the governed badcase regression suite standalone (no daemon needed).
+///
+/// Loads `{evals_dir}/badcases/`, applies [`BadcaseGovernance`] — expiry,
+/// downgraded pass rates, and difficulty-weighted trials — then runs the
+/// resulting suite through [`run_suite`].
+///
+/// Governance comes from `cfg.eval.badcase_governance` when a config file is
+/// present, else code defaults. The config load is optional: this command
+/// works (with defaults) even when no config file exists.
+pub async fn run_governed_badcase_suite(
+    config: &crate::config::Config,
+    opts: SuiteRunOptions,
+    selection: ProviderSelection,
+) -> Result<()> {
+    use crate::eval::recycle::{load_governed_badcase_suite, BadcaseGovernance};
+
+    let evals_dir = opts.evals_dir.clone().unwrap_or_else(default_evals_dir);
+
+    let gateway_cfg = try_load_gateway_config().await;
+    let governance = gateway_cfg
+        .as_ref()
+        .map(|c| BadcaseGovernance::from_config(&c.eval.badcase_governance))
+        .unwrap_or_else(BadcaseGovernance::default);
+
+    let suite = load_governed_badcase_suite(&evals_dir, &governance)?;
+    if suite.tasks.is_empty() {
+        println!("No governed badcase tasks in {:?}", evals_dir.join("badcases"));
+        println!("  Collect badcases first: `syscity eval run <suite> --full --collect-badcases`");
+        return Ok(());
+    }
+
+    let governance_source = if gateway_cfg.is_some() {
+        "config"
+    } else {
+        "defaults"
+    };
+    println!("\n═══ Badcase Regression Suite ═══");
+    println!("  Tasks:      {}", suite.tasks.len());
+    println!("  Min pass:   {:.0}%", suite.min_pass_rate * 100.0);
+    println!(
+        "  Governance: {} (max_age={}d, dup_limit={}, downgrade>={} -> {:.0}%)",
+        governance_source,
+        governance.max_age_days,
+        governance.max_duplicate_inputs,
+        governance.downgrade_threshold,
+        governance.downgraded_pass_rate * 100.0,
+    );
+
+    run_suite(config, suite, opts, selection).await
 }
 
 /// Find and parse the config file as `GatewayConfig`.
