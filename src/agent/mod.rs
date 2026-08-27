@@ -39,7 +39,11 @@ pub enum ProgressEvent {
     /// LLM is streaming text content delta
     ContentDelta { text: String },
     /// Completed with final response
-    Completed { response: String },
+    ///
+    /// `turn_id` is the stable per-turn identifier (from the observability
+    /// collector). It is empty for turns that never produced a collector
+    /// (e.g. prompt-injection-guard rejections).
+    Completed { response: String, turn_id: String },
     /// Error occurred
     Error { message: String },
 }
@@ -261,6 +265,13 @@ pub struct Agent {
     /// Per-conversation concurrency guards to prevent reentrant processing
     /// of the same conversation_id.
     concurrency_guards: Arc<Mutex<HashMap<String, Arc<Semaphore>>>>,
+    /// Online risk-signal checker for the badcase auto-collection pipeline.
+    /// When set (with `pending_badcase_store`), every completed turn is
+    /// scanned and flagged turns are inserted into the pending pool.
+    risk_checker: Option<crate::eval::RiskSignalChecker>,
+    /// Pending-badcase pool that online risk signals (and human 👎 votes)
+    /// land in, awaiting confirmation.
+    pending_badcase_store: Option<Arc<crate::eval::PendingBadcaseStore>>,
 }
 
 /// RAII guard that reinserts a Thread into `thread_map` on drop.
@@ -669,7 +680,10 @@ mod tests {
 
     #[test]
     fn test_progress_event_debug() {
-        let event = ProgressEvent::Completed { response: "hi".to_string() };
+        let event = ProgressEvent::Completed {
+            response: "hi".to_string(),
+            turn_id: "t1".to_string(),
+        };
         let debug = format!("{:?}", event);
         assert!(debug.contains("Completed"));
     }

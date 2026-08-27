@@ -1,6 +1,7 @@
 //! config.get / config.set over WebSocket.
 
 use super::*;
+use crate::gateway::apply_config::apply_config_path;
 pub(super) async fn handle_config_get(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
     let config = state.config.read().await;
     let heartbeat = &config.heartbeat;
@@ -151,6 +152,9 @@ pub(super) async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>
     let push_default_agent = params.path.starts_with("default_agent.");
 
     match params.path.as_str() {
+        // Scalar `default_agent.*` paths share the same pure application logic
+        // as the harness optimizer (single source of truth).
+        p if apply_config_path(config, p, &params.value) => {}
         "model" => {
             if let Some(v) = model_update {
                 config.model = v;
@@ -168,39 +172,6 @@ pub(super) async fn handle_config_set(req: &WsRequest, state: &Arc<GatewayState>
                 } else {
                     config.agent_models.insert(agent_id, v);
                 }
-            }
-        }
-        "default_agent.temperature" => {
-            if let Some(v) = params.value.as_f64() {
-                config.default_agent.temperature = v as f32;
-            }
-        }
-        "default_agent.max_tokens" => {
-            if let Some(v) = params.value.as_u64() {
-                config.default_agent.max_tokens = v as u32;
-            }
-        }
-        "default_agent.max_turns" => {
-            config.default_agent.max_turns = params.value.as_u64().map(|v| v as usize);
-        }
-        "default_agent.max_concurrent_tools" => {
-            if let Some(v) = params.value.as_u64() {
-                config.default_agent.max_concurrent_tools = v as usize;
-            }
-        }
-        "default_agent.max_context_tokens" => {
-            if let Some(v) = params.value.as_u64() {
-                config.default_agent.max_context_tokens = v as usize;
-            }
-        }
-        "default_agent.system_prompt" => {
-            if let Some(v) = params.value.as_str() {
-                config.default_agent.system_prompt = v.to_string();
-            }
-        }
-        "default_agent.workspace_only" => {
-            if let Some(v) = params.value.as_bool() {
-                config.default_agent.workspace_only = v;
             }
         }
         "heartbeat.enabled" => {
@@ -486,7 +457,10 @@ async fn push_agent_param_update(state: &Arc<GatewayState>, agent_id: &str) {
 
 /// Push the current `default_agent` config to the running `default` agent,
 /// re-applying the spawn-time identity augmentation to the system prompt.
-async fn push_default_agent_update(state: &Arc<GatewayState>) {
+///
+/// `pub(crate)` so the harness scalar optimizer can hot-update a running
+/// default agent with the same push the `config.set` handler uses.
+pub(crate) async fn push_default_agent_update(state: &Arc<GatewayState>) {
     let handle = {
         let agents = state.agents.agents.read().await;
         agents.get("default").cloned()

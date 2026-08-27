@@ -7,6 +7,7 @@
 pub mod approval;
 pub mod ask_user;
 pub mod eval;
+pub mod metadata;
 pub mod rbac;
 
 // Re-export approval types for convenience
@@ -23,6 +24,8 @@ pub use ask_user::{
 pub use rbac::{
     ModelCapabilities, PolicyEvaluationContext, Role, SandboxPolicy, ToolPolicy, UserContext,
 };
+// Re-export tool metadata for convenience
+pub use metadata::ToolDescriptionMeta;
 
 mod registrar;
 mod registry;

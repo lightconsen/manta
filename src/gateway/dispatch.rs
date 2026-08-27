@@ -13,6 +13,7 @@ use tracing::{debug, error, info, warn};
 
 use super::{AgentCommand, AgentStatus, BufferedMessage, GatewayEvent, GatewayState};
 use crate::agent::session_store::AppendMessageParams;
+use crate::observe::record::ChannelObservation;
 
 /// Unified worker that consumes `IncomingMessage`s from `inbound_entry`
 /// and drives them through the inbound pipeline.
@@ -102,6 +103,14 @@ pub(crate) async fn dispatch_routed_message(
         crate::channels::InputProvenance::ExternalUser { channel, .. } => channel.clone(),
         _ => "unknown".to_string(),
     };
+    // Channel-layer observation carried into the turn: not debounced here
+    // (this is a direct dispatch), enriched when media was attached during
+    // inbound processing, routed to the resolved agent.
+    let channel_obs = Some(ChannelObservation {
+        debounced: false,
+        enriched: routed.media_results.is_some(),
+        route: Some(agent_id.clone()),
+    });
 
     // ── Group session membership check ───────────────────────────────
     {
@@ -168,6 +177,7 @@ pub(crate) async fn dispatch_routed_message(
                     channel: channel.clone(),
                     think_level: think_level.clone(),
                     queue_mode: queue_mode.clone(),
+                    channel_obs: channel_obs.clone(),
                 },
             )
             .await;
@@ -196,6 +206,7 @@ pub(crate) async fn dispatch_routed_message(
                     channel: channel.clone(),
                     think_level: think_level.clone(),
                     queue_mode: queue_mode.clone(),
+                    channel_obs: channel_obs.clone(),
                 },
             )
             .await;
@@ -281,6 +292,7 @@ pub(crate) async fn dispatch_routed_message(
                         channel: channel.clone(),
                         think_level: think_level.clone(),
                         queue_mode: queue_mode.clone(),
+                        channel_obs: channel_obs.clone(),
                     },
                 )
                 .await;
@@ -298,6 +310,7 @@ pub(crate) async fn dispatch_routed_message(
                     channel: channel.clone(),
                     think_level: think_level.clone(),
                     queue_mode: queue_mode.clone(),
+                    channel_obs: channel_obs.clone(),
                 },
             )
             .await;
@@ -362,6 +375,13 @@ pub(crate) async fn flush_session_buffer(
             channel: first_channel,
             think_level,
             queue_mode,
+            // This message is the result of a debounce flush of buffered
+            // follow-ups; no media enrichment happened at this point.
+            channel_obs: Some(ChannelObservation {
+                debounced: true,
+                enriched: false,
+                route: Some(agent_id.to_string()),
+            }),
         },
     )
     .await;
@@ -414,6 +434,9 @@ pub(crate) struct AgentDispatch {
     pub think_level: Option<String>,
     /// Optional queue mode override.
     pub queue_mode: Option<String>,
+    /// Inbound channel-layer observation (debounce/enrich/route) carried into
+    /// the turn for observability. `None` for non-dispatch paths.
+    pub channel_obs: Option<ChannelObservation>,
 }
 
 /// Resolve the effective concrete model ID for a session: the session's
@@ -455,6 +478,7 @@ pub(crate) async fn send_to_agent(state: &Arc<GatewayState>, dispatch: AgentDisp
         ref channel,
         think_level,
         queue_mode,
+        channel_obs,
     } = dispatch;
 
     // UserPromptSubmit gate: a configured shell hook can block a message
@@ -580,7 +604,7 @@ pub(crate) async fn send_to_agent(state: &Arc<GatewayState>, dispatch: AgentDisp
         }
     }
 
-    let incoming_msg = crate::channels::IncomingMessage::new(
+    let mut incoming_msg = crate::channels::IncomingMessage::new(
         user_id.to_string(),
         session_id.to_string(),
         message.to_string(),
@@ -589,6 +613,15 @@ pub(crate) async fn send_to_agent(state: &Arc<GatewayState>, dispatch: AgentDisp
         channel: channel.to_string(),
         is_direct: true,
     });
+
+    // Carry the channel-layer observation into the turn via the message's
+    // extra metadata; the agent drains it onto the turn record.
+    if let Some(obs) = channel_obs {
+        incoming_msg.metadata.extra.insert(
+            "channel_observation".to_string(),
+            serde_json::to_value(obs).unwrap_or(serde_json::Value::Null),
+        );
+    }
 
     // Broadcast processing status
     if let Err(e) = state.events.tx.send(GatewayEvent::AgentStatus {
@@ -693,11 +726,12 @@ pub(crate) async fn send_to_agent(state: &Arc<GatewayState>, dispatch: AgentDisp
                     // as a final ToolResult event; no per-chunk gateway event
                     // yet.
                 }
-                crate::agent::ProgressEvent::Completed { response } => {
+                crate::agent::ProgressEvent::Completed { response, turn_id } => {
                     if let Err(e) = tx.send(GatewayEvent::Completed {
                         session_id: sid.clone(),
                         agent_id: aid.clone(),
                         response,
+                        turn_id,
                     }) {
                         debug!("No receivers for Completed event: {}", e);
                     }

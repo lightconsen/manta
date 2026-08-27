@@ -68,6 +68,8 @@ impl Agent {
             retrospect_counter: Arc::new(AtomicU64::new(0)),
             thread_binding_manager: None,
             concurrency_guards: Arc::new(Mutex::new(HashMap::new())),
+            risk_checker: None,
+            pending_badcase_store: None,
         }
     }
 
@@ -457,6 +459,21 @@ impl Agent {
     /// Attach a PII detector for output content filtering.
     pub fn with_pii_detector(mut self, detector: Arc<crate::security::PiiDetector>) -> Self {
         self.pii_detector = Some(detector);
+        self
+    }
+
+    /// Enable the online badcase auto-collection pipeline.
+    ///
+    /// When both the risk checker and the pending store are attached, every
+    /// completed turn is scanned post-hoc and turns that trip a risk signal
+    /// are inserted into the pending-badcase pool (source `online:risk`).
+    pub fn with_badcase_pipeline(
+        mut self,
+        risk_checker: crate::eval::RiskSignalChecker,
+        store: Arc<crate::eval::PendingBadcaseStore>,
+    ) -> Self {
+        self.risk_checker = Some(risk_checker);
+        self.pending_badcase_store = Some(store);
         self
     }
 

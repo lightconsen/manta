@@ -133,6 +133,10 @@ pub enum ModuleVerdict {
 pub enum BadcaseEntry {
     /// Auto-detected by EvalHarness (failed trial).
     AutoDetected,
+    /// Auto-collected online: deterministic risk signal fired on a turn.
+    OnlineRisk,
+    /// Auto-collected online: a user disliked (👎) this turn.
+    HumanVote,
     /// Manually submitted by operator/QA/engineer.
     ManualSubmit {
         reporter: String,

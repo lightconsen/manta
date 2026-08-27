@@ -76,6 +76,10 @@ pub struct ToolRegistry {
     /// to a workspace file and replaced with a head/tail preview.
     /// `None` disables spilling.
     spill_threshold: Option<usize>,
+    /// Runtime versioned description overrides (§十一 工具描述成为可搜索的数据).
+    /// When present for a tool, its `description` replaces the static
+    /// `Tool::description()` in every emitted `FunctionDefinition`.
+    metadata: std::sync::RwLock<HashMap<String, super::metadata::ToolDescriptionMeta>>,
 }
 
 impl Default for ToolRegistry {
@@ -98,6 +102,7 @@ impl Default for ToolRegistry {
             web_search_providers: None,
             todo_state: None,
             spill_threshold: Some(Self::DEFAULT_SPILL_THRESHOLD),
+            metadata: std::sync::RwLock::new(HashMap::new()),
         }
     }
 }
@@ -147,6 +152,7 @@ impl ToolRegistry {
             web_search_providers: None,
             todo_state: None,
             spill_threshold: Some(Self::DEFAULT_SPILL_THRESHOLD),
+            metadata: std::sync::RwLock::new(HashMap::new()),
         }
     }
 
@@ -170,6 +176,7 @@ impl ToolRegistry {
             web_search_providers: None,
             todo_state: None,
             spill_threshold: Some(Self::DEFAULT_SPILL_THRESHOLD),
+            metadata: std::sync::RwLock::new(HashMap::new()),
         }
     }
 
@@ -358,6 +365,65 @@ impl ToolRegistry {
     /// Get the advertised capabilities for a tool by name.
     pub fn get_capabilities(&self, name: &str) -> crate::tools::sdk::ToolCapabilities {
         self.tool_capabilities(name)
+    }
+
+    // ── Versioned description metadata (§十一) ──────────────────────────────
+
+    /// Set (or replace) the runtime description override for `name`.
+    ///
+    /// The registry is shared with all running agents, so an override is picked
+    /// up on the next turn without restart. When present, this description
+    /// replaces the tool's static `Tool::description()` in `get_definitions()`
+    /// and `get_available()`.
+    pub fn set_metadata(&self, name: &str, meta: crate::tools::metadata::ToolDescriptionMeta) {
+        if let Ok(mut map) = self.metadata.write() {
+            map.insert(name.to_string(), meta);
+        } else {
+            warn!("Metadata RwLock poisoned in set_metadata for '{}'", name);
+        }
+    }
+
+    /// Current runtime description override for `name`, if any.
+    pub fn metadata_for(&self, name: &str) -> Option<crate::tools::metadata::ToolDescriptionMeta> {
+        self.metadata
+            .read()
+            .ok()
+            .and_then(|map| map.get(name).cloned())
+    }
+
+    /// The effective LLM-facing description for a tool: the runtime override
+    /// when set, otherwise the tool's static description.
+    fn effective_description(&self, name: &str, tool: &SharedTool) -> String {
+        self.metadata_for(name)
+            .map(|m| m.description)
+            .unwrap_or_else(|| tool.description().to_string())
+    }
+
+    /// Resolve the effective description for a tool by name, checking the
+    /// metadata override, then the static registry, then the dynamic registry.
+    ///
+    /// Unlike [`ToolRegistry::get`], this covers dynamically-registered tools,
+    /// so the structural proposer can read the current description of any
+    /// registered tool regardless of where it lives.
+    pub fn description_for(&self, name: &str) -> Option<String> {
+        if let Some(m) = self.metadata_for(name) {
+            return Some(m.description);
+        }
+        if let Some(tool) = self.get(name) {
+            return Some(tool.description().to_string());
+        }
+        self.dynamic_tools
+            .read()
+            .ok()
+            .and_then(|map| map.get(name).map(|t| t.description().to_string()))
+    }
+
+    /// Build a `FunctionDefinition` for a tool, applying any description
+    /// override from the metadata store.
+    fn definition_for(&self, name: &str, tool: &SharedTool) -> FunctionDefinition {
+        let mut def = tool.to_function_definition();
+        def.description = self.effective_description(name, tool);
+        def
     }
 
     /// Returns `true` if `name` is registered only in the dynamic registry.
@@ -730,10 +796,11 @@ impl ToolRegistry {
 
     /// Get all tools as function definitions (excludes blocked and degraded
     /// tools). Includes both statically- and dynamically-registered tools.
+    /// Runtime description overrides (§十一) replace static descriptions.
     pub fn get_definitions(&self) -> Vec<FunctionDefinition> {
         self.iter_tools(|name| !self.is_blocked(name) && !self.is_degraded(name))
             .into_iter()
-            .map(|(_, tool)| tool.to_function_definition())
+            .map(|(name, tool)| self.definition_for(&name, &tool))
             .collect()
     }
 
@@ -749,7 +816,7 @@ impl ToolRegistry {
         self.iter_tools(|name| !self.is_excluded(name, context))
             .into_iter()
             .filter(|(_, tool)| tool.is_available(context))
-            .map(|(_, tool)| tool.to_function_definition())
+            .map(|(name, tool)| self.definition_for(&name, &tool))
             .collect()
     }
 
@@ -1815,5 +1882,39 @@ mod tests {
             .expect_err("must delegate to execute() which fails without a queue");
         assert!(err.to_string().contains("no approval queue"), "err: {}", err);
         assert!(!ran.load(Ordering::SeqCst), "tool must not run");
+    }
+
+    /// A description override must replace the static description in every
+    /// emitted `FunctionDefinition` (§十一).
+    #[test]
+    fn description_override_replaces_static_description() {
+        let ran = Arc::new(AtomicBool::new(false));
+        let mut registry = ToolRegistry::new();
+        registry.register(spy("spy", ran));
+
+        assert_eq!(registry.get_definitions()[0].description, "spy tool");
+
+        registry.set_metadata(
+            "spy",
+            crate::tools::metadata::ToolDescriptionMeta::new(
+                1,
+                "renamed: reports what the spy tool does",
+            ),
+        );
+        let def = registry
+            .get_definitions()
+            .into_iter()
+            .find(|d| d.name == "spy")
+            .expect("spy tool present");
+        assert_eq!(def.description, "renamed: reports what the spy tool does");
+
+        // `get_available` honors the override too.
+        let ctx = ToolContext::default();
+        let avail = registry
+            .get_available(&ctx)
+            .into_iter()
+            .find(|d| d.name == "spy")
+            .expect("spy tool available");
+        assert_eq!(avail.description, "renamed: reports what the spy tool does");
     }
 }

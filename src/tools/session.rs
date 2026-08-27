@@ -222,6 +222,7 @@ impl Tool for SessionsHistoryTool {
                             created_at,
                             _transcript_id,
                             _run_id,
+                            _turn_id,
                         )| {
                             let mut msg = serde_json::json!({
                                 "id": id,

@@ -57,6 +57,7 @@ impl SessionStore {
 
     /// Append a completed turn as two rows (user + assistant) tagged with
     /// thread and turn metadata.
+    #[allow(clippy::too_many_arguments)]
     pub async fn append_turn(
         &self,
         session_id: &str,
@@ -65,14 +66,15 @@ impl SessionStore {
         user_msg: &str,
         assistant_msg: &str,
         state: &str,
+        turn_id: Option<&str>,
     ) -> Result<()> {
         let now = Utc::now().timestamp_millis();
 
         // Insert user message row.
         sqlx::query(
             r#"
-            INSERT INTO session_messages (session_id, role, content, created_at, thread_id, turn_index, turn_state)
-            VALUES (?, 'user', ?, ?, ?, ?, ?)
+            INSERT INTO session_messages (session_id, role, content, created_at, thread_id, turn_index, turn_state, turn_id)
+            VALUES (?, 'user', ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(session_id)
@@ -81,6 +83,7 @@ impl SessionStore {
         .bind(thread_id)
         .bind(turn_index)
         .bind(state)
+        .bind(turn_id)
         .execute(&self.pool)
         .await
         .map_err(|e| SyscityError::Storage {
@@ -91,8 +94,8 @@ impl SessionStore {
         // Insert assistant message row.
         sqlx::query(
             r#"
-            INSERT INTO session_messages (session_id, role, content, created_at, thread_id, turn_index, turn_state)
-            VALUES (?, 'assistant', ?, ?, ?, ?, ?)
+            INSERT INTO session_messages (session_id, role, content, created_at, thread_id, turn_index, turn_state, turn_id)
+            VALUES (?, 'assistant', ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(session_id)
@@ -101,6 +104,7 @@ impl SessionStore {
         .bind(thread_id)
         .bind(turn_index)
         .bind(state)
+        .bind(turn_id)
         .execute(&self.pool)
         .await
         .map_err(|e| SyscityError::Storage {
@@ -369,7 +373,7 @@ mod tests {
         store.save_thread("turn-test", "t1", "", 0).await.unwrap();
 
         store
-            .append_turn("turn-test", "t1", 0, "user msg", "asst msg", "complete")
+            .append_turn("turn-test", "t1", 0, "user msg", "asst msg", "complete", Some("turn-abc"))
             .await
             .unwrap();
 
@@ -396,7 +400,7 @@ mod tests {
             .unwrap();
 
         store
-            .append_turn("del-turn-test", "t1", 0, "u", "a", "complete")
+            .append_turn("del-turn-test", "t1", 0, "u", "a", "complete", None)
             .await
             .unwrap();
         store.delete_turn("del-turn-test", "t1", 0).await.unwrap();

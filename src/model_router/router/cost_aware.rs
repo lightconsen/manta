@@ -11,12 +11,25 @@ impl ModelRouter {
         messages: Vec<Message>,
         tools: Option<Vec<ToolDefinition>>,
     ) -> crate::Result<CompletionResponse> {
+        Ok(self.complete_auto_with_route(messages, tools).await?.0)
+    }
+
+    /// Cost-aware automatic model selection, returning the response together
+    /// with the [`RouteRecord`] describing the decision (budget steering, task
+    /// classification, fallback).
+    pub async fn complete_auto_with_route(
+        &self,
+        messages: Vec<Message>,
+        tools: Option<Vec<ToolDefinition>>,
+    ) -> crate::Result<(CompletionResponse, RouteRecord)> {
         let config = self.config.read().await;
 
         let model_id = if let Some(ref cost_aware) = config.cost_aware {
             if cost_aware.enabled {
                 drop(config);
-                return self.complete_with_cost_routing(messages, tools).await;
+                return self
+                    .complete_with_cost_routing_traced(messages, tools)
+                    .await;
             }
             cost_aware.default_model.clone()
         } else {
@@ -24,15 +37,16 @@ impl ModelRouter {
         };
         drop(config);
 
-        self.complete(&model_id, messages, tools).await
+        self.complete_with_route(&model_id, messages, tools).await
     }
 
-    /// Internal: route based on task classification and cost
-    async fn complete_with_cost_routing(
+    /// Internal: route based on task classification and cost, returning the
+    /// response together with the [`RouteRecord`] (cost reasons merged in).
+    async fn complete_with_cost_routing_traced(
         &self,
         messages: Vec<Message>,
         tools: Option<Vec<ToolDefinition>>,
-    ) -> crate::Result<CompletionResponse> {
+    ) -> crate::Result<(CompletionResponse, RouteRecord)> {
         let task_type = self.classifier.classify(&messages);
         info!("Task classified as: {:?}", task_type);
 
@@ -40,13 +54,20 @@ impl ModelRouter {
         let Some(cost_aware) = config.cost_aware.as_ref() else {
             let default = config.default_model.clone();
             drop(config);
-            return self.complete(&default, messages, tools).await;
+            let (response, mut rec) = self.complete_with_route(&default, messages, tools).await?;
+            Self::merge_reason(
+                &mut rec,
+                &format!("cost-aware routing for task {task_type:?} → '{default}'"),
+            );
+            return Ok((response, rec));
         };
 
         // Check budget limit
         if let Some(cheapest) = Self::cheapest_model_on_budget_exceeded(cost_aware) {
             drop(config);
-            return self.complete(&cheapest, messages, tools).await;
+            let (response, mut rec) = self.complete_with_route(&cheapest, messages, tools).await?;
+            Self::merge_reason(&mut rec, &format!("budget exceeded → cheapest model '{cheapest}'"));
+            return Ok((response, rec));
         }
 
         // Resolve model from routing rules
@@ -55,7 +76,11 @@ impl ModelRouter {
 
         // Complete and track cost
         let model_id_for_cost = model_id.clone();
-        let response = self.complete(&model_id, messages, tools).await?;
+        let (response, mut rec) = self.complete_with_route(&model_id, messages, tools).await?;
+        Self::merge_reason(
+            &mut rec,
+            &format!("cost-aware routing for task {task_type:?} → '{model_id}'"),
+        );
 
         // Track cost: config is lock #1 (per doc at line 48-58) and we hold
         // no other locks at this point, so acquiring config.write() is safe.
@@ -73,7 +98,7 @@ impl ModelRouter {
             }
         }
 
-        Ok(response)
+        Ok((response, rec))
     }
 
     /// Get cheapest model when budget is exceeded, or `None` if within

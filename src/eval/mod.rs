@@ -43,15 +43,24 @@ pub(crate) mod scorer;
 pub(crate) mod skill_scorer;
 pub(crate) mod standalone;
 
+pub(crate) mod apply_patch;
 pub(crate) mod calibration;
+pub(crate) mod decision_trace;
+pub(crate) mod guardrail;
 pub(crate) mod human_review;
 pub(crate) mod multi_judge;
+pub(crate) mod optimizer;
+pub(crate) mod pending_badcase;
+pub(crate) mod proposer;
 
 pub use action::{
     generate_action_items, load_action_items, write_action_items, ActionItem, ActionLevel,
     ImpactScope, Priority,
 };
 pub use agent_type::AgentType;
+pub use apply_patch::{
+    applied_evidence, apply_optimizer_patch, conflict_evidence, OptimizerPatch, PatchOutcome,
+};
 pub use calibration::{
     calibrate, detect_drift, load_calibration_cases, load_calibration_history,
     save_calibration_report, CalibrationCase, CalibrationReport, CalibrationResult,
@@ -64,6 +73,13 @@ pub use dataset::{
     DegradeExpectation, EvalSuite, EvalTask, EvalTaskSource, ExecutionCase, FailureMode,
     ParamMatcher, QualityCase, ResilienceCase, SkillEvalDesign, SuiteCategory, TriggerCase,
 };
+pub use decision_trace::{
+    DecisionTrace, DecisionTraceStore, RecordTraceParams, TraceKind, TraceStatus,
+};
+pub use guardrail::{
+    BreakerSnapshot, CircuitBreaker, NoopShadowEvaluator, OnlineSignalShadowEvaluator,
+    ShadowEvaluator,
+};
 pub use harness::{
     EarlyStopConfig, EvalHarness, EvalSummary, ToolCallSummary, TrialResult, TurnResult,
 };
@@ -73,6 +89,18 @@ pub use multi_judge::{
     AggregatedResult, AggregatedVerdict, AggregationMode, JudgeConfig, JudgeResult,
     MultiJudgeConfig, MultiJudgeScorer,
 };
+pub use optimizer::{
+    generate_candidates, parse_cadence, AppliedPatch, OptimizerRunParams, OptimizerRunReport,
+    OptimizerRunStatus, OptimizerRuntime, RejectedPatch, RollbackReport, ScalarCandidate,
+    ScalarOptimizer,
+};
+pub use pending_badcase::{
+    dedup_hash, InsertPendingParams, PendingBadcase, PendingBadcaseStore, PendingSource,
+    PendingStatus,
+};
+pub use proposer::{
+    fence_path, AdoptionReport, StructuralCandidate, StructuralObjectKind, StructuralProposer,
+};
 pub use rca::{
     module_to_owner, BadcaseEntry, CandidateModule, ModuleVerdict, ProblemPhenomenon, RcaInput,
     RcaKnowledgeBase, RcaKnowledgeBaseEntry, RcaPipeline, RcaResult,
@@ -81,7 +109,9 @@ pub use recycle::{
     extract_rca_results_from_badcases, load_badcase_suite, load_governed_badcase_suite,
     BadcaseCluster, BadcaseCollector, BadcaseFixStatus, BadcaseGovernance, BadcaseRecord,
 };
-pub use scorer::{LayeredScorer, RiskSignalChecker, ScoringOutput, ScreeningLayer, Verdict};
+pub use scorer::{
+    LayeredScorer, RiskSignalChecker, RiskTurnInput, ScoringOutput, ScreeningLayer, Verdict,
+};
 pub use skill_scorer::{
     ExecutionCheckResult, QualityCheckResult, ResilienceCheckResult, SkillCheckResult, SkillScorer,
     TriggerCheckResult,

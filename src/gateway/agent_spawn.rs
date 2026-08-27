@@ -194,6 +194,10 @@ pub(crate) async fn spawn_agent_inner(
         if let Ok(store) = crate::planner::TaskStateStore::new(&url).await {
             builder = builder.with_planner_state_store(store);
         }
+        if let Some(pending) = state.infra.pending_badcase_store.clone() {
+            builder =
+                builder.with_badcase_pipeline(crate::eval::RiskSignalChecker::default(), pending);
+        }
         Arc::new(builder)
     } else {
         let mut builder = Agent::new(config.clone(), provider, tools)
@@ -215,6 +219,10 @@ pub(crate) async fn spawn_agent_inner(
         let url = format!("sqlite:///{}", planner_db.display());
         if let Ok(store) = crate::planner::TaskStateStore::new(&url).await {
             builder = builder.with_planner_state_store(store);
+        }
+        if let Some(pending) = state.infra.pending_badcase_store.clone() {
+            builder =
+                builder.with_badcase_pipeline(crate::eval::RiskSignalChecker::default(), pending);
         }
         Arc::new(builder)
     };
@@ -526,13 +534,14 @@ async fn process_message_acp(
                         },
                     );
                 }
-                crate::agent::ProgressEvent::Completed { response } => {
+                crate::agent::ProgressEvent::Completed { response, turn_id } => {
                     emit_event(
                         &state.events.tx,
                         super::GatewayEvent::Completed {
                             session_id: session_id.clone(),
                             agent_id: agent_id.clone(),
                             response,
+                            turn_id,
                         },
                     );
                 }
@@ -764,13 +773,14 @@ async fn process_message_direct(
                     );
                 }
                 crate::agent::ProgressEvent::ToolResultDelta { .. } => {}
-                crate::agent::ProgressEvent::Completed { response } => {
+                crate::agent::ProgressEvent::Completed { response, turn_id } => {
                     emit_event(
                         &tx,
                         super::GatewayEvent::Completed {
                             session_id: sid.clone(),
                             agent_id: aid.clone(),
                             response,
+                            turn_id,
                         },
                     );
                 }

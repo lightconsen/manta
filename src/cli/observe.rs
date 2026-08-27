@@ -1030,6 +1030,10 @@ mod tests {
             usage: crate::observe::record::ObservedUsage::default(),
             llm_rounds: vec![],
             tool_calls: vec![],
+            route_log: vec![],
+            compressions: vec![],
+            plan_snapshot: None,
+            channel: None,
         }
     }
 

@@ -45,6 +45,18 @@ impl Default for RiskSignalChecker {
     }
 }
 
+/// Lightweight snapshot of a completed turn, used for online risk scanning.
+///
+/// Deliberately distinct from [`crate::observe::record::TurnRecord`]: the
+/// persisted record truncates its text previews, while online risk scanning
+/// must see the full, untruncated input/response as they exist at hook time.
+#[derive(Debug, Clone)]
+pub struct RiskTurnInput {
+    pub input: String,
+    pub response: String,
+    pub tool_call_count: usize,
+}
+
 impl RiskSignalChecker {
     /// Run all risk checks against a response. Returns a list of risk reasons
     /// (empty = no risks detected).
@@ -76,6 +88,20 @@ impl RiskSignalChecker {
             ));
         }
 
+        risks
+    }
+
+    /// Scan a completed turn (input + response) for risk signals.
+    ///
+    /// This is the online hook the harness uses to auto-collect badcases:
+    /// a non-empty result means the turn should land in the pending pool.
+    /// Delegates to [`check`](Self::check) and adds an input-side signal for
+    /// degenerate empty prompts.
+    pub fn scan_turn(&self, record: &RiskTurnInput) -> Vec<String> {
+        let mut risks = self.check(&record.response, record.tool_call_count);
+        if record.input.trim().is_empty() {
+            risks.push("empty user input".to_string());
+        }
         risks
     }
 }
@@ -439,5 +465,40 @@ mod tests {
             checker.check("This is a sufficiently long response to pass the length check.", 99);
         assert!(!risks.is_empty());
         assert!(risks.iter().any(|r| r.contains("too many")));
+    }
+
+    #[test]
+    fn test_scan_turn_clean() {
+        let checker = RiskSignalChecker::default();
+        let record = RiskTurnInput {
+            input: "What is the weather?".to_string(),
+            response: "The weather today is sunny with a high of 24 degrees.".to_string(),
+            tool_call_count: 1,
+        };
+        assert!(checker.scan_turn(&record).is_empty());
+    }
+
+    #[test]
+    fn test_scan_turn_flags_response_risk() {
+        let checker = RiskSignalChecker::default();
+        let record = RiskTurnInput {
+            input: "Show me the account".to_string(),
+            response: "Your password is 12345".to_string(),
+            tool_call_count: 0,
+        };
+        let risks = checker.scan_turn(&record);
+        assert!(risks.iter().any(|r| r.contains("password")));
+    }
+
+    #[test]
+    fn test_scan_turn_flags_empty_input() {
+        let checker = RiskSignalChecker::default();
+        let record = RiskTurnInput {
+            input: "   ".to_string(),
+            response: "I'm here to help.".to_string(),
+            tool_call_count: 0,
+        };
+        let risks = checker.scan_turn(&record);
+        assert!(risks.iter().any(|r| r.contains("empty user input")));
     }
 }

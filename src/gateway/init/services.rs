@@ -111,10 +111,10 @@ pub async fn init_memory_services(
 
             let embedding_config = EmbeddingConfig {
                 model: config.vector_memory.embedding_model.clone(),
-                chunk_size: 512,
-                chunk_overlap: 50,
-                batch_size: 32,
-                chunk_strategy: Default::default(),
+                chunk_size: config.vector_memory.embedding.chunk_size,
+                chunk_overlap: config.vector_memory.embedding.chunk_overlap,
+                batch_size: config.vector_memory.embedding.batch_size,
+                chunk_strategy: config.vector_memory.embedding.chunk_strategy.clone(),
             };
 
             let cached_provider = CachedEmbeddingProvider::new(embedding_provider, 1024);
@@ -486,10 +486,10 @@ pub async fn init_kb_manager(
 
     let embedding_config = EmbeddingConfig {
         model: config.vector_memory.embedding_model.clone(),
-        chunk_size: 512,
-        chunk_overlap: 50,
-        batch_size: 32,
-        chunk_strategy: Default::default(),
+        chunk_size: config.vector_memory.embedding.chunk_size,
+        chunk_overlap: config.vector_memory.embedding.chunk_overlap,
+        batch_size: config.vector_memory.embedding.batch_size,
+        chunk_strategy: config.vector_memory.embedding.chunk_strategy.clone(),
     };
 
     let manager = Arc::new(crate::rag::ingestion::KnowledgeBaseManager::new(

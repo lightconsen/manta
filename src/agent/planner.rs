@@ -115,6 +115,27 @@ impl TaskPlan {
     }
 }
 
+/// Snapshot a plan DAG for observability. Plan turns return before any LLM
+/// round runs, so the plan snapshot is the whole observable payload of a plan
+/// turn (see `observe::record::PlanSnapshot`).
+impl From<&TaskPlan> for crate::observe::record::PlanSnapshot {
+    fn from(plan: &TaskPlan) -> Self {
+        Self {
+            plan_id: plan.id.clone(),
+            goal: plan.goal.clone(),
+            steps: plan
+                .tasks
+                .iter()
+                .map(|t| crate::observe::record::PlanStepSnapshot {
+                    id: t.id.clone(),
+                    goal: t.description.clone(),
+                    status: "pending".into(),
+                })
+                .collect(),
+        }
+    }
+}
+
 /// Task planner using LLM for natural language decomposition
 pub struct TaskPlanner {
     provider: Arc<dyn Provider>,
@@ -842,5 +863,41 @@ More text"#;
     fn test_empty_plan_progress_is_100() {
         let plan = TaskPlan::new("req", "goal");
         assert_eq!(plan.progress_percent(), 100);
+    }
+
+    #[test]
+    fn plan_snapshot_maps_tasks_to_steps() {
+        let mut plan = TaskPlan::new("req", "Build app");
+        plan.tasks.push(PlannedTask {
+            id: "task_1".to_string(),
+            description: "Setup".to_string(),
+            complexity: 1,
+            dependencies: vec![],
+            suggested_tools: vec![],
+            expected_outcome: "Done".to_string(),
+        });
+        plan.tasks.push(PlannedTask {
+            id: "task_2".to_string(),
+            description: "Deploy".to_string(),
+            complexity: 2,
+            dependencies: vec!["task_1".to_string()],
+            suggested_tools: vec![],
+            expected_outcome: "Done".to_string(),
+        });
+
+        let snap = crate::observe::record::PlanSnapshot::from(&plan);
+        assert_eq!(snap.plan_id, plan.id);
+        assert_eq!(snap.goal, "Build app");
+        assert_eq!(snap.steps.len(), 2);
+        assert_eq!(snap.steps[0].id, "task_1");
+        assert_eq!(snap.steps[0].goal, "Setup");
+        assert_eq!(snap.steps[1].id, "task_2");
+        assert_eq!(snap.steps[1].goal, "Deploy");
+        assert!(snap.steps.iter().all(|s| s.status == "pending"));
+
+        // The snapshot must be serde round-trippable (it is persisted as JSON).
+        let json = serde_json::to_string(&snap).unwrap();
+        let back: crate::observe::record::PlanSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.steps.len(), 2);
     }
 }

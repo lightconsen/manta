@@ -146,6 +146,10 @@ mod tests {
             usage: ObservedUsage::default(),
             llm_rounds: vec![],
             tool_calls: vec![],
+            route_log: vec![],
+            compressions: vec![],
+            plan_snapshot: None,
+            channel: None,
         }
     }
 

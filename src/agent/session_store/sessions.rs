@@ -341,7 +341,7 @@ impl SessionStore {
     /// prepend older chunks to an existing list.
     ///
     /// Returns `(id, role, content, reasoning_content, tool_calls_json,
-    /// created_at, transcript_id, run_id)`.
+    /// created_at, transcript_id, run_id, turn_id)`.
     #[allow(clippy::type_complexity)]
     #[instrument(skip(self))]
     pub async fn get_messages(
@@ -359,13 +359,14 @@ impl SessionStore {
             DateTime<Utc>,
             Option<String>,
             Option<String>,
+            Option<String>,
         )>,
     > {
         let before_ts = before.map(|dt| dt.timestamp_millis()).unwrap_or(i64::MAX);
 
         let rows = sqlx::query(
             r#"
-            SELECT id, role, content, reasoning_content, tool_calls_json, created_at, transcript_id, run_id
+            SELECT id, role, content, reasoning_content, tool_calls_json, created_at, transcript_id, run_id, turn_id
             FROM session_messages
             WHERE session_id = ? AND created_at < ?
             ORDER BY created_at DESC
@@ -394,7 +395,8 @@ impl SessionStore {
                 let dt = DateTime::from_timestamp_millis(ts).unwrap_or_else(Utc::now);
                 let transcript_id: Option<String> = row.get("transcript_id");
                 let run_id: Option<String> = row.get("run_id");
-                (id, role, content, reasoning, tool_calls, dt, transcript_id, run_id)
+                let turn_id: Option<String> = row.get("turn_id");
+                (id, role, content, reasoning, tool_calls, dt, transcript_id, run_id, turn_id)
             })
             .collect();
 

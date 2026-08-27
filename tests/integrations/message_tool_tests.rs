@@ -208,6 +208,10 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
             )),
             shell_hooks: syscity::hooks::ShellHookBridge::empty(),
             engine_metrics: None,
+            feedback_store: None,
+            pending_badcase_store: None,
+            decision_trace_store: None,
+            optimizer: Arc::new(syscity::eval::OptimizerRuntime::default()),
             #[cfg(feature = "browser")]
             browser_bridge: tokio::sync::RwLock::new(None),
         },

@@ -263,6 +263,7 @@ pub(super) async fn handle_chat_history(
                         dt,
                         _transcript_id,
                         _run_id,
+                        turn_id,
                     )| {
                         let tool_calls: Option<serde_json::Value> =
                             tool_calls_json.and_then(|json| serde_json::from_str(&json).ok());
@@ -273,6 +274,7 @@ pub(super) async fn handle_chat_history(
                             "reasoning_content": reasoning,
                             "tool_calls": tool_calls,
                             "timestamp": dt.timestamp_millis(),
+                            "turn_id": turn_id,
                         })
                     },
                 )

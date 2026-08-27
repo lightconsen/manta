@@ -165,6 +165,14 @@ pub struct InfraState {
     pub shell_hooks: Arc<crate::hooks::ShellHookBridge>,
     /// Engine metrics counters (populated when a core `Engine` is wired in).
     pub engine_metrics: Option<Arc<crate::core::EngineMetrics>>,
+    /// Per-turn Like/Dislike feedback store (`feedback.vote`).
+    pub feedback_store: Option<Arc<crate::gateway::FeedbackStore>>,
+    /// Auto-collected badcase pool (online risk signals + human 👎).
+    pub pending_badcase_store: Option<Arc<crate::eval::PendingBadcaseStore>>,
+    /// Audit log of every harness tuning decision (apply/reject/rollback).
+    pub decision_trace_store: Option<Arc<crate::eval::DecisionTraceStore>>,
+    /// Shared runtime state for the scalar optimizer (run status, pause flag).
+    pub optimizer: Arc<crate::eval::OptimizerRuntime>,
     /// Browser bridge server (started when browser.bridge_enabled is true).
     #[cfg(feature = "browser")]
     pub browser_bridge: RwLock<Option<crate::browser::BrowserBridge>>,

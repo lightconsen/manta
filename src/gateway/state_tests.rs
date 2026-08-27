@@ -212,6 +212,10 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
             )),
             shell_hooks: crate::hooks::ShellHookBridge::empty(),
             engine_metrics: None,
+            feedback_store: None,
+            pending_badcase_store: None,
+            decision_trace_store: None,
+            optimizer: Arc::new(crate::eval::OptimizerRuntime::default()),
             #[cfg(feature = "browser")]
             browser_bridge: tokio::sync::RwLock::new(None),
         },
@@ -234,16 +238,36 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
     }
 }
 
-/// Construct a test state with an in-memory session store wired in.
+/// Construct a test state with in-memory stores wired in.
 ///
-/// [`make_test_state`] leaves `agents.store` as `None`; session handlers need
-/// a real store, so this variant injects one backed by in-memory SQLite.
+/// [`make_test_state`] leaves the harness stores as `None`; handlers that need
+/// real persistence use this variant, which injects session, feedback and
+/// pending-badcase stores all backed by ONE shared in-memory SQLite pool
+/// (`:memory:` pools are per-connection, so every store must share the pool).
 pub async fn make_test_state_with_store(config: GatewayConfig) -> GatewayState {
     let mut state = make_test_state(config).await;
+    let pool = sqlx::SqlitePool::connect(":memory:")
+        .await
+        .expect("in-memory pool");
     state.agents.store = Some(Arc::new(
-        crate::agent::session_store::SessionStore::new(":memory:")
+        crate::agent::session_store::SessionStore::from_pool(pool.clone())
             .await
             .expect("in-memory session store"),
+    ));
+    state.infra.feedback_store = Some(Arc::new(
+        crate::gateway::FeedbackStore::from_pool(pool.clone())
+            .await
+            .expect("in-memory feedback store"),
+    ));
+    state.infra.pending_badcase_store = Some(Arc::new(
+        crate::eval::PendingBadcaseStore::from_pool(pool.clone())
+            .await
+            .expect("in-memory pending badcase store"),
+    ));
+    state.infra.decision_trace_store = Some(Arc::new(
+        crate::eval::DecisionTraceStore::from_pool(pool.clone())
+            .await
+            .expect("in-memory decision trace store"),
     ));
     state
 }

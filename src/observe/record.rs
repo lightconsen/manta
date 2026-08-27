@@ -117,6 +117,87 @@ pub fn json_value_or_string(raw: &str) -> serde_json::Value {
         .unwrap_or_else(|_| serde_json::Value::String(raw.to_string()))
 }
 
+// ── Decision-layer sampling (additive, backward compatible) ────────────────
+//
+// These structs close the §五 sampling blind spots in `docs/harness.md`: the
+// model-route decision, context compression, planner DAG, and channel layer.
+// All are optional / `Option` on `TurnRecord` so old consumers keep working.
+
+/// A single model-route decision: which candidates were considered, what was
+/// chosen, and whether a fallback occurred. Captured by the model router on
+/// every complete/stream call (and the cost-aware path).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouteRecord {
+    /// Ordered candidate models considered (`"provider/model"` labels),
+    /// including skipped (disabled / circuit-open) candidates.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub candidate_chain: Vec<String>,
+    /// The model actually invoked (`"provider/model"`).
+    pub chosen: String,
+    /// Human-readable reason for the choice (primary, fallback after N failed,
+    /// cost-aware budget steering, capability re-resolution).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Whether any candidate was skipped or failed before the chosen one.
+    pub fallback_occurred: bool,
+}
+
+/// A context-compression event: how many tokens were reclaimed and with which
+/// strategy. Captured in `compact_context_forced`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompressionObservation {
+    /// Milliseconds since the start of the turn.
+    pub triggered_at_ms: u64,
+    /// Token count of the context before compaction.
+    pub tokens_before: usize,
+    /// Token count of the context after compaction.
+    pub tokens_after: usize,
+    /// `tokens_before - tokens_after` (saturating).
+    pub freed_tokens: usize,
+    /// `"llm_summary"` when an LLM wrote the summary, `"heuristic_summary"`
+    /// for the middle-drop fallback.
+    pub strategy: String,
+}
+
+/// One step of a plan snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanStepSnapshot {
+    /// Task ID (`PlannedTask::id`).
+    pub id: String,
+    /// Task description / goal.
+    pub goal: String,
+    /// `"pending"` at snapshot time (plan steps have not run yet).
+    pub status: String,
+}
+
+/// Snapshot of a planner-produced DAG, captured when a plan is created. Plan
+/// turns return early before any LLM round, so the whole DAG lives here.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanSnapshot {
+    /// Plan ID (`TaskPlan::id`).
+    pub plan_id: String,
+    /// Overall plan goal.
+    pub goal: String,
+    /// The steps in execution order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<PlanStepSnapshot>,
+}
+
+/// Inbound channel-layer observation: whether the message was debounced
+/// (buffered into a combined flush), enriched (media results attached), and
+/// which agent it was routed to. Captured in the gateway dispatch layer and
+/// carried into the turn via `IncomingMessage` metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelObservation {
+    /// Message was buffered for a debounce window and flushed with siblings.
+    pub debounced: bool,
+    /// Media/enrichment was applied during inbound processing.
+    pub enriched: bool,
+    /// Agent the message was routed to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route: Option<String>,
+}
+
 /// A complete per-turn observability record.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TurnRecord {
@@ -146,6 +227,18 @@ pub struct TurnRecord {
     pub usage: ObservedUsage,
     pub llm_rounds: Vec<LlmRoundRecord>,
     pub tool_calls: Vec<ObservedToolCall>,
+    /// Model-route decisions made during this turn (see [`RouteRecord`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub route_log: Vec<RouteRecord>,
+    /// Context-compression events during this turn (see [`CompressionObservation`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub compressions: Vec<CompressionObservation>,
+    /// Planner DAG snapshot, when this turn produced a plan (see [`PlanSnapshot`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_snapshot: Option<PlanSnapshot>,
+    /// Inbound channel-layer observation (see [`ChannelObservation`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<ChannelObservation>,
 }
 
 /// Truncate `s` to at most `MAX_FIELD_BYTES` bytes on a char boundary.
@@ -237,10 +330,78 @@ mod tests {
             usage: ObservedUsage::default(),
             llm_rounds: vec![],
             tool_calls: vec![],
+            route_log: vec![RouteRecord {
+                candidate_chain: vec!["openai/gpt-4o".into(), "anthropic/claude".into()],
+                chosen: "anthropic/claude".into(),
+                reason: Some("fallback after 1 failed".into()),
+                fallback_occurred: true,
+            }],
+            compressions: vec![CompressionObservation {
+                triggered_at_ms: 5,
+                tokens_before: 1000,
+                tokens_after: 200,
+                freed_tokens: 800,
+                strategy: "llm_summary".into(),
+            }],
+            plan_snapshot: Some(PlanSnapshot {
+                plan_id: "p1".into(),
+                goal: "build".into(),
+                steps: vec![PlanStepSnapshot {
+                    id: "task_1".into(),
+                    goal: "setup".into(),
+                    status: "pending".into(),
+                }],
+            }),
+            channel: Some(ChannelObservation {
+                debounced: true,
+                enriched: false,
+                route: Some("main".into()),
+            }),
         };
         let json = serde_json::to_string(&rec).unwrap();
         let back: TurnRecord = serde_json::from_str(&json).unwrap();
         assert_eq!(back.turn_id, "t1");
         assert_eq!(back.state, TurnEndState::Complete);
+        assert_eq!(back.route_log.len(), 1);
+        assert!(back.route_log[0].fallback_occurred);
+        assert_eq!(back.compressions[0].freed_tokens, 800);
+        assert_eq!(back.plan_snapshot.as_ref().unwrap().steps[0].id, "task_1");
+        assert!(back.channel.as_ref().unwrap().debounced);
+    }
+
+    #[test]
+    fn record_serde_round_trip_without_decision_fields() {
+        // Old records without the additive decision-layer fields must still
+        // deserialize (defaults applied).
+        let json = r#"{
+            "schema_version": 1,
+            "turn_id": "old",
+            "session_id": null,
+            "conversation_id": "c",
+            "agent_id": "main",
+            "thread_id": "main",
+            "turn_index": 0,
+            "state": "complete",
+            "started_at": "2026-08-14T10:00:00+08:00",
+            "finished_at": "2026-08-14T10:00:01+08:00",
+            "duration_ms": 1000,
+            "ttft_ms": null,
+            "model": "m",
+            "user_message_preview": "u",
+            "assistant_text_preview": "a",
+            "reasoning_preview": "",
+            "queue_wait_ms": null,
+            "cache_hit": false,
+            "error": null,
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            "llm_rounds": [],
+            "tool_calls": []
+        }"#;
+        let back: TurnRecord = serde_json::from_str(json).unwrap();
+        assert_eq!(back.turn_id, "old");
+        assert!(back.route_log.is_empty());
+        assert!(back.compressions.is_empty());
+        assert!(back.plan_snapshot.is_none());
+        assert!(back.channel.is_none());
     }
 }

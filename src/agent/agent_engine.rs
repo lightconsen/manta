@@ -8,7 +8,9 @@ use tracing::{debug, error, info, instrument, warn};
 
 use crate::agent::turns::ToolCallRecord;
 use crate::channels::{IncomingMessage, OutgoingMessage};
-use crate::observe::{ErrorSource, TurnContext, TurnMetricsCollector, TurnMetricsSink};
+use crate::observe::{
+    ChannelObservation, ErrorSource, TurnContext, TurnMetricsCollector, TurnMetricsSink,
+};
 use crate::providers::{CompletionRequest, Message, Role, ToolCall, ToolResult};
 use crate::tools::{ToolContext, ToolExecutionChunk};
 
@@ -223,6 +225,28 @@ impl Agent {
                     let summary = plan.format_summary();
                     info!("Created plan with {} tasks", plan.tasks.len());
 
+                    // Plan turns return before any LLM round, so they produce
+                    // no round record. Persist a lightweight turn record whose
+                    // whole observable payload is the plan DAG snapshot (closes
+                    // the §五 planner blind spot).
+                    let mut collector = TurnMetricsCollector::new(TurnContext {
+                        session_id: self.session_id.clone(),
+                        conversation_id: conversation_id.clone(),
+                        agent_id: self.agent_id.clone(),
+                        thread_id: format!("thread-{}", conversation_id),
+                        turn_index: 0,
+                        user_message: content.clone(),
+                        enqueued_at: None,
+                    })
+                    .with_metrics_sink(
+                        self.session_store
+                            .clone()
+                            .map(|s| -> Arc<dyn TurnMetricsSink> { s }),
+                    );
+                    collector
+                        .record_plan_snapshot(crate::observe::record::PlanSnapshot::from(&plan));
+                    collector.finish(&summary).await;
+
                     // Convert to todos
                     let todos = self.task_planner.plan_to_todos(&plan);
 
@@ -360,7 +384,7 @@ impl Agent {
                     let t_idx = turn_idx as i64;
                     tokio::spawn(async move {
                         if let Err(e) = store
-                            .append_turn(&sid, &tid, t_idx, &user_c, &asst_text, "complete")
+                            .append_turn(&sid, &tid, t_idx, &user_c, &asst_text, "complete", None)
                             .await
                         {
                             warn!("Failed to persist turn {} for session {}: {}", t_idx, sid, e);
@@ -569,7 +593,13 @@ impl Agent {
                              content. If you believe this is a mistake, please rephrase your \
                              message."
                 .to_string();
-            (progress_cb)(ProgressEvent::Completed { response: rejection.clone() }).await;
+            // Guard rejection happens before a turn collector exists, so the
+            // turn_id is empty (no persisted turn to vote on).
+            (progress_cb)(ProgressEvent::Completed {
+                response: rejection.clone(),
+                turn_id: String::new(),
+            })
+            .await;
             return Ok(OutgoingMessage::new(
                 crate::channels::ConversationId(conversation_id),
                 rejection,
@@ -628,14 +658,10 @@ impl Agent {
                     }
                 }
 
-                // Notify completed with cached response
-                (progress_cb)(ProgressEvent::Completed {
-                    response: cached.response.clone(),
-                })
-                .await;
-
                 // Record the cache hit as a completed turn with no LLM rounds so
-                // cache-hit rate / cost statistics stay accurate.
+                // cache-hit rate / cost statistics stay accurate. The collector
+                // must be created BEFORE emitting Completed so the cache-hit
+                // turn has a stable turn_id for feedback.vote.
                 let mut cache_collector = TurnMetricsCollector::new(TurnContext {
                     session_id: self.session_id.clone(),
                     conversation_id: conversation_id.clone(),
@@ -650,8 +676,25 @@ impl Agent {
                         .clone()
                         .map(|s| -> Arc<dyn TurnMetricsSink> { s }),
                 );
+                let cache_turn_id = cache_collector.turn_id().to_string();
+
+                // Notify completed with cached response
+                (progress_cb)(ProgressEvent::Completed {
+                    response: cached.response.clone(),
+                    turn_id: cache_turn_id.clone(),
+                })
+                .await;
                 cache_collector.mark_cache_hit();
                 cache_collector.finish(&cached.response).await;
+
+                // Online risk scan for the cache-hit turn (no tools ran).
+                self.scan_turn_for_badcase(
+                    &content,
+                    &cached.response,
+                    0,
+                    &cache_turn_id,
+                    &conversation_id,
+                );
 
                 // Return cached response
                 return Ok(OutgoingMessage::new(
@@ -827,6 +870,21 @@ impl Agent {
                 .map(|s| -> Arc<dyn TurnMetricsSink> { s }),
         );
 
+        // Capture the stable turn id BEFORE the collector is consumed by
+        // finish()/fail()/abort(); it is threaded into the Completed event.
+        let turn_id = collector.turn_id().to_string();
+
+        // Drain the inbound channel-layer observation (debounce/enrich/route)
+        // attached by the gateway dispatch layer, if the message carried one.
+        if let Some(obs) = message
+            .metadata
+            .extra
+            .get("channel_observation")
+            .and_then(|v| serde_json::from_value::<ChannelObservation>(v.clone()).ok())
+        {
+            collector.record_channel(obs);
+        }
+
         // Get response from LLM with progress (lock NOT held).
         let llm_result = self
             .get_completion_with_progress(
@@ -849,9 +907,18 @@ impl Agent {
                     let user_c = content.clone();
                     let t_idx = turn_idx as i64;
                     let asst_text_spawn = asst_text.clone();
+                    let turn_id_spawn = turn_id.clone();
                     tokio::spawn(async move {
                         if let Err(e) = store
-                            .append_turn(&sid, &tid, t_idx, &user_c, &asst_text_spawn, "complete")
+                            .append_turn(
+                                &sid,
+                                &tid,
+                                t_idx,
+                                &user_c,
+                                &asst_text_spawn,
+                                "complete",
+                                Some(&turn_id_spawn),
+                            )
                             .await
                         {
                             warn!("Failed to persist turn {} for session {}: {}", t_idx, sid, e);
@@ -977,6 +1044,7 @@ impl Agent {
         }
 
         // Only cache the response if it should be cached
+        let tool_call_count = tools_used_this_turn.len();
         if should_cache && are_tools_cacheable(&tools_used_this_turn) {
             self.response_cache
                 .set(
@@ -993,8 +1061,18 @@ impl Agent {
         let response_content = response.message.content.clone();
         (progress_cb)(ProgressEvent::Completed {
             response: response_content.clone(),
+            turn_id: turn_id.clone(),
         })
         .await;
+
+        // ── Online risk scan: auto-collect badcases into the pending pool ──
+        self.scan_turn_for_badcase(
+            &content,
+            &response_content,
+            tool_call_count,
+            &turn_id,
+            &conversation_id,
+        );
 
         // Create outgoing message with full metadata
         let mut outgoing = OutgoingMessage::new(
@@ -1081,6 +1159,58 @@ impl Agent {
         }
 
         Ok(outgoing)
+    }
+
+    /// Post-turn online risk scan: when a completed turn trips a risk signal,
+    /// insert it into the pending-badcase pool (source `online:risk`). Runs
+    /// fire-and-forget, mirroring the retrospect hook above.
+    fn scan_turn_for_badcase(
+        &self,
+        input: &str,
+        response: &str,
+        tool_call_count: usize,
+        turn_id: &str,
+        conversation_id: &str,
+    ) {
+        let (Some(checker), Some(store)) =
+            (self.risk_checker.as_ref(), self.pending_badcase_store.as_ref())
+        else {
+            return;
+        };
+        // No persisted turn to key the badcase on — nothing to collect.
+        if turn_id.is_empty() || response.is_empty() {
+            return;
+        }
+        let record = crate::eval::RiskTurnInput {
+            input: input.to_string(),
+            response: response.to_string(),
+            tool_call_count,
+        };
+        let risks = checker.scan_turn(&record);
+        if risks.is_empty() {
+            return;
+        }
+        let store = Arc::clone(store);
+        let session_id = self
+            .session_id
+            .clone()
+            .unwrap_or_else(|| conversation_id.to_string());
+        let agent_id = self.agent_id.clone();
+        let turn_id = turn_id.to_string();
+        tokio::spawn(async move {
+            let params = crate::eval::InsertPendingParams {
+                source: crate::eval::PendingSource::OnlineRisk,
+                turn_id: Some(turn_id),
+                session_id: Some(session_id),
+                agent_id: Some(agent_id),
+                input: record.input,
+                response: record.response,
+                risk_signals: risks,
+            };
+            if let Err(e) = store.insert_pending(&params).await {
+                warn!("Failed to record online risk badcase: {}", e);
+            }
+        });
     }
 
     /// Process a message in persistent session mode with an execution
@@ -1394,7 +1524,9 @@ impl Agent {
         let cfg = self.config_snapshot();
         // If the context is over-budget, reduce it before sending (persisting
         // the compaction mask so a restart can rehydrate the same boundary).
-        self.compact_context_if_needed(context, &cfg).await;
+        // No observability collector exists on this (non-progress) path, so
+        // compression events here are not recorded.
+        self.compact_context_if_needed(context, &cfg, None).await;
 
         // Attachment refs in tool results: current turn materializes to
         // images, older turns degrade to placeholders (request clone only).
@@ -1459,9 +1591,21 @@ impl Agent {
         let response = loop {
             let outcome = if let Some(ref router) = self.model_router {
                 let req_tools = request.tools.take();
-                router
-                    .complete(&model_id, request.messages, req_tools)
+                match router
+                    .complete_with_route(&model_id, request.messages, req_tools)
                     .await
+                {
+                    Ok((resp, rec)) => {
+                        // Non-progress path has no turn collector; surface the
+                        // route decision at debug level for replay/debugging.
+                        debug!(
+                            "[observe] route record: {}",
+                            serde_json::to_string(&rec).unwrap_or_default()
+                        );
+                        Ok(resp)
+                    }
+                    Err(e) => Err(e),
+                }
             } else {
                 self.provider.complete(request.clone()).await
             };
@@ -1478,7 +1622,7 @@ impl Agent {
                         "[compaction] provider rejected context as too long — compacting and \
                          retrying once"
                     );
-                    self.compact_context_forced(context, &cfg).await;
+                    self.compact_context_forced(context, &cfg, None).await;
                     let mut messages = context.to_messages();
                     crate::attachments::materialize_history(&mut messages);
                     request.messages = messages;
@@ -1524,10 +1668,11 @@ impl Agent {
         &self,
         context: &mut Context,
         cfg: &crate::agent::AgentConfig,
+        collector: Option<&mut TurnMetricsCollector>,
     ) {
         // If the context is over-budget, try to reduce it before sending.
         if context.needs_pruning() {
-            self.compact_context_forced(context, cfg).await;
+            self.compact_context_forced(context, cfg, collector).await;
         }
     }
 
@@ -1536,7 +1681,13 @@ impl Agent {
     /// request as over its real context window, `needs_pruning()` may still be
     /// false (our estimate is larger than the model's limit), so compaction
     /// must not be gated on it.
-    async fn compact_context_forced(&self, context: &mut Context, cfg: &crate::agent::AgentConfig) {
+    async fn compact_context_forced(
+        &self,
+        context: &mut Context,
+        cfg: &crate::agent::AgentConfig,
+        collector: Option<&mut TurnMetricsCollector>,
+    ) {
+        let tokens_before = context.token_count();
         if let Some(ref compaction_model) = cfg.compaction_model {
             // LLM-assisted compaction: produce a high-quality summary.
             let compressor =
@@ -1546,10 +1697,16 @@ impl Agent {
                 .compact_with_llm(&history, &self.provider, Some(compaction_model.as_str()), 2, 6)
                 .await;
             context.replace_messages(compacted);
+            if let Some(c) = collector {
+                c.record_compression(tokens_before, context.token_count(), "llm_summary");
+            }
         } else {
             // Fallback: drop middle messages and insert a placeholder summary.
             // This keeps the context coherent without an extra LLM call.
             context.summarize();
+            if let Some(c) = collector {
+                c.record_compression(tokens_before, context.token_count(), "heuristic_summary");
+            }
         }
         self.record_compaction_boundary(context).await;
     }
@@ -1859,20 +2016,26 @@ impl Agent {
         // provider rejects the request as over its context window at stream
         // setup (before any bytes are emitted), compact and retry once.
         let mut retried = false;
-        let (raw_stream, family, round_model, round_provider) = loop {
+        let (raw_stream, family, round_model, round_provider, route_record) = loop {
             let setup = if let Some(ref router) = self.model_router {
                 let req_tools = request.tools.take();
-                let stream = router.stream(&model_id, request.messages, req_tools).await;
+                let stream = router
+                    .stream_with_route(&model_id, request.messages, req_tools)
+                    .await;
                 let provider = router
                     .provider_for_model(&model_id)
                     .await
                     .unwrap_or_else(|| "router".to_string());
+                // Capture the route decision from the successful setup attempt.
+                let route_record = stream.as_ref().ok().map(|(_, rec)| rec.clone());
+                let stream = stream.map(|(s, _)| s);
                 // When using model router, fall back to Generic stream family
                 (
                     stream,
                     crate::providers::stream_wrappers::ProviderStreamFamily::Generic,
                     model_id.clone(),
                     provider,
+                    route_record,
                 )
             } else {
                 let round_model = request
@@ -1885,14 +2048,15 @@ impl Agent {
                     self.provider.stream_family(),
                     round_model,
                     round_provider,
+                    None,
                 )
             };
 
             match setup {
-                (Ok(stream), family, round_model, round_provider) => {
-                    break (stream, family, round_model, round_provider);
+                (Ok(stream), family, round_model, round_provider, route_record) => {
+                    break (stream, family, round_model, round_provider, route_record);
                 }
-                (Err(e), _, _, _)
+                (Err(e), _, _, _, _)
                     if !retried
                         && crate::model_router::FailureClass::from_error(&e, None)
                             == crate::model_router::FailureClass::ContextLength =>
@@ -1902,7 +2066,8 @@ impl Agent {
                         "[compaction] provider rejected streaming context as too long — \
                          compacting and retrying once"
                     );
-                    self.compact_context_forced(context, &cfg).await;
+                    self.compact_context_forced(context, &cfg, Some(&mut *collector))
+                        .await;
                     let mut messages = context.to_messages();
                     crate::attachments::materialize_history(&mut messages);
                     request.messages = messages;
@@ -1910,7 +2075,7 @@ impl Agent {
                         request.tools = Some(tools.clone());
                     }
                 }
-                (Err(e), _, _, _) => return Err(e),
+                (Err(e), _, _, _, _) => return Err(e),
             }
         };
         let registry = crate::providers::stream_wrappers::StreamFamilyRegistry::default();
@@ -1918,6 +2083,10 @@ impl Agent {
 
         // Begin an observability round for this LLM call.
         collector.begin_round(&round_provider, &round_model, Some(input_json));
+        // Persist the route decision on the turn record.
+        if let Some(rec) = route_record {
+            collector.record_route(rec);
+        }
 
         let mut accumulated_text = String::new();
         let mut accumulated_reasoning = String::new();

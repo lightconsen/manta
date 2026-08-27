@@ -115,6 +115,160 @@ pub struct GatewayConfig {
     /// Online update configuration (self-update via GitHub Releases).
     #[serde(default)]
     pub update: UpdateConfig,
+    /// Harness self-tuning configuration (§十二: 可反馈/可复盘/可调参/护栏).
+    #[serde(default)]
+    pub eval: EvalConfig,
+}
+
+/// Harness self-tuning configuration.
+///
+/// Gates the background scalar optimizer that hot-updates the default agent's
+/// scalar parameters (§十二 可调参). New fields added here must default to
+/// disabled so existing configs never start tuning unexpectedly.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EvalConfig {
+    /// Scalar optimizer that probes and hot-updates default-agent scalars.
+    #[serde(default)]
+    pub optimizer: ScalarOptimizerConfig,
+}
+
+/// Configuration for the background scalar optimizer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScalarOptimizerConfig {
+    /// Master switch. When false, `eval.optimizer.run` reports `disabled` and
+    /// the scheduler does not start.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Scheduling cadence between runs ("30m", "1h", "manual" = never).
+    #[serde(default = "default_optimizer_cadence")]
+    pub cadence: String,
+    /// Maximum number of scalar candidates applied per run.
+    #[serde(default = "default_optimizer_max_steps")]
+    pub max_steps: u32,
+    /// Perturbation delta for continuous scalars (temperature ± delta).
+    #[serde(default = "default_optimizer_delta")]
+    pub delta: f64,
+    /// Allowed temperature range for probe candidates (安全区域锁定).
+    #[serde(default = "default_optimizer_temp_bounds")]
+    pub temperature_bounds: [f64; 2],
+    /// Guardrails between candidate generation and application (§十二 护栏).
+    #[serde(default)]
+    pub guardrails: OptimizerGuardrailConfig,
+}
+
+impl Default for ScalarOptimizerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            cadence: default_optimizer_cadence(),
+            max_steps: default_optimizer_max_steps(),
+            delta: default_optimizer_delta(),
+            temperature_bounds: default_optimizer_temp_bounds(),
+            guardrails: OptimizerGuardrailConfig::default(),
+        }
+    }
+}
+
+/// Guardrail configuration for the scalar optimizer (§十二 护栏).
+///
+/// All fields default to safe/no-op values so existing configs never start
+/// gating unexpectedly.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OptimizerGuardrailConfig {
+    /// Master switch. When false the optimizer applies candidates with only
+    /// the search-space fence (Phase 3 behavior).
+    #[serde(default)]
+    pub enabled: bool,
+    /// Minimum shadow-eval pass rate a candidate must clear (used by the
+    /// EvalHarness-based shadow evaluator; `0.0` disables the floor).
+    #[serde(default = "default_guardrail_min_pass_rate")]
+    pub min_shadow_pass_rate: f64,
+    /// Circuit breaker: pause auto-apply after this many consecutive gate
+    /// failures / rollbacks.
+    #[serde(default = "default_guardrail_max_failures")]
+    pub max_consecutive_failures: u32,
+    /// Cooldown before an open breaker re-arms (seconds).
+    #[serde(default = "default_guardrail_cooldown_secs")]
+    pub cooldown_secs: u64,
+    /// Reject candidates when the global cost guard has exceeded its budget.
+    #[serde(default = "default_guardrail_cost_enabled")]
+    pub cost_guard_enabled: bool,
+    /// Reject when the recent down-vote ratio exceeds this (online signal).
+    #[serde(default = "default_guardrail_max_down_ratio")]
+    pub max_down_ratio: f64,
+    /// Minimum number of votes required before the down-ratio gate fires.
+    #[serde(default = "default_guardrail_min_votes")]
+    pub min_votes: u32,
+    /// Reject when this many `online:risk` badcases accumulate in the window.
+    #[serde(default = "default_guardrail_max_online_risks")]
+    pub max_online_risks: u32,
+    /// Online-signal observation window (hours).
+    #[serde(default = "default_guardrail_window_hours")]
+    pub window_hours: u64,
+}
+
+impl Default for OptimizerGuardrailConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            min_shadow_pass_rate: default_guardrail_min_pass_rate(),
+            max_consecutive_failures: default_guardrail_max_failures(),
+            cooldown_secs: default_guardrail_cooldown_secs(),
+            cost_guard_enabled: default_guardrail_cost_enabled(),
+            max_down_ratio: default_guardrail_max_down_ratio(),
+            min_votes: default_guardrail_min_votes(),
+            max_online_risks: default_guardrail_max_online_risks(),
+            window_hours: default_guardrail_window_hours(),
+        }
+    }
+}
+
+fn default_guardrail_min_pass_rate() -> f64 {
+    0.7
+}
+
+fn default_guardrail_max_failures() -> u32 {
+    2
+}
+
+fn default_guardrail_cooldown_secs() -> u64 {
+    300
+}
+
+fn default_guardrail_cost_enabled() -> bool {
+    true
+}
+
+fn default_guardrail_max_down_ratio() -> f64 {
+    0.5
+}
+
+fn default_guardrail_min_votes() -> u32 {
+    10
+}
+
+fn default_guardrail_max_online_risks() -> u32 {
+    3
+}
+
+fn default_guardrail_window_hours() -> u64 {
+    24
+}
+
+fn default_optimizer_cadence() -> String {
+    "manual".to_string()
+}
+
+fn default_optimizer_max_steps() -> u32 {
+    1
+}
+
+fn default_optimizer_delta() -> f64 {
+    0.1
+}
+
+fn default_optimizer_temp_bounds() -> [f64; 2] {
+    [0.0, 1.5]
 }
 
 /// Online update (self-update) configuration.
@@ -387,6 +541,10 @@ pub struct VectorMemoryConfig {
     /// Multi-Query expansion configuration
     #[serde(default)]
     pub multi_query: MultiQueryConfig,
+    /// Embedding hyper-parameters (chunking / batching). Configurable so the
+    /// harness can tune retrieval quality at runtime without code changes.
+    #[serde(default)]
+    pub embedding: EmbeddingParams,
 }
 
 impl Default for VectorMemoryConfig {
@@ -405,6 +563,47 @@ impl Default for VectorMemoryConfig {
             reranker: RerankerConfig::default(),
             context_window: MemoryContextWindowConfig::default(),
             multi_query: MultiQueryConfig::default(),
+            embedding: EmbeddingParams::default(),
+        }
+    }
+}
+
+/// Embedding hyper-parameters used by the vector-memory / knowledge-base
+/// chunking pipeline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingParams {
+    /// Maximum chunk size for text splitting.
+    #[serde(default = "default_embedding_chunk_size")]
+    pub chunk_size: usize,
+    /// Chunk overlap for sliding window (only used when `chunk_strategy` is
+    /// `Fixed`).
+    #[serde(default = "default_embedding_chunk_overlap")]
+    pub chunk_overlap: usize,
+    /// Batch size for embedding generation.
+    #[serde(default = "default_embedding_batch_size")]
+    pub batch_size: usize,
+    /// Chunking strategy (defaults to the rag default: recursive 512).
+    #[serde(default)]
+    pub chunk_strategy: crate::rag::ChunkStrategy,
+}
+
+fn default_embedding_chunk_size() -> usize {
+    512
+}
+fn default_embedding_chunk_overlap() -> usize {
+    50
+}
+fn default_embedding_batch_size() -> usize {
+    32
+}
+
+impl Default for EmbeddingParams {
+    fn default() -> Self {
+        Self {
+            chunk_size: default_embedding_chunk_size(),
+            chunk_overlap: default_embedding_chunk_overlap(),
+            batch_size: default_embedding_batch_size(),
+            chunk_strategy: crate::rag::ChunkStrategy::default(),
         }
     }
 }
@@ -865,6 +1064,7 @@ impl Default for GatewayConfig {
             knowledge_base: KnowledgeBaseConfig::default(),
             observe: ObserveConfig::default(),
             update: UpdateConfig::default(),
+            eval: EvalConfig::default(),
         }
     }
 }

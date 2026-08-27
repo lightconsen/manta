@@ -11,6 +11,8 @@ use tracing::{info, warn};
 use crate::adapters::{FileStorage, InMemoryStorage, SqliteStorage, Storage};
 use crate::agent::session_store::SessionStore;
 use crate::error::SyscityError;
+use crate::eval::{DecisionTraceStore, PendingBadcaseStore};
+use crate::gateway::FeedbackStore;
 use crate::gateway::GatewayConfig;
 #[cfg(feature = "sqlite-vec")]
 use crate::rag::sqlite_vec_store::SqliteVecStore;
@@ -24,6 +26,9 @@ pub struct StorageInit {
     pub unified_vector_store: Option<Arc<dyn VectorStore>>,
     pub sqlite_pool: Option<sqlx::SqlitePool>,
     pub session_store: Option<Arc<SessionStore>>,
+    pub feedback_store: Option<Arc<FeedbackStore>>,
+    pub pending_badcase_store: Option<Arc<PendingBadcaseStore>>,
+    pub decision_trace_store: Option<Arc<DecisionTraceStore>>,
     pub audit_log: Arc<PersistentAuditLog>,
     pub audit_log_dyn: Arc<dyn AuditLogger>,
 }
@@ -120,11 +125,47 @@ pub async fn init_storage(config: &GatewayConfig) -> crate::Result<StorageInit> 
     };
     let audit_log_dyn: Arc<dyn AuditLogger> = audit_log.clone();
 
+    // Feedback + pending-badcase stores share the same SQLite pool so all
+    // harness tables live in one database.
+    let feedback_store: Option<Arc<FeedbackStore>> = match sqlite_pool.as_ref() {
+        Some(pool) => match FeedbackStore::from_pool(pool.clone()).await {
+            Ok(store) => Some(Arc::new(store)),
+            Err(e) => {
+                warn!("Failed to initialize FeedbackStore: {}", e);
+                None
+            }
+        },
+        None => None,
+    };
+    let pending_badcase_store: Option<Arc<PendingBadcaseStore>> = match sqlite_pool.as_ref() {
+        Some(pool) => match PendingBadcaseStore::from_pool(pool.clone()).await {
+            Ok(store) => Some(Arc::new(store)),
+            Err(e) => {
+                warn!("Failed to initialize PendingBadcaseStore: {}", e);
+                None
+            }
+        },
+        None => None,
+    };
+    let decision_trace_store: Option<Arc<DecisionTraceStore>> = match sqlite_pool.as_ref() {
+        Some(pool) => match DecisionTraceStore::from_pool(pool.clone()).await {
+            Ok(store) => Some(Arc::new(store)),
+            Err(e) => {
+                warn!("Failed to initialize DecisionTraceStore: {}", e);
+                None
+            }
+        },
+        None => None,
+    };
+
     Ok(StorageInit {
         storage,
         unified_vector_store,
         sqlite_pool,
         session_store,
+        feedback_store,
+        pending_badcase_store,
+        decision_trace_store,
         audit_log,
         audit_log_dyn,
     })

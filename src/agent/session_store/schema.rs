@@ -184,6 +184,7 @@ impl SessionStore {
                 metadata TEXT,
                 transcript_id TEXT,
                 run_id TEXT,
+                turn_id TEXT,
                 FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
             )
             "#,
@@ -197,7 +198,7 @@ impl SessionStore {
 
         // ── Migration: add missing columns to existing session_messages tables
         // CREATE TABLE IF NOT EXISTS won't add columns to existing tables
-        for col in &["transcript_id", "run_id"] {
+        for col in &["transcript_id", "run_id", "turn_id"] {
             let result =
                 sqlx::query(&format!("ALTER TABLE session_messages ADD COLUMN {} TEXT", col))
                     .execute(&self.pool)

@@ -15,8 +15,9 @@ use crate::agent::turns::ToolCallRecord;
 use crate::providers::Usage;
 
 use super::record::{
-    json_value_or_string, ErrorSource, FullTraceEvent, LlmRoundRecord, ObservedError,
-    ObservedToolCall, ObservedUsage, TurnEndState, TurnRecord, SCHEMA_VERSION,
+    json_value_or_string, ChannelObservation, CompressionObservation, ErrorSource, FullTraceEvent,
+    LlmRoundRecord, ObservedError, ObservedToolCall, ObservedUsage, PlanSnapshot, RouteRecord,
+    TurnEndState, TurnRecord, SCHEMA_VERSION,
 };
 use super::writer::TurnMetricsWriter;
 use super::TurnMetricsSink;
@@ -54,6 +55,14 @@ pub struct TurnMetricsCollector {
     rounds: Vec<LlmRoundRecord>,
     open_round: Option<OpenRound>,
     tools: Vec<ObservedToolCall>,
+    /// Model-route decisions recorded this turn (see [`RouteRecord`]).
+    route_log: Vec<RouteRecord>,
+    /// Context-compression events recorded this turn (see [`CompressionObservation`]).
+    compressions: Vec<CompressionObservation>,
+    /// Planner DAG snapshot recorded this turn, if any (see [`PlanSnapshot`]).
+    plan_snapshot: Option<PlanSnapshot>,
+    /// Inbound channel-layer observation, if any (see [`ChannelObservation`]).
+    channel: Option<ChannelObservation>,
     terminal: bool,
     writer: Arc<TurnMetricsWriter>,
     metrics_sink: Option<Arc<dyn TurnMetricsSink>>,
@@ -118,6 +127,10 @@ impl TurnMetricsCollector {
             rounds: Vec::new(),
             open_round: None,
             tools: Vec::new(),
+            route_log: Vec::new(),
+            compressions: Vec::new(),
+            plan_snapshot: None,
+            channel: None,
             terminal: false,
             writer,
             metrics_sink: None,
@@ -142,6 +155,38 @@ impl TurnMetricsCollector {
     /// Number of LLM rounds begun so far.
     pub fn round_count(&self) -> u32 {
         self.rounds.len() as u32 + u32::from(self.open_round.is_some())
+    }
+
+    /// Record a model-route decision made during this turn.
+    pub fn record_route(&mut self, rec: RouteRecord) {
+        self.route_log.push(rec);
+    }
+
+    /// Record a context-compression event. `triggered_at_ms` is computed as the
+    /// elapsed time since the turn started.
+    pub fn record_compression(
+        &mut self,
+        tokens_before: usize,
+        tokens_after: usize,
+        strategy: impl Into<String>,
+    ) {
+        self.compressions.push(CompressionObservation {
+            triggered_at_ms: self.start.elapsed().as_millis() as u64,
+            tokens_before,
+            tokens_after,
+            freed_tokens: tokens_before.saturating_sub(tokens_after),
+            strategy: strategy.into(),
+        });
+    }
+
+    /// Record the planner DAG snapshot for this turn.
+    pub fn record_plan_snapshot(&mut self, snap: PlanSnapshot) {
+        self.plan_snapshot = Some(snap);
+    }
+
+    /// Record the inbound channel-layer observation for this turn.
+    pub fn record_channel(&mut self, obs: ChannelObservation) {
+        self.channel = Some(obs);
     }
 
     fn push_partial(buf: &Arc<Mutex<String>>, delta: &str) {
@@ -371,6 +416,10 @@ impl TurnMetricsCollector {
             usage,
             llm_rounds: self.rounds.clone(),
             tool_calls: self.tools.clone(),
+            route_log: self.route_log.clone(),
+            compressions: self.compressions.clone(),
+            plan_snapshot: self.plan_snapshot.clone(),
+            channel: self.channel.clone(),
         }
     }
 
@@ -618,6 +667,46 @@ mod tests {
         let rec = read_record(&dir, &id);
         assert!(rec.cache_hit);
         assert!(rec.llm_rounds.is_empty());
+    }
+
+    #[tokio::test]
+    async fn decision_layer_observations_land_in_record() {
+        let dir = TempDir::new().unwrap();
+        let mut c = make_collector(&dir);
+        c.record_route(RouteRecord {
+            candidate_chain: vec!["openai/gpt-4o".into()],
+            chosen: "openai/gpt-4o".into(),
+            reason: Some("primary".into()),
+            fallback_occurred: false,
+        });
+        c.record_compression(1000, 200, "llm_summary");
+        c.record_plan_snapshot(PlanSnapshot {
+            plan_id: "p1".into(),
+            goal: "build".into(),
+            steps: vec![crate::observe::record::PlanStepSnapshot {
+                id: "task_1".into(),
+                goal: "setup".into(),
+                status: "pending".into(),
+            }],
+        });
+        c.record_channel(ChannelObservation {
+            debounced: true,
+            enriched: false,
+            route: Some("main".into()),
+        });
+        let id = c.turn_id().to_string();
+        c.finish("done").await;
+
+        let rec = read_record(&dir, &id);
+        assert_eq!(rec.route_log.len(), 1);
+        assert!(!rec.route_log[0].fallback_occurred);
+        assert_eq!(rec.compressions.len(), 1);
+        assert_eq!(rec.compressions[0].freed_tokens, 800);
+        assert_eq!(rec.compressions[0].strategy, "llm_summary");
+        assert!(rec.compressions[0].triggered_at_ms < 60_000);
+        assert_eq!(rec.plan_snapshot.as_ref().unwrap().steps[0].id, "task_1");
+        assert!(rec.channel.as_ref().unwrap().debounced);
+        assert_eq!(rec.channel.as_ref().unwrap().route.as_deref(), Some("main"));
     }
 
     #[tokio::test]

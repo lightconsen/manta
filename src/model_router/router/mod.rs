@@ -51,6 +51,7 @@ use crate::model_router::usage_fetcher::{
 use crate::model_router::usage_tracker::{
     ProviderUsageSnapshot, ProviderUsageTracker, UsageQuota, UsageTrackerConfig,
 };
+use crate::observe::record::RouteRecord;
 use crate::providers::{
     CompletionRequest, CompletionResponse, CompletionStream, Message, Provider, ToolDefinition,
     Usage,

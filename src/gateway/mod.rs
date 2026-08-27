@@ -48,8 +48,11 @@ pub use task_registry::*;
 pub mod acp_ext;
 pub use acp_ext::*;
 pub mod agent_spawn;
+pub mod apply_config;
 pub(crate) use agent_spawn::{create_default_tool_registry, spawn_agent_inner};
 pub mod dispatch;
+pub mod feedback;
+pub use feedback::*;
 pub(crate) mod goal_spawn;
 pub mod hot_reload;
 pub mod lifecycle;
@@ -307,6 +310,9 @@ impl Gateway {
         let unified_vector_store = storage_init.unified_vector_store;
         let sqlite_pool = storage_init.sqlite_pool;
         let session_store = storage_init.session_store;
+        let feedback_store = storage_init.feedback_store;
+        let pending_badcase_store = storage_init.pending_badcase_store;
+        let decision_trace_store = storage_init.decision_trace_store;
         let audit_log = storage_init.audit_log;
         let audit_log_dyn = storage_init.audit_log_dyn;
 
@@ -511,6 +517,10 @@ impl Gateway {
                 model_router: model_router.clone(),
                 shell_hooks: shell_hooks.clone(),
                 engine_metrics: None,
+                feedback_store: feedback_store.clone(),
+                pending_badcase_store: pending_badcase_store.clone(),
+                decision_trace_store: decision_trace_store.clone(),
+                optimizer: Arc::new(crate::eval::OptimizerRuntime::default()),
                 #[cfg(feature = "browser")]
                 browser_bridge: tokio::sync::RwLock::new(None),
             },

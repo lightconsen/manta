@@ -15,7 +15,8 @@ use std::sync::atomic::AtomicU64;
 
 pub use collector::{TurnContext, TurnMetricsCollector};
 pub use record::{
-    ErrorSource, LlmRoundRecord, ObservedError, ObservedToolCall, ObservedUsage, TurnEndState,
+    ChannelObservation, CompressionObservation, ErrorSource, LlmRoundRecord, ObservedError,
+    ObservedToolCall, ObservedUsage, PlanSnapshot, PlanStepSnapshot, RouteRecord, TurnEndState,
     TurnRecord,
 };
 pub use writer::TurnMetricsWriter;
