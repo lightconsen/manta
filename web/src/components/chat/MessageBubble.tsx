@@ -14,6 +14,8 @@ import {
   ChevronDown,
   ChevronUp,
   BrainCircuit,
+  ThumbsUp,
+  ThumbsDown,
 } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
 import type { ChatMessage, SyscityWebSocketTransport } from "@/SyscityWebSocketTransport";
@@ -101,9 +103,15 @@ function UserMessageActions({
 function AssistantMessageActions({
   content,
   onRegenerate,
+  turnId,
+  vote,
+  onVote,
 }: {
   content: string;
   onRegenerate?: () => void;
+  turnId?: string;
+  vote?: "up" | "down" | undefined;
+  onVote?: (vote: "up" | "down") => void;
 }) {
   const { copied, copy } = useCopied();
 
@@ -115,6 +123,22 @@ function AssistantMessageActions({
         onClick={() => copy(content)}
         active={copied}
       />
+      {turnId && onVote && (
+        <>
+          <ActionButton
+            icon={ThumbsUp}
+            title="Helpful"
+            onClick={() => onVote("up")}
+            active={vote === "up"}
+          />
+          <ActionButton
+            icon={ThumbsDown}
+            title="Not helpful"
+            onClick={() => onVote("down")}
+            active={vote === "down"}
+          />
+        </>
+      )}
       {onRegenerate && (
         <ActionButton
           icon={RotateCcw}
@@ -284,6 +308,36 @@ export function MessageBubble({ message, transport, onEdit }: MessageBubbleProps
     transport?.regenerateAssistantMessage(message.id);
   }, [message.id, transport]);
 
+  const turnId = message.turnId;
+  const vote = useChatStore((s) => (turnId ? s.messageVotes[turnId] : undefined));
+
+  const handleVote = useCallback(
+    async (v: "up" | "down") => {
+      if (!turnId) return;
+      const state = useChatStore.getState();
+      const current = state.messageVotes[turnId];
+      const next = current === v ? undefined : v;
+      // Optimistic local mirror first for snappy UI.
+      state.setMessageVote(turnId, next);
+      if (!next || !transport) return; // toggle-off: no clear API on the DB
+      // Reconstruct the user input for this turn (for badcase dedup seeding).
+      let input: string | undefined;
+      const idx = state.messages.findIndex((m) => m.id === message.id);
+      for (let i = idx - 1; i >= 0; i--) {
+        if (state.messages[i].role === "user") {
+          input = state.messages[i].content;
+          break;
+        }
+      }
+      const ok = await transport.vote(turnId, next, { input, response: replyText });
+      if (!ok) {
+        // Revert on failure so the UI never diverges from the DB.
+        useChatStore.getState().setMessageVote(turnId, current);
+      }
+    },
+    [turnId, transport, message.id, replyText]
+  );
+
   return (
     <div className="py-4 group">
       <div className="flex gap-3 flex-row" style={centerStyle}>
@@ -382,6 +436,9 @@ export function MessageBubble({ message, transport, onEdit }: MessageBubbleProps
             <AssistantMessageActions
               content={replyText}
               onRegenerate={handleRegenerate}
+              turnId={turnId}
+              vote={vote}
+              onVote={handleVote}
             />
           )}
         </div>

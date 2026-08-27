@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { ChatMessage, NetworkStatus } from "@/SyscityWebSocketTransport";
 
 const INTERNALS_KEY = "syscity_internals_visibility";
+const VOTES_KEY = "syscity_message_votes";
 
 function loadInternalsVisibility(): Record<string, boolean> {
   try {
@@ -14,6 +15,20 @@ function loadInternalsVisibility(): Record<string, boolean> {
 function saveInternalsVisibility(v: Record<string, boolean>): void {
   try {
     localStorage.setItem(INTERNALS_KEY, JSON.stringify(v));
+  } catch { /* quota exceeded */ }
+}
+
+function loadMessageVotes(): Record<string, "up" | "down" | undefined> {
+  try {
+    return JSON.parse(localStorage.getItem(VOTES_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveMessageVotes(v: Record<string, "up" | "down" | undefined>): void {
+  try {
+    localStorage.setItem(VOTES_KEY, JSON.stringify(v));
   } catch { /* quota exceeded */ }
 }
 
@@ -51,6 +66,9 @@ interface ChatState {
   isLoadingHistory: boolean;
   hasMoreHistory: boolean;
   aiInternalsVisibility: Record<string, boolean>;
+  /** Vote keyed by stable `turn_id` (survives reloads; the DB vote is the
+   *  source of truth, this mirror keeps the selected state visible). */
+  messageVotes: Record<string, "up" | "down" | undefined>;
   previewDocument: PreviewDocument | null;
   workspacePanelOpen: boolean;
 
@@ -77,6 +95,7 @@ interface ChatState {
   setIsLoadingHistory: (loading: boolean) => void;
   setHasMoreHistory: (hasMore: boolean) => void;
   setAiInternalsVisibility: (messageId: string, visible: boolean) => void;
+  setMessageVote: (turnId: string, vote: "up" | "down" | undefined) => void;
   setPreviewDocument: (doc: PreviewDocument | null) => void;
   setWorkspacePanelOpen: (open: boolean) => void;
 }
@@ -92,6 +111,7 @@ export const useChatStore = create<ChatState>((set) => ({
   isLoadingHistory: false,
   hasMoreHistory: false,
   aiInternalsVisibility: loadInternalsVisibility(),
+  messageVotes: loadMessageVotes(),
   previewDocument: null,
   workspacePanelOpen: false,
 
@@ -119,6 +139,17 @@ export const useChatStore = create<ChatState>((set) => ({
       };
       saveInternalsVisibility(next);
       return { aiInternalsVisibility: next };
+    }),
+  setMessageVote: (turnId, vote) =>
+    set((s) => {
+      const next = { ...s.messageVotes };
+      if (vote === undefined) {
+        delete next[turnId];
+      } else {
+        next[turnId] = vote;
+      }
+      saveMessageVotes(next);
+      return { messageVotes: next };
     }),
   // The workspace panel and document preview share the right-side pane;
   // opening one closes the other.

@@ -53,6 +53,8 @@ export interface ChatMessage {
     status: "thinking" | "tool_calling";
     toolName?: string;
   };
+  /** Stable per-turn id from the `chat.final` event; the key for feedback.vote. */
+  turnId?: string;
 }
 
 export type MessagesCallback = (messages: ChatMessage[]) => void;
@@ -91,6 +93,55 @@ export interface OnboardingPayload {
 /** Response from GET /onboarding. */
 export interface OnboardingStatus {
   status: "pending" | "done";
+}
+
+/* ── Eval dashboard (§八 评测看板) ── */
+
+export interface EvalTraceSummary {
+  id: string;
+  kind: string;
+  subject: string;
+  status: string;
+  decided_at: number;
+}
+
+export interface EvalOptimizerReport {
+  run_id: string;
+  started_at: number;
+  finished_at: number;
+  candidates_generated: number;
+  applied: Array<{ path: string; from: number; to: number; new_revision: string }>;
+  rejected: Array<{ path: string; reason: string }>;
+  reason: string;
+}
+
+/** Aggregate returned by the read-only `eval.dashboard` method. */
+export interface EvalDashboardPayload {
+  traces: {
+    total: number;
+    by_kind: Record<string, number>;
+    by_status: Record<string, number>;
+    recent: EvalTraceSummary[];
+  };
+  badcases: {
+    total: number;
+    by_source: Record<string, number>;
+    by_status: Record<string, number>;
+  };
+  feedback: {
+    since_ms: number;
+    up: number;
+    down: number;
+    total: number;
+  };
+  optimizer: {
+    running: boolean;
+    paused: boolean;
+    breaker: { failures: number; tripped: boolean; open: boolean };
+    last_run_at: number | null;
+    last_report: EvalOptimizerReport | null;
+    last_error: string | null;
+  };
 }
 
 function makeTextPart(text: string): TextMessagePart {
@@ -954,6 +1005,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
       timestamp: number;
       duration_ms?: number;
       tool_count?: number;
+      turn_id?: string | null;
     }>
   ): ChatMessage[] {
     return raw.map((m) => {
@@ -1010,6 +1062,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
         timestamp: m.timestamp,
         durationMs: m.duration_ms,
         toolCount: m.tool_count,
+        turnId: m.turn_id || undefined,
       };
     });
   }
@@ -1212,6 +1265,97 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     } catch {
       return false;
     }
+  }
+
+  /* ── Feedback ── */
+
+  /**
+   * Submit a Like/Dislike vote for a turn.
+   *
+   * `input`/`response` are optional and only used to seed a `human:dislike`
+   * pending badcase on a down vote; the vote itself only needs the `turnId`.
+   */
+  async vote(
+    turnId: string,
+    vote: "up" | "down",
+    opts?: { input?: string; response?: string; comment?: string }
+  ): Promise<boolean> {
+    try {
+      await this.sendRequestAndWait("feedback.vote", {
+        turn_id: turnId,
+        vote,
+        ...(opts?.comment ? { comment: opts.comment } : {}),
+        ...(opts?.input ? { input: opts.input } : {}),
+        ...(opts?.response ? { response: opts.response } : {}),
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /* ── Eval dashboard (§八 评测看板) ── */
+
+  /** Fetch the read-only eval dashboard aggregate. Degrades to all-zero
+   *  buckets when the method errors or the stores are missing. */
+  async getEvalDashboard(): Promise<EvalDashboardPayload> {
+    try {
+      const res = (await this.sendRequestAndWait(
+        "eval.dashboard",
+        {},
+        8000
+      )) as EvalDashboardPayload | undefined;
+      if (!res) return this.emptyEvalDashboard();
+      return {
+        traces: {
+          total: res.traces?.total ?? 0,
+          by_kind: res.traces?.by_kind ?? {},
+          by_status: res.traces?.by_status ?? {},
+          recent: res.traces?.recent ?? [],
+        },
+        badcases: {
+          total: res.badcases?.total ?? 0,
+          by_source: res.badcases?.by_source ?? {},
+          by_status: res.badcases?.by_status ?? {},
+        },
+        feedback: {
+          since_ms: res.feedback?.since_ms ?? 0,
+          up: res.feedback?.up ?? 0,
+          down: res.feedback?.down ?? 0,
+          total: res.feedback?.total ?? 0,
+        },
+        optimizer: {
+          running: !!res.optimizer?.running,
+          paused: !!res.optimizer?.paused,
+          breaker: {
+            failures: res.optimizer?.breaker?.failures ?? 0,
+            tripped: !!res.optimizer?.breaker?.tripped,
+            open: !!res.optimizer?.breaker?.open,
+          },
+          last_run_at: res.optimizer?.last_run_at ?? null,
+          last_report: res.optimizer?.last_report ?? null,
+          last_error: res.optimizer?.last_error ?? null,
+        },
+      };
+    } catch {
+      return this.emptyEvalDashboard();
+    }
+  }
+
+  private emptyEvalDashboard(): EvalDashboardPayload {
+    return {
+      traces: { total: 0, by_kind: {}, by_status: {}, recent: [] },
+      badcases: { total: 0, by_source: {}, by_status: {} },
+      feedback: { since_ms: 0, up: 0, down: 0, total: 0 },
+      optimizer: {
+        running: false,
+        paused: false,
+        breaker: { failures: 0, tripped: false, open: false },
+        last_run_at: null,
+        last_report: null,
+        last_error: null,
+      },
+    };
   }
 
   /* ── Onboarding (first-launch identity wizard) ── */
@@ -2090,12 +2234,14 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
             finalParts.push(makeTextPart(currentText));
             const durationMs = Date.now() - startTime;
             const toolCount = toolCalls.size;
+            const turnId = (evt.payload?.turn_id as string) || undefined;
             // Save final AI message to history with full parts and metadata
-            this.saveMessage({ ...aiMsg, durationMs, toolCount });
+            this.saveMessage({ ...aiMsg, durationMs, toolCount, turnId });
             aiMsg.content = currentText;
             aiMsg.parts = finalParts.map(toChatPart);
             aiMsg.durationMs = durationMs;
             aiMsg.toolCount = toolCount;
+            aiMsg.turnId = turnId;
             aiMsg.liveStatus = undefined;
             this.messagesListeners.forEach((cb) => cb(this.messages));
             yield { content: finalParts, status: { type: "complete", reason: "stop" } };
@@ -2277,6 +2423,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
             aiMsg.parts = finalParts;
             aiMsg.durationMs = Date.now();
             aiMsg.toolCount = toolCalls.size;
+            aiMsg.turnId = (evt.payload?.turn_id as string) || undefined;
             aiMsg.liveStatus = undefined;
 
             this.messagesMap.set(sessionId, [...sessionMessages]);

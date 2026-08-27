@@ -8,6 +8,7 @@ import { ChannelsSettings } from "@/components/settings/ChannelsSettings";
 import { ToolsSettings } from "@/components/settings/ToolsSettings";
 import { McpSettings } from "@/components/settings/McpSettings";
 import { SkillsSettings } from "@/components/settings/SkillsSettings";
+import { EvalDashboard } from "@/components/settings/EvalDashboard";
 import { JobsSettings } from "@/components/settings/JobsSettings";
 import { DevicesSettings } from "@/components/settings/DevicesSettings";
 import { LogsSettings } from "@/components/settings/LogsSettings";
@@ -117,6 +118,9 @@ export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
             )}
             {d.activeTab === "skills" && (
               <SkillsSettings transport={transport} skills={d.skills} onRefresh={d.refreshSkills} />
+            )}
+            {d.activeTab === "eval" && (
+              <EvalDashboard transport={transport} />
             )}
             {d.activeTab === "jobs" && (
               <JobsSettings crons={d.crons} />
