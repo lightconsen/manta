@@ -286,6 +286,16 @@ pub(crate) async fn init_single_channel(
                 warn!("WebChat feature not enabled, skipping channel '{}'", name);
             }
         }
+        ChannelType::WechatMp => {
+            #[cfg(feature = "wechatmp")]
+            {
+                init_wechatmp_channel(state.clone(), name, channel_config).await?;
+            }
+            #[cfg(not(feature = "wechatmp"))]
+            {
+                warn!("WeChat MP feature not enabled, skipping channel '{}'", name);
+            }
+        }
     }
 
     // Record a healthy snapshot after successful channel initialization
@@ -594,6 +604,62 @@ pub(crate) async fn init_feishu_channel(
         info!("✅ Feishu channel '{}' initialized (inbound via webhook)", name);
     } else {
         warn!("Feishu channel '{}' missing 'app_id' or 'app_secret' in credentials", name);
+    }
+    Ok(())
+}
+
+/// Initialize WeChat Official Account (公众号) channel.
+///
+/// Inbound arrives via the encrypted webhook in `gateway/webhooks.rs`; this
+/// only registers the outbound (customer-service message) channel.
+#[cfg(feature = "wechatmp")]
+pub(crate) async fn init_wechatmp_channel(
+    state: Arc<GatewayState>,
+    name: &str,
+    config: &ChannelConfig,
+) -> crate::Result<()> {
+    use crate::channels::wechatmp::{WechatMpChannel, WechatMpConfig};
+
+    if let (Some(app_id), Some(app_secret), Some(token), Some(encoding_aes_key)) = (
+        config.credentials.get("app_id"),
+        channel_cred(name, config, "app_secret").await,
+        channel_cred(name, config, "token").await,
+        channel_cred(name, config, "encoding_aes_key").await,
+    ) {
+        let mp_config = WechatMpConfig {
+            app_id: app_id.clone(),
+            app_secret,
+            token,
+            encoding_aes_key,
+        };
+        let channel = Arc::new(WechatMpChannel::new(mp_config));
+
+        let channel_name = name.to_string();
+        let channel_for_task = channel.clone();
+        let main_handle = tokio::spawn(async move {
+            if let Err(e) = channel_for_task.start().await {
+                error!("WeChat MP channel {} failed: {}", channel_name, e);
+            }
+        });
+        register_channel_task(&state, name, "main", main_handle).await;
+        state
+            .channels
+            .reply_dispatcher
+            .register_channel(name, channel.clone())
+            .await;
+        state
+            .channels
+            .channels
+            .write()
+            .await
+            .insert(name.to_string(), channel);
+        info!("✅ WeChat MP channel '{}' initialized (inbound via encrypted webhook)", name);
+    } else {
+        warn!(
+            "WeChat MP channel '{}' missing 'app_id'/'app_secret'/'token'/'encoding_aes_key' \
+             in credentials",
+            name
+        );
     }
     Ok(())
 }

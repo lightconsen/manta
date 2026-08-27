@@ -356,6 +356,8 @@ pub enum ChannelType {
     Imessage,
     /// WebChat browser interface
     Webchat,
+    /// WeChat Official Account (公众号) webhook
+    WechatMp,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]

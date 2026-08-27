@@ -171,6 +171,7 @@ async fn run_channel_add(
         ChannelType::Signal => add_signal_channel(token, agent, extra_creds).await,
         ChannelType::Imessage => add_imessage_channel(token, agent, extra_creds).await,
         ChannelType::Webchat => add_webchat_channel(token, agent, extra_creds).await,
+        ChannelType::WechatMp => add_wechatmp_channel(token, agent, extra_creds).await,
     }
 }
 
@@ -187,6 +188,7 @@ async fn run_channel_stop(channel: ChannelType) -> Result<()> {
         ChannelType::Signal => "signal",
         ChannelType::Imessage => "imessage",
         ChannelType::Webchat => "webchat",
+        ChannelType::WechatMp => "wechatmp",
     };
 
     println!("🛑 Disabling {} channel...", channel_name);
@@ -224,6 +226,7 @@ async fn run_channel_remove(channel: ChannelType, agent: Option<String>) -> Resu
         ChannelType::Signal => "signal",
         ChannelType::Imessage => "imessage",
         ChannelType::Webchat => "webchat",
+        ChannelType::WechatMp => "wechatmp",
     };
 
     // Check if agent filter was specified
@@ -863,6 +866,72 @@ async fn add_webchat_channel(
     Ok(())
 }
 
+/// Add WeChat Official Account (公众号) channel to the gateway config.
+async fn add_wechatmp_channel(
+    token: Option<String>,
+    agent: Option<String>,
+    extra_creds: Vec<(String, String)>,
+) -> Result<()> {
+    use crate::channels::ChannelType as GatewayChannelType;
+    use crate::gateway::ChannelConfig;
+
+    let app_id = match token {
+        Some(t) => t,
+        None => std::env::var("WECHAT_MP_APP_ID").map_err(|_| {
+            crate::error::ConfigError::Missing(
+                "WECHAT_MP_APP_ID environment variable, or --token argument".to_string(),
+            )
+        })?,
+    };
+
+    let app_secret = std::env::var("WECHAT_MP_APP_SECRET").map_err(|_| {
+        crate::error::ConfigError::Missing("WECHAT_MP_APP_SECRET environment variable".to_string())
+    })?;
+
+    println!("🚀 Adding WeChat MP channel to Gateway...");
+
+    let mut config = ensure_gateway_config().await?;
+
+    let mut credentials = HashMap::new();
+    credentials.insert("app_id".to_string(), app_id);
+    credentials.insert("app_secret".to_string(), app_secret);
+
+    // Optional: webhook verification token
+    if let Ok(token) = std::env::var("WECHAT_MP_TOKEN") {
+        credentials.insert("token".to_string(), token);
+    }
+    // Optional: encrypted-message key
+    if let Ok(aes_key) = std::env::var("WECHAT_MP_ENCODING_AES_KEY") {
+        credentials.insert("encoding_aes_key".to_string(), aes_key);
+    }
+    for (k, v) in extra_creds {
+        credentials.insert(k, v);
+    }
+
+    let channel_config = ChannelConfig {
+        enabled: true,
+        channel_type: GatewayChannelType::WechatMp,
+        credentials,
+        dm_policy: DmPolicy::Open,
+        require_mention: false,
+        allow_from: vec![],
+        block_from: vec![],
+        agent_id: agent,
+    };
+
+    config
+        .channels
+        .insert("wechatmp".to_string(), channel_config);
+    save_gateway_config(&config).await?;
+
+    println!("✅ WeChat MP channel configured in Gateway");
+    println!("   Configure the webhook in the MP console (URL + Token + EncodingAESKey)");
+    println!("   Start the Gateway to activate the channel:");
+    println!("   syscity start");
+
+    Ok(())
+}
+
 /// List configured channels
 async fn run_channel_list(all: bool) -> Result<()> {
     println!("📱 Syscity Channels");
@@ -1055,6 +1124,7 @@ async fn run_channel_status(
                 ChannelType::Signal => "signal",
                 ChannelType::Imessage => "imessage",
                 ChannelType::Webchat => "webchat",
+                ChannelType::WechatMp => "wechatmp",
             };
 
             let display_name = match ch {
@@ -1068,6 +1138,7 @@ async fn run_channel_status(
                 ChannelType::Signal => "Signal",
                 ChannelType::Imessage => "iMessage",
                 ChannelType::Webchat => "WebChat",
+                ChannelType::WechatMp => "WeChat MP",
             };
 
             // If --agent is specified, include it in the title
@@ -1182,6 +1253,7 @@ async fn run_channel_test(channel: ChannelType, agent: Option<String>) -> Result
         ChannelType::Signal => "Signal",
         ChannelType::Imessage => "iMessage",
         ChannelType::Webchat => "WebChat",
+        ChannelType::WechatMp => "WeChat MP",
     };
 
     println!("🧪 Testing {} configuration...", channel_name);
@@ -1203,6 +1275,7 @@ async fn run_channel_test(channel: ChannelType, agent: Option<String>) -> Result
         ChannelType::Signal => cfg!(feature = "signal"),
         ChannelType::Imessage => cfg!(feature = "imessage"),
         ChannelType::Webchat => cfg!(feature = "webchat"),
+        ChannelType::WechatMp => cfg!(feature = "wechatmp"),
     };
 
     if feature_enabled {
@@ -1294,6 +1367,9 @@ async fn run_channel_test(channel: ChannelType, agent: Option<String>) -> Result
         ChannelType::Webchat => {
             println!("    ℹ️  WebChat requires no environment variables");
         }
+        ChannelType::WechatMp => {
+            println!("    ℹ️  WeChat MP uses the official-account console credentials (AppID/Secret/Token/EncodingAESKey)");
+        }
     }
 
     // Check Gateway config
@@ -1309,6 +1385,7 @@ async fn run_channel_test(channel: ChannelType, agent: Option<String>) -> Result
         ChannelType::Signal => "signal",
         ChannelType::Imessage => "imessage",
         ChannelType::Webchat => "webchat",
+        ChannelType::WechatMp => "wechatmp",
     };
 
     if let Some(ref cfg) = load_gateway_config().await {

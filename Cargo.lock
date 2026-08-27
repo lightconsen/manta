@@ -7971,6 +7971,7 @@ dependencies = [
 name = "syscity"
 version = "0.2.2"
 dependencies = [
+ "aes",
  "aes-gcm",
  "anyhow",
  "async-stream",
@@ -7979,6 +7980,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "calamine",
+ "cbc",
  "chromiumoxide",
  "chrono",
  "clap",
@@ -8023,6 +8025,7 @@ dependencies = [
  "regex",
  "reqwest 0.12.28",
  "resvg",
+ "roxmltree 0.21.1",
  "rust-embed",
  "rust_xlsxwriter",
  "rustyline",
@@ -8032,6 +8035,7 @@ dependencies = [
  "serde_yml",
  "serenity",
  "serial_test",
+ "sha1",
  "sha2",
  "shellexpand",
  "sourcemap",

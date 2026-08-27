@@ -45,6 +45,8 @@ pub enum ChannelType {
     Imessage,
     /// WebChat browser interface
     Webchat,
+    /// WeChat Official Account (公众号) webhook
+    WechatMp,
 }
 
 #[cfg(feature = "telegram")]
@@ -76,6 +78,9 @@ pub mod imessage;
 
 #[cfg(feature = "webchat")]
 pub mod webchat;
+
+#[cfg(feature = "wechatmp")]
+pub mod wechatmp;
 
 pub mod acp_bridge;
 pub mod authorization;

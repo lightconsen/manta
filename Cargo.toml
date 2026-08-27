@@ -161,10 +161,16 @@ dashmap = "6.0"
 # Webhook signature verification
 hmac = "0.12"
 sha2 = "0.10"
+sha1 = { version = "0.10", optional = true }
 hex = "0.4"
 base64 = "0.22"
 ed25519-dalek = { version = "2.1", features = ["pkcs8"] }
 subtle = "2.5"
+
+# WeChat Official Account (wechatmp) encrypted-message protocol
+aes = { version = "0.8", optional = true }
+cbc = { version = "0.1", optional = true }
+roxmltree = { version = "0.21", optional = true }
 
 # Secure secret handling
 zeroize = { version = "1.7", features = ["derive"] }
@@ -255,7 +261,7 @@ windows-sys = { version = "=0.59.0", features = [
 ] }
 
 [features]
-default = ["telegram", "discord", "slack", "whatsapp", "qq", "feishu", "signal", "imessage", "webchat", "plugins", "hot-reload", "local-embeddings", "browser", "vision", "sqlite-vec"]
+default = ["telegram", "discord", "slack", "whatsapp", "qq", "feishu", "signal", "imessage", "webchat", "wechatmp", "plugins", "hot-reload", "local-embeddings", "browser", "vision", "sqlite-vec"]
 telegram = ["teloxide"]
 discord = ["serenity"]
 slack = []
@@ -265,7 +271,8 @@ feishu = []
 signal = []
 imessage = []
 webchat = []
-all-channels = ["telegram", "discord", "slack", "whatsapp", "qq", "feishu", "signal", "imessage", "webchat"]
+wechatmp = ["dep:aes", "dep:cbc", "dep:sha1", "dep:roxmltree"]
+all-channels = ["telegram", "discord", "slack", "whatsapp", "qq", "feishu", "signal", "imessage", "webchat", "wechatmp"]
 web = []
 browser = ["chromiumoxide", "sourcemap"]
 local-embeddings = ["llama-cpp-2", "hf-hub"]
@@ -287,7 +294,7 @@ keyring = ["dep:keyring"]
 # Build with: cargo build --no-default-features --features intel-macos
 intel-macos = [
     "telegram", "discord", "slack", "whatsapp", "qq", "feishu", "signal",
-    "imessage", "webchat", "plugins", "hot-reload", "local-embeddings",
+    "imessage", "webchat", "wechatmp", "plugins", "hot-reload", "local-embeddings",
     "browser", "sqlite-vec",
 ]
 
