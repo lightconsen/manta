@@ -21,6 +21,7 @@ import { GoalPanel } from "@/components/chat/GoalPanel";
 import { DocumentPreviewPanel } from "@/components/shared/DocumentPreviewPanel";
 import { WorkspacePanel } from "@/components/workspace/WorkspacePanel";
 import { UpdateBanner } from "@/components/update/UpdateBanner";
+import { CloudEnabledBanner } from "@/components/update/CloudEnabledBanner";
 import { AskModal, type AskPrompt } from "@/components/ask/AskModal";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 
@@ -144,9 +145,21 @@ function ChatApp() {
         "token",
       );
       if (token) {
-        cloudSubmitToken(token).finally(() => {
-          window.location.replace("/");
-        });
+        cloudSubmitToken(token)
+          .then((ok) => {
+            // First-login guidance: surface the newly-enabled cloud
+            // capabilities banner on the home view after a successful login.
+            if (ok) {
+              try {
+                localStorage.setItem("syscity_cloud_enabled_hint", "1");
+              } catch {
+                /* ignore */
+              }
+            }
+          })
+          .finally(() => {
+            window.location.replace("/");
+          });
       } else {
         window.location.replace("/");
       }
@@ -712,6 +725,8 @@ function ChatApp() {
       <main className="flex-1 flex flex-col overflow-hidden">
         {/* New-release banner; the settings General tab shows the full controls. */}
         {!settingsOpen && <UpdateBanner />}
+        {/* First-login cloud guidance (shown once after a successful login). */}
+        {!settingsOpen && <CloudEnabledBanner />}
         {settingsOpen ? (
           <SettingsPanel transport={transport} onClose={() => setSettingsOpen(false)} />
         ) : (previewDocument || workspacePanelOpen) && !isMobile ? (
