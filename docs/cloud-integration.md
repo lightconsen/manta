@@ -17,14 +17,14 @@
 
 ## P0 — 账号/登录（用云端的前提）
 
-- [ ] **1. Cargo feature `cloud` 隔离**（§2.7）
+- [x] **1. Cargo feature `cloud` 隔离**（§2.7）
       - 所有云集成代码收进 `cloud` feature（默认关闭、运行时双闸 `cloud.enabled` + 登录态）。
       - 目的：公开仓库不含任何云耦合，运营侧代码可审计。
-- [ ] **2. gateway 登录态 + 账号绑定**（P0-2）
+- [x] **2. gateway 登录态 + 账号绑定**（P0-2）
       - 引擎 web/UI 加「登录」入口 → 云端 OAuth `GET /auth/{provider}?redirect=<engine>`（github/google/wechat）。
       - 回调拿 session token → 存本地（config/secrets）→ `GET /auth/me` 验证 → 显示账号/登录态。
       - **首次启动的欢迎/身份向导页（onboarding，`GET/POST /onboarding`，登录前运行）直接提供「登录云端」选项**（与「本地使用」并列）——首启即可一键登录，无需进入后再找入口。云端入口从欢迎页起就可见。
-- [ ] **3. Session token 管理**
+- [x] **3. Session token 管理**
       - 存储 + 所有云端调用带 `Authorization: Bearer <token>` + 失效/登出处理（`POST /auth/logout` 吊销）。
 
 ## P1 — 市场分发
@@ -34,14 +34,14 @@
 
 ## P2 — 云端服务使用（价值主体）
 
-- [ ] **5. 云 provider（LLM/嵌入）**（§2.8 云模式）
+- [x] **5. 云 provider（LLM/嵌入）**（§2.8 云模式）
       - model_router 加「云 provider」→ `POST /v1/chat/completions` + `POST /v1/embeddings`（基于现有 OpenAI-compatible provider + custom base_url + token 注入）。
       - 效果：登录即用云端 LLM，零配置，积分云端扣。
       - **体验落点（零配置承诺的关键）**：登录后云模型**自动进入模型列表/可默认选用**，用户无需配置任何 key 就能选到云模型。
-- [ ] **6. 搜索 Cloud provider**
+- [x] **6. 搜索 Cloud provider**
       - → `POST /v1/search`（Tavily/Bing/Serp 归一化，固定积分扣费）。
       - **体验落点**：登录后 agent 的 web 搜索工具**自动走云端搜索**（无需配置 TAVILY 等 key）。
-- [ ] **7. 知识库连接器**（§3.7）
+- [x] **7. 知识库连接器**（§3.7）
       - agent 工具调 `POST /api/v1/kb/:id/query` 注入 RAG 上下文。
       - **上传入口 = 知识库价值前提**（非后补）：登录后用户能上传文档——引擎提供上传，或至少打通 cloud console 的 `POST /api/v1/kb/:id/documents` 入口并在 web 里可到达。
 - [ ] **8. 云端采购连接器（kind=cloud）**（§3.6）
@@ -55,9 +55,9 @@
 
 > `syscity/web` 是本地 SPA（Vite+React）。UI 侧改动按页整理，与对应后端项同步推进。
 
-- [ ] **登录态（导航栏）**：右上角「登录」→ 云端 OAuth；已登录显示头像 + 菜单（账号/设置/登出）。对应 **P0-2**。
-- [ ] **欢迎页登录选项**：首启 onboarding 页「登录云端」与「本地使用」并列。对应 **P0-2**。
-- [ ] **账号/云端设置页**：账号信息、登录/登出、是否启用云端模式（`cloud.enabled` 开关）、当前套餐 + 升级引导。对应 **P0-1 / P0-3**。
+- [x] **登录态（导航栏）**：右上角「登录」→ 云端 OAuth；已登录显示头像 + 菜单（账号/设置/登出）。对应 **P0-2**。
+- [x] **欢迎页登录选项**：首启 onboarding 页「登录云端」与「本地使用」并列。对应 **P0-2**。
+- [x] **账号/云端设置页**：账号信息、登录/登出、是否启用云端模式（`cloud.enabled` 开关）、当前套餐 + 升级引导。对应 **P0-1 / P0-3**。
 - [ ] **用量/订阅展示**：导航或设置里显示积分余额 + 用量入口 + 低积分提示。对应 **P2-10**。
 - [ ] **市场页（浏览/安装专家·技能·连接器）**：web 提供从 catalog 浏览并安装专家/技能/连接器的界面——登录后含 member 条目；云端采购（`kind=cloud`）条目标注积分价、安装后走云端代理使用；BYOA 本地免费。连接器管理面已有（P0-1），专家/技能安装引擎侧有 `skills/`、agents 机制，本项只补 **web 浏览/安装入口**。对应 **P1-4 / P2-8**。
 - [ ] **知识库界面**（可选）：若检索由 agent 工具驱动，UI 仅做「知识库列表/上传/查询」入口；也可先用命令/工具覆盖。对应 **P2-7**。
