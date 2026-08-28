@@ -1143,13 +1143,27 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
         .route("/sw.js", get(super::asset_handler))
         .route("/assets/*path", get(super::asset_handler));
 
+    // Cloud session endpoints (feature `cloud`). Public tier: these are how
+    // the web SPA logs into Syscity Cloud and persists the session token.
+    #[cfg(feature = "cloud")]
+    let cloud_router = Router::new()
+        .route("/api/v1/cloud/login", get(super::handlers::cloud::login_handler))
+        .route("/api/v1/cloud/token", post(super::handlers::cloud::token_handler))
+        .route("/api/v1/cloud/status", get(super::handlers::cloud::status_handler))
+        .route("/api/v1/cloud/logout", post(super::handlers::cloud::logout_handler))
+        .with_state(state.clone());
+
     // Merge all routers and apply global CORS
-    frontend_router
+    let app = frontend_router
         .merge(public_router)
         .merge(auth_router)
         .merge(admin_router)
-        .merge(ws_router)
-        .layer(cors_layer)
+        .merge(ws_router);
+
+    #[cfg(feature = "cloud")]
+    let app = app.merge(cloud_router);
+
+    app.layer(cors_layer)
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────

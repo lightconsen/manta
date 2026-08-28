@@ -4,6 +4,8 @@ pub mod approvals;
 pub mod artifacts;
 pub mod auth_profiles;
 pub mod chat;
+#[cfg(feature = "cloud")]
+pub mod cloud;
 pub mod config;
 pub mod connectors;
 pub mod cron;

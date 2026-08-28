@@ -29,9 +29,13 @@ fn default_redirect_base() -> String {
 impl Default for CloudConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
-            api_base: default_api_base(),
-            redirect_base: default_redirect_base(),
+            enabled: std::env::var("SYSCITY_CLOUD_ENABLED")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false),
+            api_base: std::env::var("SYSCITY_CLOUD_API_BASE")
+                .unwrap_or_else(|_| default_api_base()),
+            redirect_base: std::env::var("SYSCITY_CLOUD_REDIRECT_BASE")
+                .unwrap_or_else(|_| default_redirect_base()),
         }
     }
 }

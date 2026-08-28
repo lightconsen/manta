@@ -46,6 +46,10 @@ pub struct GatewayConfig {
     /// Security configuration
     #[serde(default)]
     pub security: SecurityConfig,
+    /// Syscity Cloud integration (§2.7; feature `cloud`)
+    #[cfg(feature = "cloud")]
+    #[serde(default)]
+    pub cloud: crate::cloud::config::CloudConfig,
     /// Storage adapter configuration
     #[serde(default)]
     pub storage: StorageConfig,
@@ -1274,6 +1278,8 @@ impl Default for GatewayConfig {
             cron: CronConfig::default(),
             heartbeat: crate::heartbeat::HeartbeatConfig::default(),
             security: SecurityConfig::default(),
+            #[cfg(feature = "cloud")]
+            cloud: crate::cloud::config::CloudConfig::default(),
             storage: StorageConfig::default(),
             providers: HashMap::new(),
             model: default_model(),
