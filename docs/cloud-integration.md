@@ -30,7 +30,9 @@
 ## P1 — 市场分发
 
 - [x] **4. 分发调度器** — **已有**（`src/mcp/connectors/catalog.rs`：拉 catalog.json + 归档 + sha256 校验 + 安装）。
-- [ ] 补：**登录后带 token 拉取** `GET /catalog.json`，可见 member 条目（登录 vs 匿名）。
+- [x] 补：**登录后带 token 拉取** `GET /catalog.json`，可见 member 条目（登录 vs 匿名）。
+      - `CatalogCache::sync` 收 `Option<token>` → `Authorization: Bearer`；`ConnectorManager::sync_catalog` 从云 session 取 token（登录时自动带上，ETag 按视图缓存，切换视图自然刷新）。
+      - `CatalogEntry` 扩展 `type/kind/visibility/credits_per_use/category`（serde 默认值向后兼容）。
 
 ## P2 — 云端服务使用（价值主体）
 
@@ -44,12 +46,16 @@
 - [x] **7. 知识库连接器**（§3.7）
       - agent 工具调 `POST /api/v1/kb/:id/query` 注入 RAG 上下文。
       - **上传入口 = 知识库价值前提**（非后补）：登录后用户能上传文档——引擎提供上传，或至少打通 cloud console 的 `POST /api/v1/kb/:id/documents` 入口并在 web 里可到达。
-- [ ] **8. 云端采购连接器（kind=cloud）**（§3.6）
+- [x] **8. 云端采购连接器（kind=cloud）**（§3.6）
       - 引擎侧 cloud connector 走云端 MCP 代理：`POST /api/v1/mcp/tools` / `POST /api/v1/mcp/call`（带 token，按 credits 扣费）。
-- [ ] **9. 设备绑定**
-      - 引擎启动时 `POST /api/v1/devices` 拿 device_token，作为设备身份（为未来同步打底）。
-- [ ] **10. 用量/订阅展示**
-      - UI 显示积分余额/用量/套餐（`GET /api/v1/subscription`、`GET /api/v1/usage`），低积分提示升级。
+      - `connector.json` 加顶层 `kind`（`byoa`|`cloud`，默认 byoa，校验）；`McpTransport::Cloud`（feature `cloud`，`connector_id` + `api_base`）；`McpClient` 对 Cloud transport 走 `cloud_list_tools`/`cloud_call_tool`（会话 token + bearer）；`ConnectorManager::server_config_for` 对 `kind=cloud` 且 `cloud_api_base` 存在时生成 Cloud relay 配置；`cloud.enabled=false` 时 enable 报错并记 `Error` 态。
+      - 双闸：feature `cloud`（默认关）+ `cloud.enabled`（`init/tools.rs` 只传 `Some(api_base)` when enabled）+ 调用时校验会话 token。
+- [x] **9. 设备绑定**
+      - 引擎侧 `src/cloud/device.rs`：稳定本地 device_id（首用生成 UUID 持久化到 `cloud/device_id`，重启不变、重复绑定幂等）→ `POST /api/v1/devices` 拿 device_token（存 secret store，`SystemGenerated`）。
+      - 登录成功后 best-effort 绑定（`token_handler` 调 `device::bind`），失败只记 warn 不阻断登录；device_token 为未来同步打底。
+- [x] **10. 用量/订阅展示**
+      - `CloudClient::subscription()`/`usage(days)`；gateway 代理端点 `GET /api/v1/cloud/subscription` + `GET /api/v1/cloud/usage?days=`（带 session token）。
+      - UI（CloudSection，见下）显示积分余额 + 套餐 + 低积分提示（`threshold_warn`/`overdrawn`）+ 本月用量/分类消耗。
 
 ## syscity/web UI（本地 SPA 界面汇总）
 
@@ -58,10 +64,13 @@
 - [x] **登录态（导航栏）**：右上角「登录」→ 云端 OAuth；已登录显示头像 + 菜单（账号/设置/登出）。对应 **P0-2**。
 - [x] **欢迎页登录选项**：首启 onboarding 页「登录云端」与「本地使用」并列。对应 **P0-2**。
 - [x] **账号/云端设置页**：账号信息、登录/登出、是否启用云端模式（`cloud.enabled` 开关）、当前套餐 + 升级引导。对应 **P0-1 / P0-3**。
-- [ ] **用量/订阅展示**：导航或设置里显示积分余额 + 用量入口 + 低积分提示。对应 **P2-10**。
-- [ ] **市场页（浏览/安装专家·技能·连接器）**：web 提供从 catalog 浏览并安装专家/技能/连接器的界面——登录后含 member 条目；云端采购（`kind=cloud`）条目标注积分价、安装后走云端代理使用；BYOA 本地免费。连接器管理面已有（P0-1），专家/技能安装引擎侧有 `skills/`、agents 机制，本项只补 **web 浏览/安装入口**。对应 **P1-4 / P2-8**。
+- [x] **用量/订阅展示**：设置页 CloudSection 显示积分余额 + 套餐 + 本月用量（分类消耗）+ 低积分提示升级（`threshold_warn`/`overdrawn`）。对应 **P2-10**。
+- [x] **市场页（浏览/安装专家·技能·连接器）**：web 提供从 catalog 浏览并安装专家/技能/连接器的界面——登录后含 member 条目；云端采购（`kind=cloud`）条目标注积分价、安装后走云端代理使用；BYOA 本地免费。连接器管理面已有（P0-1），专家/技能安装引擎侧有 `skills/`、agents 机制，本项只补 **web 浏览/安装入口**。对应 **P1-4 / P2-8**。
+      - Settings 新增 **Marketplace** tab（`MarketplaceSettings.tsx`）：按类型筛选，cloud 条目显示 `⚡ N credits/call`、member 显示 `🔒 Members`；Install/Update（`POST /api/v1/connectors/catalog/install`）+ 已装条目的 Enable/Disable；URL 自定义同步。
+      - 后端新增 `GET /api/v1/connectors/catalog`（缓存条目 + 安装态；空缓存且云模式登录时自动从云 catalog 同步）与 `POST /api/v1/connectors/catalog/install`（按 id 取 catalog 最新版本 → `upgrade`）。
 - [ ] **知识库界面**（可选）：若检索由 agent 工具驱动，UI 仅做「知识库列表/上传/查询」入口；也可先用命令/工具覆盖。对应 **P2-7**。
-- [ ] **首次登录引导**：登录成功后提示「云能力已启用」——云端 LLM/搜索自动可用、市场完整条目可见、如何上传知识库——让优势从登录那一刻可见，而不是藏在菜单里。对应 **P0-2**。
+- [x] **首次登录引导**：登录成功后提示「云能力已启用」——云端 LLM/搜索自动可用、市场完整条目可见、如何上传知识库——让优势从登录那一刻可见，而不是藏在菜单里。对应 **P0-2**。
+      - OAuth 回调成功后置 localStorage 标记 → 主页顶部弹 `CloudEnabledBanner`（云端模型/搜索自动可用、市场可看全部条目、`cloud_kb` 上传知识库），关闭即清除，下次登录再提示。
 
 ## 延后
 
