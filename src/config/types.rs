@@ -83,6 +83,11 @@ pub struct Config {
     #[serde(default)]
     pub capabilities: CapabilitiesConfig,
 
+    /// Syscity Cloud integration (§2.7). Compiled only with the `cloud` feature.
+    #[cfg(feature = "cloud")]
+    #[serde(default)]
+    pub cloud: crate::cloud::config::CloudConfig,
+
     /// Custom key-value pairs
     #[serde(flatten)]
     pub extra: HashMap<String, toml::Value>,
@@ -755,6 +760,8 @@ impl Default for Config {
             computer: ComputerConfig::default(),
             standing_orders: crate::standing_orders::config::StandingOrderConfig::default(),
             capabilities: CapabilitiesConfig::default(),
+            #[cfg(feature = "cloud")]
+            cloud: crate::cloud::config::CloudConfig::default(),
             services: HashMap::new(),
             extra: HashMap::new(),
         }

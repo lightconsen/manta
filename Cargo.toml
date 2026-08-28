@@ -274,6 +274,10 @@ webchat = []
 wechatmp = ["dep:aes", "dep:cbc", "dep:sha1", "dep:roxmltree"]
 all-channels = ["telegram", "discord", "slack", "whatsapp", "qq", "feishu", "signal", "imessage", "webchat", "wechatmp"]
 web = []
+# Syscity Cloud integration (login + cloud LLM/search/KB/connectors). Default
+# OFF: default builds contain no cloud coupling (§2.7). Enable with
+# `--features cloud`; runtime is additionally gated by `cloud.enabled` + login.
+cloud = []
 browser = ["chromiumoxide", "sourcemap"]
 local-embeddings = ["llama-cpp-2", "hf-hub"]
 plugins = ["wasmtime", "wasmtime-wasi"]

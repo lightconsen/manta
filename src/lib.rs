@@ -46,6 +46,8 @@ pub mod canvas;
 pub mod channels;
 pub mod cli;
 pub mod client;
+#[cfg(feature = "cloud")]
+pub mod cloud;
 pub mod computer;
 pub mod config;
 pub mod core;
