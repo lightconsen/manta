@@ -891,6 +891,10 @@ impl Agent {
             collector.record_channel(obs);
         }
 
+        // Start-of-turn timestamp for online sampling latency. Captured before
+        // the LLM round so `latency_ms` reflects generation time.
+        let sampling_started = std::time::Instant::now();
+
         // Get response from LLM with progress (lock NOT held).
         let llm_result = self
             .get_completion_with_progress(
@@ -910,6 +914,14 @@ impl Agent {
         } else {
             Vec::new()
         };
+
+        // Sampling metadata snapshots, filled inside the `Ok(resp)` arm below
+        // BEFORE the collector is consumed by finish()/abort(). Declared up
+        // here so they remain in scope at the `sample_turn` call site after the
+        // match block.
+        let mut sampling_model = String::new();
+        let mut sampling_cache_hit = false;
+        let mut sampling_usage = None;
 
         // Complete or interrupt the turn.
         let llm_result = match llm_result {
@@ -941,6 +953,17 @@ impl Agent {
                         }
                     });
                 }
+                // Snapshot sampling metadata BEFORE the collector is consumed
+                // by finish(): the model and cache-hit flag only live inside
+                // the collector, and usage lives on the response.
+                sampling_model = if collector.model().is_empty() {
+                    resp.model.clone()
+                } else {
+                    collector.model().to_string()
+                };
+                sampling_cache_hit = collector.cache_hit();
+                sampling_usage = resp.usage;
+
                 // Controller checkpoints return Ok with finish_reason="cancelled";
                 // treat that as an abort, not a successful completion.
                 if resp.finish_reason.as_deref() == Some("cancelled") {
@@ -1089,6 +1112,24 @@ impl Agent {
             &turn_id,
             &conversation_id,
             compression_risks,
+        );
+
+        // ── Production turn sampling: persist a sampled subset of turns ──
+        // Fire-and-forget, mirroring `scan_turn_for_badcase`. Guard-rejection
+        // turns (empty turn_id) are skipped inside `sample_turn`.
+        self.sample_turn(
+            &content,
+            &response_content,
+            tool_call_count,
+            &turn_id,
+            &conversation_id,
+            sampling_model,
+            sampling_cache_hit,
+            sampling_usage
+                .as_ref()
+                .map(|u| u.total_tokens as u64)
+                .unwrap_or(0),
+            sampling_started.elapsed().as_millis() as u64,
         );
 
         // Create outgoing message with full metadata
@@ -1302,6 +1343,98 @@ impl Agent {
             };
             if let Err(e) = store.insert_pending(&params).await {
                 warn!("Failed to record online risk badcase: {}", e);
+            }
+        });
+    }
+
+    /// Post-turn production sampling: persist a sampled subset of completed
+    /// turns into the `turn_samples` store. Runs fire-and-forget, mirroring
+    /// [`Self::scan_turn_for_badcase`].
+    ///
+    /// Gated by the sample store being attached AND `sampling.enabled`. When
+    /// `sample_rate` is `> 0.0`, a cheap deterministic per-turn skip keeps
+    /// roughly that fraction. The verdict comes from the attached
+    /// [`RiskSignalChecker`] (`Pass` when no checker is wired, `Flag` when at
+    /// least one risk signal fires); the signal list rides along. Any insert
+    /// failure is `warn!`ed and never breaks the turn.
+    #[allow(clippy::too_many_arguments)]
+    fn sample_turn(
+        &self,
+        input: &str,
+        response: &str,
+        tool_call_count: usize,
+        turn_id: &str,
+        conversation_id: &str,
+        model: String,
+        cache_hit: bool,
+        total_tokens: u64,
+        latency_ms: u64,
+    ) {
+        let Some(store) = self.sample_store.as_ref() else {
+            return;
+        };
+        if !self.sampling.enabled {
+            return;
+        }
+        // No persisted turn to sample on (guard-rejection path).
+        if turn_id.is_empty() || response.is_empty() {
+            return;
+        }
+        // Optional deterministic skip: hash the turn id into [0, 1) and keep
+        // it when below the configured rate. `sample_rate <= 0.0` keeps all.
+        let rate = self.sampling.sample_rate;
+        if rate > 0.0 {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            std::hash::Hash::hash(turn_id, &mut hasher);
+            let frac = (std::hash::Hasher::finish(&hasher) % 10_000) as f64 / 10_000.0;
+            if frac >= rate {
+                return;
+            }
+        }
+
+        // Verdict + risk signals from the attached risk checker, if any.
+        let (verdict, risk_signals) = match self.risk_checker.as_ref() {
+            Some(checker) => {
+                let record = crate::eval::RiskTurnInput {
+                    input: input.to_string(),
+                    response: response.to_string(),
+                    tool_call_count,
+                };
+                let risks = checker.scan_turn(&record);
+                let verdict = if risks.is_empty() {
+                    crate::eval::SampleVerdict::Pass
+                } else {
+                    crate::eval::SampleVerdict::Flag
+                };
+                (verdict, risks)
+            }
+            None => (crate::eval::SampleVerdict::Pass, Vec::new()),
+        };
+
+        let store = Arc::clone(store);
+        let session_id = self.session_id.clone();
+        let agent_id = self.agent_id.clone();
+        let turn_id = turn_id.to_string();
+        let input = input.to_string();
+        let response = response.to_string();
+        let conversation_id = conversation_id.to_string();
+        tokio::spawn(async move {
+            let params = crate::eval::InsertSampleParams {
+                turn_id,
+                session_id,
+                agent_id,
+                conversation_id,
+                input,
+                response,
+                model,
+                cache_hit,
+                total_tokens,
+                latency_ms,
+                verdict,
+                risk_signals,
+            };
+            if let Err(e) = store.insert_sample(&params).await {
+                warn!("Failed to record online turn sample: {}", e);
             }
         });
     }
@@ -3235,5 +3368,163 @@ mod tests {
             row.risk_signals.iter().any(|s| s.contains("low retention")),
             "compression risk must be merged into the badcase row"
         );
+    }
+
+    // ── Production turn sampling (生产流量在线采样) integration tests ──
+
+    /// Poll the sample store until it holds at least `count` samples or the
+    /// timeout elapses (the insert runs in a fire-and-forget task).
+    async fn wait_for_samples(
+        store: &crate::eval::TurnSampleStore,
+        count: usize,
+    ) -> Vec<crate::eval::TurnSample> {
+        use std::time::Duration;
+        for _ in 0..100 {
+            let rows = store.list_recent(100).await.unwrap();
+            if rows.len() >= count {
+                return rows;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("timed out waiting for {count} turn samples");
+    }
+
+    /// 生产流量在线采样：`enabled` 且已接 store 时，turn 完成后落一行采样，
+    /// 字段按快照写入（model / cache_hit / total_tokens / latency_ms）。
+    #[tokio::test]
+    async fn test_enabled_sampling_persists_turn_sample() {
+        let provider = Arc::new(JudgeRecordingProvider {
+            judge_calls: AtomicUsize::new(0),
+        });
+        let store = Arc::new(
+            crate::eval::TurnSampleStore::new("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        let agent = super::Agent::new(
+            super::AgentConfig::default(),
+            provider.clone(),
+            Arc::new(crate::tools::ToolRegistry::new()),
+        )
+        .with_sample_store(Some(store.clone()))
+        .with_sampling(crate::gateway::config::OnlineSamplingConfig {
+            enabled: true,
+            sample_rate: 0.0,
+        });
+
+        agent.sample_turn(
+            "hello there",
+            "A perfectly safe reply",
+            0,
+            "turn-sampled",
+            "conv-sampled",
+            "test-model".to_string(),
+            false,
+            99,
+            42,
+        );
+
+        let rows = wait_for_samples(&store, 1).await;
+        let row = rows
+            .iter()
+            .find(|r| r.turn_id == "turn-sampled")
+            .expect("sampled turn row");
+        assert_eq!(row.agent_id, "", "default config has no agent id");
+        assert_eq!(row.conversation_id, "conv-sampled");
+        assert_eq!(row.input, "hello there");
+        assert_eq!(row.response, "A perfectly safe reply");
+        assert_eq!(row.model, "test-model");
+        assert!(!row.cache_hit);
+        assert_eq!(row.total_tokens, 99);
+        assert_eq!(row.latency_ms, 42);
+        assert_eq!(row.verdict, crate::eval::SampleVerdict::Pass);
+        assert!(row.risk_signals.is_empty(), "safe reply must be Pass");
+    }
+
+    /// 采样默认 disabled：即使已接 store，也不落任何行。
+    #[tokio::test]
+    async fn test_disabled_sampling_skips_turn_sample() {
+        let provider = Arc::new(JudgeRecordingProvider {
+            judge_calls: AtomicUsize::new(0),
+        });
+        let store = Arc::new(
+            crate::eval::TurnSampleStore::new("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        let agent = super::Agent::new(
+            super::AgentConfig::default(),
+            provider.clone(),
+            Arc::new(crate::tools::ToolRegistry::new()),
+        )
+        .with_sample_store(Some(store.clone()));
+        // `sampling` defaults to disabled.
+
+        agent.sample_turn(
+            "hello there",
+            "A perfectly safe reply",
+            0,
+            "turn-skip",
+            "conv-skip",
+            "test-model".to_string(),
+            false,
+            10,
+            5,
+        );
+
+        // Give any (incorrect) fire-and-forget insert a chance to land.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(store.list_recent(10).await.unwrap().len(), 0);
+    }
+
+    /// 命中风险信号（§八 checker）的 turn 落为 Flag verdict，并携带风险信号列表。
+    #[tokio::test]
+    async fn test_flagged_turn_records_risk_signals() {
+        let provider = Arc::new(JudgeRecordingProvider {
+            judge_calls: AtomicUsize::new(0),
+        });
+        let store = Arc::new(
+            crate::eval::TurnSampleStore::new("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        let pending = Arc::new(
+            crate::eval::PendingBadcaseStore::new("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        let agent = super::Agent::new(
+            super::AgentConfig::default(),
+            provider.clone(),
+            Arc::new(crate::tools::ToolRegistry::new()),
+        )
+        .with_badcase_pipeline(crate::eval::RiskSignalChecker::default(), pending)
+        .with_sample_store(Some(store.clone()))
+        .with_sampling(crate::gateway::config::OnlineSamplingConfig {
+            enabled: true,
+            sample_rate: 0.0,
+        });
+
+        // Default checker flags "password" in the response.
+        agent.sample_turn(
+            "reset my password",
+            "The password is sent to your registered email",
+            0,
+            "turn-flag",
+            "conv-flag",
+            "test-model".to_string(),
+            true,
+            77,
+            12,
+        );
+
+        let rows = wait_for_samples(&store, 1).await;
+        let row = rows
+            .iter()
+            .find(|r| r.turn_id == "turn-flag")
+            .expect("flagged turn row");
+        assert_eq!(row.verdict, crate::eval::SampleVerdict::Flag);
+        assert!(!row.risk_signals.is_empty(), "flagged turn must carry risk signals");
+        assert!(row.cache_hit, "cache_hit must round-trip");
     }
 }

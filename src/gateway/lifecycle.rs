@@ -1171,7 +1171,7 @@ async fn spawn_agent_in_lifecycle(
 /// criteria did not pass. Gate `shutdown_on_failure` determines whether this
 /// error is fatal (blocking startup) or just a warning.
 async fn run_quality_gate_check(
-    _state: Arc<GatewayState>,
+    state: Arc<GatewayState>,
     config: &GatewayConfig,
 ) -> crate::Result<()> {
     info!("═══ Quality Gate: {} ═══", config.quality_gate.name);
@@ -1255,6 +1255,10 @@ async fn run_quality_gate_check(
     let gate = gate.with_badcase_governance(crate::eval::recycle::BadcaseGovernance::from_config(
         &config.eval.badcase_governance,
     ));
+    // Attach the runtime stores backing the compression gate and the shadow
+    // gate's online replay (§十二 ⑧ / §09). `None` stores leave them inert.
+    let gate = gate
+        .with_stores(state.infra.pending_badcase_store.clone(), state.infra.sample_store.clone());
 
     // 6. Run the gate (returns result + release decision)
     let (result, decision) = gate.check().await;

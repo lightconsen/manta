@@ -11,7 +11,7 @@ use tracing::{info, warn};
 use crate::adapters::{FileStorage, InMemoryStorage, SqliteStorage, Storage};
 use crate::agent::session_store::SessionStore;
 use crate::error::SyscityError;
-use crate::eval::{DecisionTraceStore, PendingBadcaseStore};
+use crate::eval::{DecisionTraceStore, PendingBadcaseStore, TurnSampleStore};
 use crate::gateway::FeedbackStore;
 use crate::gateway::GatewayConfig;
 #[cfg(feature = "sqlite-vec")]
@@ -29,6 +29,7 @@ pub struct StorageInit {
     pub feedback_store: Option<Arc<FeedbackStore>>,
     pub pending_badcase_store: Option<Arc<PendingBadcaseStore>>,
     pub decision_trace_store: Option<Arc<DecisionTraceStore>>,
+    pub sample_store: Option<Arc<TurnSampleStore>>,
     pub audit_log: Arc<PersistentAuditLog>,
     pub audit_log_dyn: Arc<dyn AuditLogger>,
 }
@@ -157,6 +158,16 @@ pub async fn init_storage(config: &GatewayConfig) -> crate::Result<StorageInit> 
         },
         None => None,
     };
+    let sample_store: Option<Arc<TurnSampleStore>> = match sqlite_pool.as_ref() {
+        Some(pool) => match TurnSampleStore::from_pool(pool.clone()).await {
+            Ok(store) => Some(Arc::new(store)),
+            Err(e) => {
+                warn!("Failed to initialize TurnSampleStore: {}", e);
+                None
+            }
+        },
+        None => None,
+    };
 
     Ok(StorageInit {
         storage,
@@ -166,6 +177,7 @@ pub async fn init_storage(config: &GatewayConfig) -> crate::Result<StorageInit> 
         feedback_store,
         pending_badcase_store,
         decision_trace_store,
+        sample_store,
         audit_log,
         audit_log_dyn,
     })

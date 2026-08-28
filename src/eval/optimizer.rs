@@ -24,7 +24,9 @@ use crate::eval::apply_patch::{
     applied_evidence, apply_optimizer_patch, conflict_evidence, OptimizerPatch, PatchOutcome,
 };
 use crate::eval::decision_trace::{RecordTraceParams, TraceKind, TraceStatus};
-use crate::eval::guardrail::{CircuitBreaker, OnlineSignalShadowEvaluator, ShadowEvaluator};
+use crate::eval::guardrail::{
+    CircuitBreaker, OnlineSignalShadowEvaluator, RealTurnCandidateVerifier, ShadowEvaluator,
+};
 use crate::eval::verdict::{
     verdict_allows_apply, verdict_reason, CandidateVerifier, HarnessCandidateVerifier,
     NoopVerifier, VerdictSubject,
@@ -33,6 +35,10 @@ use crate::eval::VersionComparison;
 use crate::gateway::apply_config::read_config_scalar;
 use crate::gateway::config::ScalarOptimizerConfig;
 use crate::gateway::{config_revision, GatewayConfig, GatewayState};
+
+/// Number of most-recent sampled production turns the online-shadow verifier
+/// replays (§十二 ⑧ · N=1).
+const SHADOW_RECENT_LIMIT: u32 = 10;
 
 /// A proposed scalar change for the default agent.
 #[derive(Debug, Clone)]
@@ -290,13 +296,34 @@ impl ScalarOptimizer {
             verdict_trials,
             verdict_iterations,
             verdict_confidence,
+            verdict_replay_shadow,
         ) = {
             let cfg = state.config.read().await;
             let v = &cfg.eval.optimizer.verdict;
-            (v.enabled, v.suite.clone(), v.trials, v.bootstrap_iterations, v.confidence_level)
+            (
+                v.enabled,
+                v.suite.clone(),
+                v.trials,
+                v.bootstrap_iterations,
+                v.confidence_level,
+                v.replay_shadow,
+            )
         };
         let verifier: Option<Arc<dyn CandidateVerifier>> = match &params.verifier {
             Some(v) => Some(v.clone()),
+            // §十二 ⑧ N=1 online shadow: replay sampled production turns through
+            // the candidate vs baseline (priority over the suite harness). A
+            // missing sample store degrades to no evidence (conservative).
+            None if verdict_enabled && verdict_replay_shadow => {
+                Some(Arc::new(RealTurnCandidateVerifier::new(
+                    state.clone(),
+                    state.infra.sample_store.clone(),
+                    SHADOW_RECENT_LIMIT,
+                    verdict_trials,
+                    verdict_iterations,
+                    verdict_confidence,
+                )))
+            }
             None if verdict_enabled => match verdict_suite {
                 Some(suite_id) => Some(Arc::new(HarnessCandidateVerifier::new(
                     state.clone(),

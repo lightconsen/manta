@@ -269,6 +269,7 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         | "eval.trace.list"
         | "eval.dashboard"
         | "eval.optimizer.status"
+        | "feedback.ops"
         | "connectors.list"
         | "connectors.auth_status"
         | "connectors.updates" => Some(SCOPE_READ),

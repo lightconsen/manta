@@ -45,13 +45,16 @@ pub(crate) mod standalone;
 
 pub(crate) mod apply_patch;
 pub(crate) mod calibration;
+pub(crate) mod compression_gate;
 pub(crate) mod decision_trace;
+pub(crate) mod feedback_ops;
 pub(crate) mod guardrail;
 pub(crate) mod human_review;
 pub(crate) mod multi_judge;
 pub(crate) mod optimizer;
 pub(crate) mod pending_badcase;
 pub(crate) mod proposer;
+pub(crate) mod sample_store;
 pub(crate) mod verdict;
 
 pub use action::{
@@ -110,6 +113,7 @@ pub use recycle::{
     extract_rca_results_from_badcases, load_badcase_suite, load_governed_badcase_suite,
     BadcaseCluster, BadcaseCollector, BadcaseFixStatus, BadcaseGovernance, BadcaseRecord,
 };
+pub use sample_store::{InsertSampleParams, SampleVerdict, TurnSample, TurnSampleStore};
 pub use scorer::{
     LayeredScorer, RiskSignalChecker, RiskTurnInput, ScorerConfig, ScoringOutput, ScreeningLayer,
     Verdict,

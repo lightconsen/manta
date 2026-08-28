@@ -171,6 +171,8 @@ pub struct InfraState {
     pub pending_badcase_store: Option<Arc<crate::eval::PendingBadcaseStore>>,
     /// Audit log of every harness tuning decision (apply/reject/rollback).
     pub decision_trace_store: Option<Arc<crate::eval::DecisionTraceStore>>,
+    /// Production turn sampling store (online turn samples for scoring etc.).
+    pub sample_store: Option<Arc<crate::eval::TurnSampleStore>>,
     /// Shared runtime state for the scalar optimizer (run status, pause flag).
     pub optimizer: Arc<crate::eval::OptimizerRuntime>,
     /// Browser bridge server (started when browser.bridge_enabled is true).

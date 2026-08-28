@@ -215,6 +215,7 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
             feedback_store: None,
             pending_badcase_store: None,
             decision_trace_store: None,
+            sample_store: None,
             optimizer: Arc::new(crate::eval::OptimizerRuntime::default()),
             #[cfg(feature = "browser")]
             browser_bridge: tokio::sync::RwLock::new(None),
@@ -268,6 +269,11 @@ pub async fn make_test_state_with_store(config: GatewayConfig) -> GatewayState {
         crate::eval::DecisionTraceStore::from_pool(pool.clone())
             .await
             .expect("in-memory decision trace store"),
+    ));
+    state.infra.sample_store = Some(Arc::new(
+        crate::eval::TurnSampleStore::from_pool(pool.clone())
+            .await
+            .expect("in-memory turn sample store"),
     ));
     state
 }

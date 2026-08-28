@@ -151,6 +151,39 @@ export interface EvalDashboardPayload {
   };
 }
 
+/** Aggregate returned by the read-only `feedback.ops` method. */
+export interface FeedbackOpsPayload {
+  since_ms: number;
+  total_votes: number;
+  up: number;
+  down: number;
+  by_agent: {
+    agent_id: string;
+    up: number;
+    down: number;
+    total: number;
+  }[];
+  pending_by_source: {
+    source: string;
+    count: number;
+  }[];
+  by_day: {
+    day: string;
+    up: number;
+    down: number;
+    total: number;
+  }[];
+  down_votes: {
+    turn_id: string;
+    input: string;
+    risk_signals: string[];
+  }[];
+  risk_clusters: {
+    label: string;
+    count: number;
+  }[];
+}
+
 function makeTextPart(text: string): TextMessagePart {
   return { type: "text", text };
 }
@@ -1364,6 +1397,48 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
         last_report: null,
         last_error: null,
       },
+    };
+  }
+
+  /* ── Feedback ops (rule-based, no-LLM aggregation) ── */
+
+  /** Fetch the read-only `feedback.ops` aggregation report. Degrades to an
+   *  all-zero/empty report when the method errors or the stores are missing. */
+  async getFeedbackOps(): Promise<FeedbackOpsPayload> {
+    try {
+      const res = (await this.sendRequestAndWait(
+        "feedback.ops",
+        {},
+        8000
+      )) as FeedbackOpsPayload | undefined;
+      if (!res) return this.emptyFeedbackOps();
+      return {
+        since_ms: res.since_ms ?? 0,
+        total_votes: res.total_votes ?? 0,
+        up: res.up ?? 0,
+        down: res.down ?? 0,
+        by_agent: res.by_agent ?? [],
+        pending_by_source: res.pending_by_source ?? [],
+        by_day: res.by_day ?? [],
+        down_votes: res.down_votes ?? [],
+        risk_clusters: res.risk_clusters ?? [],
+      };
+    } catch {
+      return this.emptyFeedbackOps();
+    }
+  }
+
+  private emptyFeedbackOps(): FeedbackOpsPayload {
+    return {
+      since_ms: 0,
+      total_votes: 0,
+      up: 0,
+      down: 0,
+      by_agent: [],
+      pending_by_source: [],
+      by_day: [],
+      down_votes: [],
+      risk_clusters: [],
     };
   }
 

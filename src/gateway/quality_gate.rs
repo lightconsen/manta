@@ -11,14 +11,21 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
+use crate::eval::compression_gate::{compression_criterion, CompressionGateConfig};
 use crate::eval::harness::{EvalHarness, EvalSummary};
 use crate::eval::loader::load_suite;
 use crate::eval::recycle::{load_governed_badcase_suite, BadcaseGovernance};
+use crate::eval::{PendingBadcaseStore, TurnSampleStore};
+use crate::gateway::shadow_replay::{replay_shadow, samples_to_replay_turns};
+
+/// Number of most-recent sampled production turns replayed by the shadow gate.
+const SHADOW_SAMPLE_LIMIT: u32 = 50;
 
 /// Load badcase regression suite for auto-inclusion in gate (§09).
 fn load_badcase_regression_suite(evals_dir: &std::path::Path) -> Option<crate::eval::EvalSuite> {
@@ -244,6 +251,10 @@ pub struct QualityGateConfig {
     pub shutdown_on_failure: bool,
     #[serde(default)]
     pub cron_schedule: Option<String>,
+    /// 压缩低保留率门禁（§十二 ⑧）：窗口内 `online:risk` 低保留率 flag 超过阈值
+    /// 即判门禁失败。默认关（`None` = 不参与判定）。
+    #[serde(default)]
+    pub compression_gate: Option<CompressionGateConfig>,
 }
 
 fn default_min_pass_rate() -> f64 {
@@ -265,6 +276,14 @@ pub struct QualityGate {
     /// (expiry / dedup / downgrade, §十二 回归集治理). `None` falls back to the
     /// raw `load_badcase_suite` auto-include.
     pub badcase_governance: Option<BadcaseGovernance>,
+    /// Pending-badcase pool backing the compression low-retention criterion
+    /// (§十二 ⑧). `None` leaves that criterion inert.
+    pub pending_badcase_store: Option<Arc<PendingBadcaseStore>>,
+    /// Sampled production-turn store backing the shadow gate's online replay
+    /// (§09 · N=1). `None` falls back to an empty shadow report.
+    pub turn_sample_store: Option<Arc<TurnSampleStore>>,
+    /// Compression low-retention gate configuration (§十二 ⑧). Default off.
+    pub compression_gate: Option<CompressionGateConfig>,
 }
 
 impl QualityGate {
@@ -285,6 +304,9 @@ impl QualityGate {
             evals_dir,
             baseline_store: BaselineStore::load(),
             badcase_governance: None,
+            pending_badcase_store: None,
+            turn_sample_store: None,
+            compression_gate: None,
         }
     }
 
@@ -295,6 +317,30 @@ impl QualityGate {
     /// expiry / dedup / downgrade before the suite runs.
     pub fn with_badcase_governance(mut self, governance: BadcaseGovernance) -> Self {
         self.badcase_governance = Some(governance);
+        self
+    }
+
+    /// Attach the runtime stores backing the compression low-retention
+    /// criterion and the shadow gate's online replay (§十二 ⑧ / §09).
+    ///
+    /// Both are runtime objects (`state.infra.*`), injected after
+    /// [`Self::from_config`]; a `None` store leaves the corresponding gate
+    /// inert.
+    pub fn with_stores(
+        mut self,
+        pending_badcase_store: Option<Arc<PendingBadcaseStore>>,
+        turn_sample_store: Option<Arc<TurnSampleStore>>,
+    ) -> Self {
+        self.pending_badcase_store = pending_badcase_store;
+        self.turn_sample_store = turn_sample_store;
+        self
+    }
+
+    /// Attach the compression low-retention gate configuration (§十二 ⑧).
+    ///
+    /// Overrides whatever [`Self::from_config`] read from the config file.
+    pub fn with_compression_gate(mut self, cfg: CompressionGateConfig) -> Self {
+        self.compression_gate = Some(cfg);
         self
     }
 
@@ -341,6 +387,9 @@ impl QualityGate {
             evals_dir,
             baseline_store: BaselineStore::load(),
             badcase_governance: None,
+            pending_badcase_store: None,
+            turn_sample_store: None,
+            compression_gate: config.compression_gate.clone(),
         })
     }
 
@@ -430,6 +479,17 @@ impl QualityGate {
         for criterion in &self.criteria {
             let result = self.evaluate_criterion(criterion, &suite_results).await;
             criteria_results.push(result);
+        }
+
+        // ── Step 2b: Compression low-retention gate (§十二 ⑧) ─────────
+        // A burst of `online:risk` low-retention flags inside the window fails
+        // the gate. Inert unless both a pending store and a config are wired.
+        if let (Some(store), Some(cfg)) = (&self.pending_badcase_store, &self.compression_gate) {
+            let now_ms = chrono::Utc::now().timestamp_millis();
+            if let Some(result) = compression_criterion(store, cfg, now_ms).await {
+                info!("Gate criterion '{}': passed={}", result.criterion, result.passed);
+                criteria_results.push(result);
+            }
         }
 
         let all_pass = criteria_results.iter().all(|r| r.passed);
@@ -648,9 +708,23 @@ impl QualityGate {
         match self.level {
             GateLevel::OfflineDiff => self.check().await.0,
             GateLevel::ShadowTraffic => {
-                // Shadow mode: requires external prod turn data
-                // Returns a GateResult-like structure; no criteria evaluated
-                let report = self.run_shadow(&[]).await;
+                // Shadow mode: replay the most recent sampled production turns
+                // through the harness (§09 · N=1 online shadow). Falls back to
+                // an empty shadow report when no sample store is wired or no
+                // samples exist yet.
+                let report = match &self.turn_sample_store {
+                    Some(store) => match store.list_recent(SHADOW_SAMPLE_LIMIT).await {
+                        Ok(samples) => {
+                            let turns = samples_to_replay_turns(&samples);
+                            replay_shadow(&self.harness, &turns, 1).await
+                        }
+                        Err(e) => {
+                            warn!("Shadow gate: failed to read turn samples: {}", e);
+                            self.run_shadow(&[]).await
+                        }
+                    },
+                    None => self.run_shadow(&[]).await,
+                };
                 let passed = report.pass_rate >= 0.8;
                 GateResult {
                     gate_name: self.name.clone(),

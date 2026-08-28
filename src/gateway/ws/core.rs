@@ -463,6 +463,7 @@ async fn dispatch_method(
         "chat.history" => chat::handle_chat_history(req, conn, state).await,
         "chat.abort" => chat::handle_chat_abort(req, conn, state).await,
         "feedback.vote" => feedback::handle_feedback_vote(req, state).await,
+        "feedback.ops" => feedback::handle_feedback_ops(req, state).await,
         "ask.respond" => ask::handle_ask_respond(req, state).await,
         "sessions.list" => sessions::handle_sessions_list(req, state).await,
         "sessions.create" => sessions::handle_sessions_create(req, conn, state).await,

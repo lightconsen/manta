@@ -108,6 +108,45 @@ pub(super) async fn handle_feedback_vote(req: &WsRequest, state: &Arc<GatewaySta
     )
 }
 
+/// `feedback.ops` — read-only, rule-based aggregation report over recent votes
+/// and pending badcases (§反馈运营, no LLM).
+///
+/// The client may pass an optional `since_ms` window start; it defaults to
+/// 30 days ago.
+pub(super) async fn handle_feedback_ops(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct OpsParams {
+        since_ms: Option<i64>,
+    }
+    let params: OpsParams = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+    let since_ms = params
+        .since_ms
+        .unwrap_or_else(|| chrono::Utc::now().timestamp_millis() - 30 * 24 * 3600 * 1000);
+
+    let (Some(feedback), Some(pending)) =
+        (state.infra.feedback_store.as_ref(), state.infra.pending_badcase_store.as_ref())
+    else {
+        return WsResponse::err(
+            &req.id,
+            "FEEDBACK_UNAVAILABLE",
+            "feedback or pending-badcase store is not initialized (SQLite storage required)",
+        );
+    };
+
+    let report =
+        match crate::eval::feedback_ops::build_ops_report(feedback, pending, since_ms).await {
+            Ok(r) => r,
+            Err(e) => {
+                return error_internal(&req.id, format!("failed to build feedback ops report: {e}"))
+            }
+        };
+
+    WsResponse::ok(&req.id, report)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,6 +280,93 @@ mod tests {
             &state,
         )
         .await;
+        assert!(!res.ok);
+        assert_eq!(res.error.as_ref().unwrap().code, "FEEDBACK_UNAVAILABLE");
+    }
+
+    #[tokio::test]
+    async fn feedback_ops_aggregates_with_store() {
+        let state = Arc::new(make_test_state_with_store(GatewayConfig::default()).await);
+        // A 👎 vote with input+response also seeds a human:dislike pending
+        // badcase, which the report matches to enrich the down-vote summary.
+        let res = handle_feedback_vote(
+            &make_req(
+                "v1",
+                serde_json::json!({
+                    "turn_id": "t1",
+                    "vote": "down",
+                    "input": "reset my password",
+                    "response": "Your password is 12345",
+                }),
+            ),
+            &state,
+        )
+        .await;
+        assert!(res.ok, "unexpected error: {:?}", res.error);
+        let res2 = handle_feedback_vote(
+            &make_req(
+                "v2",
+                serde_json::json!({ "turn_id": "t2", "vote": "up", "comment": "nice" }),
+            ),
+            &state,
+        )
+        .await;
+        assert!(res2.ok);
+
+        let ops = handle_feedback_ops(&make_req("o1", serde_json::json!({})), &state).await;
+        assert!(ops.ok, "unexpected error: {:?}", ops.error);
+        let p = ops.payload.as_ref().unwrap();
+
+        assert_eq!(p["total_votes"], 2);
+        assert_eq!(p["up"], 1);
+        assert_eq!(p["down"], 1);
+        assert_eq!(p["by_day"].as_array().unwrap().len(), 14);
+        // Both votes are today's bucket.
+        assert_eq!(p["by_day"][13]["up"], 1);
+        assert_eq!(p["by_day"][13]["down"], 1);
+
+        let down_votes = p["down_votes"].as_array().unwrap();
+        assert_eq!(down_votes.len(), 1);
+        assert_eq!(down_votes[0]["turn_id"], "t1");
+        assert_eq!(down_votes[0]["input"], "reset my password");
+
+        // The response contains a high-risk pattern, so a risk cluster fires.
+        let clusters = p["risk_clusters"].as_array().unwrap();
+        assert!(!clusters.is_empty(), "expected a risk cluster for a flagged response");
+        assert_eq!(clusters[0]["count"], 1);
+        assert!(
+            clusters[0]["label"].as_str().unwrap().contains("password"),
+            "unexpected cluster label: {:?}",
+            clusters[0]["label"]
+        );
+    }
+
+    #[tokio::test]
+    async fn feedback_ops_respects_since_ms() {
+        let state = Arc::new(make_test_state_with_store(GatewayConfig::default()).await);
+        let res = handle_feedback_vote(
+            &make_req("v1", serde_json::json!({ "turn_id": "t1", "vote": "up" })),
+            &state,
+        )
+        .await;
+        assert!(res.ok);
+
+        // A window far in the future excludes the just-recorded vote.
+        let future = chrono::Utc::now().timestamp_millis() + 10 * 86_400_000;
+        let ops =
+            handle_feedback_ops(&make_req("o1", serde_json::json!({ "since_ms": future })), &state)
+                .await;
+        assert!(ops.ok, "unexpected error: {:?}", ops.error);
+        let p = ops.payload.as_ref().unwrap();
+        assert_eq!(p["total_votes"], 0);
+    }
+
+    #[tokio::test]
+    async fn feedback_ops_without_store_errors() {
+        // make_test_state leaves stores as None.
+        let state =
+            Arc::new(crate::gateway::state_tests::make_test_state(GatewayConfig::default()).await);
+        let res = handle_feedback_ops(&make_req("o1", serde_json::json!({})), &state).await;
         assert!(!res.ok);
         assert_eq!(res.error.as_ref().unwrap().code, "FEEDBACK_UNAVAILABLE");
     }

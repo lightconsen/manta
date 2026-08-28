@@ -32,6 +32,7 @@ pub mod init;
 pub mod middleware;
 pub mod protocol;
 pub mod quality_gate;
+pub mod shadow_replay;
 pub use quality_gate::{
     ABReport, FeedbackCollector, PhaseStore, ProdTurn, ReleaseDecision, ReleaseSignals,
     ShadowReport,
@@ -313,6 +314,7 @@ impl Gateway {
         let feedback_store = storage_init.feedback_store;
         let pending_badcase_store = storage_init.pending_badcase_store;
         let decision_trace_store = storage_init.decision_trace_store;
+        let sample_store = storage_init.sample_store;
         let audit_log = storage_init.audit_log;
         let audit_log_dyn = storage_init.audit_log_dyn;
 
@@ -520,6 +522,7 @@ impl Gateway {
                 feedback_store: feedback_store.clone(),
                 pending_badcase_store: pending_badcase_store.clone(),
                 decision_trace_store: decision_trace_store.clone(),
+                sample_store: sample_store.clone(),
                 optimizer: Arc::new(crate::eval::OptimizerRuntime::default()),
                 #[cfg(feature = "browser")]
                 browser_bridge: tokio::sync::RwLock::new(None),

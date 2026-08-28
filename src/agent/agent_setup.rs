@@ -72,6 +72,8 @@ impl Agent {
             pending_badcase_store: None,
             online_monitoring: crate::gateway::config::OnlineMonitoringConfig::default(),
             compression_quality: crate::gateway::config::CompressionQualityConfig::default(),
+            sample_store: None,
+            sampling: crate::gateway::config::OnlineSamplingConfig::default(),
         }
     }
 
@@ -490,6 +492,28 @@ impl Agent {
         cfg: crate::gateway::config::CompressionQualityConfig,
     ) -> Self {
         self.compression_quality = cfg;
+        self
+    }
+
+    /// Attach the production turn sampling store.
+    ///
+    /// When attached (and [`Agent::with_sampling`] enables it), a sampled
+    /// subset of completed turns is persisted to `turn_samples` for the
+    /// scoring / compression-gate / feedback-aggregation / shadow-replay
+    /// pipelines. Accepts `None` so the gateway can wire the optional infra
+    /// store unconditionally.
+    pub fn with_sample_store(mut self, store: Option<Arc<crate::eval::TurnSampleStore>>) -> Self {
+        self.sample_store = store;
+        self
+    }
+
+    /// Set the 生产流量在线采样（§…）configuration snapshot.
+    ///
+    /// When `enabled` (and a sample store is attached), every completed turn
+    /// is persisted to the sample store — optionally gated by `sample_rate`.
+    /// Disabled by default — existing deployments see no behavioral change.
+    pub fn with_sampling(mut self, cfg: crate::gateway::config::OnlineSamplingConfig) -> Self {
+        self.sampling = cfg;
         self
     }
 

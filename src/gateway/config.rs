@@ -145,6 +145,10 @@ pub struct EvalConfig {
     /// 结构提议器（工具描述 / prompt / SOP 改版候选，§十二 ⑤）。
     #[serde(default)]
     pub proposer: StructuralProposerConfig,
+    /// 生产流量在线采样打分（§…）：持久化线上 turn 样本供后续打分/压缩门禁/
+    /// feedback 聚合/影子回放流水线读取。
+    #[serde(default)]
+    pub sampling: OnlineSamplingConfig,
 }
 
 /// Configuration for the background scalar optimizer.
@@ -297,6 +301,11 @@ pub struct OptimizerVerdictConfig {
     /// 置信水平（默认 0.95）。
     #[serde(default = "default_verdict_confidence")]
     pub confidence_level: f64,
+    /// 线上回放 shadow 判定（§十二 ⑧ · N=1）：开启后候选经采样真实 turn 回放 +
+    /// bootstrap 判定，仅 `Improved` 出 patch（优先于 `suite` harness 判定）。
+    /// 默认关。
+    #[serde(default)]
+    pub replay_shadow: bool,
 }
 
 impl Default for OptimizerVerdictConfig {
@@ -307,6 +316,7 @@ impl Default for OptimizerVerdictConfig {
             trials: default_verdict_trials(),
             bootstrap_iterations: default_verdict_iterations(),
             confidence_level: default_verdict_confidence(),
+            replay_shadow: false,
         }
     }
 }
@@ -447,6 +457,33 @@ impl Default for CompressionQualityConfig {
 
 fn default_compression_min_retention() -> f64 {
     0.5
+}
+
+/// 生产流量在线采样（§…）。
+///
+/// Persists a sampled subset of completed production turns to the
+/// `turn_samples` store for the scoring / compression-gate / feedback
+/// aggregation / shadow-replay pipelines. New fields added here must default
+/// to disabled so existing configs never start writing samples unexpectedly.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OnlineSamplingConfig {
+    /// Master switch. When false (default), no production turns are sampled.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Fraction of completed turns to keep in `[0.0, 1.0]`. `0.0` samples
+    /// every turn (when `enabled`); a value in `(0.0, 1.0)` keeps roughly that
+    /// fraction via a cheap deterministic per-turn skip.
+    #[serde(default)]
+    pub sample_rate: f64,
+}
+
+impl Default for OnlineSamplingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            sample_rate: 0.0,
+        }
+    }
 }
 
 fn default_optimizer_cadence() -> String {

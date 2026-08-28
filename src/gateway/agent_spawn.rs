@@ -115,6 +115,9 @@ pub(crate) async fn spawn_agent_inner(
     // Snapshot the 压缩质量门禁 (§三) config; when enabled, the collector flags
     // low-retention compressions as online risk signals.
     let compression_quality = state.config.read().await.eval.compression_quality.clone();
+    // Snapshot the 生产流量在线采样 (§…) config; when enabled, the agent
+    // persists a sampled subset of completed turns to the sample store.
+    let sampling = state.config.read().await.eval.sampling.clone();
 
     // Reserve the agent ID across the async setup to prevent concurrent
     // callers from both passing the duplicate check and creating ghost tasks.
@@ -186,6 +189,8 @@ pub(crate) async fn spawn_agent_inner(
             .with_cost_guard(cost_guard)
             .with_online_monitoring(online_monitoring.clone())
             .with_compression_quality(compression_quality.clone())
+            .with_sample_store(state.infra.sample_store.clone())
+            .with_sampling(sampling.clone())
             .with_transcript_store(Arc::clone(&state.infra.transcript_store))
             .with_artifact_store(Arc::clone(&state.infra.artifact_store))
             .with_disk_budget(Arc::clone(&state.infra.disk_budget))
@@ -214,6 +219,8 @@ pub(crate) async fn spawn_agent_inner(
             .with_cost_guard(cost_guard)
             .with_online_monitoring(online_monitoring.clone())
             .with_compression_quality(compression_quality.clone())
+            .with_sample_store(state.infra.sample_store.clone())
+            .with_sampling(sampling.clone())
             .with_skill_manager(Arc::clone(&state.tools.skills_manager))
             .with_transcript_store(Arc::clone(&state.infra.transcript_store))
             .with_artifact_store(Arc::clone(&state.infra.artifact_store))

@@ -281,6 +281,13 @@ pub struct Agent {
     /// 风险信号收集进 pending 池（additive，不改判）。`min_retention_ratio`
     /// 同时传给 `TurnMetricsCollector` 以量化 `quality_flag`。
     compression_quality: crate::gateway::config::CompressionQualityConfig,
+    /// Production turn sampling store. When attached (and `sampling.enabled`),
+    /// a subset of completed turns is persisted to `turn_samples` for the
+    /// scoring / compression-gate / feedback / shadow-replay pipelines.
+    sample_store: Option<Arc<crate::eval::TurnSampleStore>>,
+    /// 生产流量在线采样（§…）：`enabled` + `sample_rate` snapshot at spawn time.
+    /// Disabled by default so existing deployments never write samples.
+    sampling: crate::gateway::config::OnlineSamplingConfig,
 }
 
 /// RAII guard that reinserts a Thread into `thread_map` on drop.

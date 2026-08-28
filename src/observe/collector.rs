@@ -154,6 +154,17 @@ impl TurnMetricsCollector {
         &self.turn_id
     }
 
+    /// The model that produced this turn's response. Empty when no LLM round
+    /// began (e.g. an all-cache turn before `mark_cache_hit`).
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    /// Whether this turn was served from the response cache.
+    pub fn cache_hit(&self) -> bool {
+        self.cache_hit
+    }
+
     pub fn mark_cache_hit(&mut self) {
         self.cache_hit = true;
     }

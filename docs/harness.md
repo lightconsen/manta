@@ -98,8 +98,8 @@ Harness 不是一组零件，而是把模型与外部世界连接起来的**带�
 
 | 组件 | 现状 | 差距 |
 |------|------|------|
-| 反馈生产线 | 人工 👍/👎 管道已通：`feedback.vote` WS + `FeedbackStore` + Web 按钮，down 票转 `human:dislike` 待确认 badcase（§十二） | `feedback ops` / `feedback model`（把投票聚合成结构化诊断信号）仍为占位 |
-| 上下文压缩 | `compressor.rs` 已实现；`CompressionObservation.retention_ratio` + `quality_flag` 已量化；低保留率作为 `online:risk` 风险信号进待确认池（`scan_turn_for_badcase`，受 `CompressionQualityConfig.enabled` 控制，默认关） | 低保留率不直接让 eval 门禁失败（仅采集、进池，不判 fail） |
+| 反馈生产线 | 人工 👍/👎 管道已通（`feedback.vote` WS + `FeedbackStore` + Web 按钮，down 票转 `human:dislike` 待确认 badcase）；`feedback.ops` 规则聚合报告已实现（`build_ops_report`，无 LLM，§八） | `feedback model`（用 LLM 把投票聚合成结构化诊断信号）仍为占位 |
+| 上下文压缩 | `compressor.rs` 已实现；`CompressionObservation.retention_ratio` + `quality_flag` 已量化；低保留率作为 `online:risk` 风险信号进待确认池（默认关）；`CompressionGateConfig` 让窗口内低保留率 flag 超阈值判门禁失败（`quality_gate.rs` Step 2b，默认关） | 需显式开启（默认关，不影响既有部署） |
 
 ---
 
@@ -139,19 +139,21 @@ Trajectory（`src/agent/reflection/trajectory.rs`）从 Turns 构建评分轨迹
 | 上下文压缩 | `CompressionObservation`：触发时刻、压缩前后 token、策略、`retention_ratio` + `quality_flag` | `observe/record.rs`、`compressor.rs`（`compressions`） |
 | planner 内部 | `PlanSnapshot`：plan_id、目标、步骤 DAG（`PlanStepSnapshot`） | `observe/record.rs`、`observe/collector.rs` |
 | 通道层 | `ChannelObservation`：debounce / enrich / 路由到的 agent | `observe/record.rs`、`gateway/dispatch.rs`（`channel`） |
+| 生产流量 | `turn_samples`：post-turn 采样打分（turn/session/agent/conversation/input/response/model/cache/usage/latency/verdict/risk_signals），verdict 复用 `RiskSignalChecker` | `eval/sample_store.rs`、`agent_engine.rs`（`sample_turn`，受 `EvalConfig.sampling.enabled` 门控，**默认关**） |
 
 ### 未采样的环节（剩余诊断盲区）
 
-| 环节 | 盲区 |
-|------|------|
-| 生产流量 | ⚠️ 关键：`EvalTaskSource::Online` 仅是数据类型，**真实用户流量未被采样打分**；eval 只跑离线套件 |
+无 —— 生产流量现按需采样（`EvalConfig.sampling.enabled`，默认关）；在线影子判定、规则
+聚合、压缩门禁均以采样数据为源。
 
 **结论：离线评测覆盖"LLM 输出 + 工具行为"这两层（最重要的质量信号），内部决策层
-（路由 / 压缩 / 计划 / 通道）现均有一等轨迹，可回放、可归因。** 剩余盲区是生产流量未接入
-在线采样打分 —— 线上 badcase 归因仍依赖离线套件 + 人工投票 + post-turn 风险信号。
+（路由 / 压缩 / 计划 / 通道）均有一等轨迹，可回放、可归因；生产流量经 `turn_samples`
+按需采样打分，喂给同一判分器。** 剩余缺口收敛到 N=1 部署限制：实时 shadow / A-B 分流对比
+仍缺（需多用户才有统计功率，见 §十三）。
 
 **与调参的耦合：** 参数调优的前提是诊断准确（见 §十），而诊断依赖采样覆盖。路由 / 压缩 /
-计划现已有观测，调参依据可信；下一步优先级是"接线上流量采样"（把真实流量喂给同一判分器）。
+计划现已有观测，生产流量在开启 `eval.sampling` 后同样入池；调参依据可信，进一步可开启
+`optimizer.verdict.replay_shadow` 让候选经真实 turn 回放判定。
 
 ---
 
@@ -263,12 +265,16 @@ daemon 的后台批量任务触发（§十二 ⑤⑦ 的自动优化器 / 门禁
 - 压缩质量量化：`CompressionObservation.retention_ratio` + `quality_flag`（阈值 `min_retention_ratio`，§三），低保留率作为 `online:risk` 信号进待确认池
 - 人工复核抽样：`human_review.sampling_rate` 固定抽样，`score_and_review` 经 `route_case` 路由（§三）
 - 评测看板趋势：`eval.dashboard` 返回 14 日趋势（likes / dislikes / badcases / traces），Web Eval 页渲染柱条趋势表（§八）
+- 生产流量在线采样打分：`sample_turn` post-turn 钩子 + `turn_samples` 表（`TurnSampleStore`），verdict 复用 `RiskSignalChecker`（pass/flag），受 `eval.sampling` 门控（默认关，§五）
+- 压缩低保留率判门禁失败：`CompressionGateConfig` + `compression_criterion` 在发布门禁 `check()` Step 2b 生效，窗口内 `online:risk` 低保留率 flag 超阈值即 fail（`quality_gate.rs`，默认关）
+- 反馈操作聚合：`feedback.ops` WS（`handle_feedback_ops`，只读 SCOPE_READ）+ `build_ops_report` 规则聚合（投票统计 / by_agent / 14 日 / down 票摘要 / 风险聚类，无 LLM），Web transport 类型已加（无 UI）
+- 线上回放 shadow（N=1）：`shadow_replay.rs`（`samples_to_replay_turns` / `replay_shadow` / `compare_replays`）；发布门禁 ShadowTraffic 分支用真实采样 turn 回放；optimizer 候选经 `RealTurnCandidateVerifier` 回放判定（`optimizer.verdict.replay_shadow`，默认关）
 
 ### ❌ 缺失（把 harness 从"评测期好用"推向"生产期好用"）
 
 | 缺失项 | 说明 | 建议补法 |
 |--------|------|----------|
-| Shadow / A-B | 离线 shadow 已有（optimizer/proposer 应用前 `run_shadow` + `compare_versions` 判定，§十二）；无**线上** shadow 分流对比 | 灰度流量按版本分流，用同一判分器离线对比 |
+| 线上实时分流 / A-B | N=1 线上回放 shadow 已实现（采样真实 turn 回放候选 vs 基线：`shadow_replay.rs`，发布门禁 ShadowTraffic 分支 + optimizer `RealTurnCandidateVerifier`）；**实时流量按版本分流**（灰度 / canary）仍缺 | 需多用户 / 中心化聚合（§十三） |
 
 ---
 
