@@ -6,7 +6,7 @@
 #   ./build.sh           Build frontend + backend (full)
 #   ./build.sh --front   Build frontend only
 #   ./build.sh --cloud   Also enable the cloud Cargo feature (off by default)
-#   ./build.sh --front --cloud   Frontend only (cloud is ignored here)
+#   (--front --cloud together is rejected: cloud only applies to the full build)
 
 set -e  # Exit on error
 
@@ -29,6 +29,12 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+if [ "$FRONT_ONLY" = true ] && [ "$CLOUD" = true ]; then
+  echo "--cloud 只在完整构建时生效，不能与 --front 组合" >&2
+  echo "   （前端构建不涉及 Rust features；要去掉 --front 再试）" >&2
+  exit 1
+fi
 
 echo "🚀 Starting Syscity build..."
 
