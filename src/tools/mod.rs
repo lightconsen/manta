@@ -48,6 +48,8 @@ pub mod acp_tool;
 pub mod agents_list;
 pub mod browser;
 pub mod canvas;
+#[cfg(feature = "cloud")]
+pub mod cloud_kb;
 pub mod code_exec;
 pub mod command_detector;
 pub mod command_gate;

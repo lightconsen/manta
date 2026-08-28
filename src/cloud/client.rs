@@ -58,13 +58,54 @@ impl CloudClient {
             .await
     }
 
+    /// GET /api/v1/kb — the user's knowledge bases (with quota).
+    pub async fn list_kbs(&self) -> Result<Value> {
+        let url = format!("{}/api/v1/kb", self.api_base);
+        let resp = self.auth(self.http.get(&url)).send().await?;
+        self.parse_response(resp, "GET /api/v1/kb").await
+    }
+
+    /// POST /api/v1/kb/:id/query — semantic retrieval (§3.7).
+    pub async fn kb_query(&self, kb_id: &str, query: &str, top_k: usize) -> Result<Value> {
+        let path = format!("/api/v1/kb/{kb_id}/query");
+        self.post_json(&path, json!({ "query": query, "top_k": top_k.min(50) }))
+            .await
+    }
+
+    /// POST /api/v1/kb/:id/documents — upload a document (multipart).
+    pub async fn kb_upload(
+        &self,
+        kb_id: &str,
+        filename: &str,
+        content: &[u8],
+        mime: &str,
+    ) -> Result<Value> {
+        let url = format!("{}/api/v1/kb/{kb_id}/documents", self.api_base);
+        let part = reqwest::multipart::Part::bytes(content.to_vec())
+            .file_name(filename.to_string())
+            .mime_str(mime)
+            .map_err(|e| SyscityError::Internal(format!("invalid upload mime: {e}")))?;
+        let form = reqwest::multipart::Form::new().part("file", part);
+        let resp = self
+            .auth(self.http.post(&url))
+            .multipart(form)
+            .send()
+            .await?;
+        self.parse_response(resp, "POST /api/v1/kb/documents").await
+    }
+
     async fn post_json(&self, path: &str, body: Value) -> Result<Value> {
         let url = format!("{}{}", self.api_base, path);
         let resp = self.auth(self.http.post(&url)).json(&body).send().await?;
+        self.parse_response(resp, path).await
+    }
+
+    /// Read a response: error on non-success status, else parse JSON.
+    async fn parse_response(&self, resp: reqwest::Response, what: &str) -> Result<Value> {
         let status = resp.status();
         let text = resp.text().await?;
         if !status.is_success() {
-            return Err(SyscityError::Internal(format!("cloud {path} status {status}: {text}")));
+            return Err(SyscityError::Internal(format!("cloud {what} status {status}: {text}")));
         }
         Ok(serde_json::from_str(&text)?)
     }
