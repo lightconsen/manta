@@ -1023,6 +1023,11 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
         .route("/api/v1/skills/:name/uninstall", post(super::uninstall_skill_handler))
         .route("/api/v1/connectors", get(super::list_connectors_handler))
         .route("/api/v1/connectors/install", post(super::install_connector_handler))
+        .route("/api/v1/connectors/catalog", get(super::catalog_handler))
+        .route(
+            "/api/v1/connectors/catalog/install",
+            post(super::catalog_install_handler),
+        )
         .route("/api/v1/connectors/sync", post(super::sync_connectors_handler))
         .route("/api/v1/connectors/updates", get(super::connector_updates_handler))
         .route("/api/v1/connectors/:id/enable", post(super::enable_connector_handler))
