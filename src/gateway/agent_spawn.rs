@@ -944,6 +944,10 @@ pub(crate) struct ToolRegistryArgs {
     pub content_filter: Option<Arc<crate::security::content_filter::ContentFilter>>,
     /// Search provider configuration.
     pub search_config: crate::gateway::config::SearchConfig,
+    /// Syscity Cloud config (feature `cloud`) — used to register the cloud
+    /// search provider when enabled.
+    #[cfg(feature = "cloud")]
+    pub cloud_config: crate::cloud::config::CloudConfig,
     /// Native device bridge (mobile only; `None` on desktop).
     pub device_bridge: Option<Arc<dyn crate::device::DeviceBridge>>,
     /// Shared skill manager for the on-demand `skill` tool.
@@ -969,6 +973,8 @@ pub(crate) async fn create_default_tool_registry(
         audit_log,
         content_filter,
         search_config,
+        #[cfg(feature = "cloud")]
+        cloud_config,
         device_bridge,
         skills_manager,
         tool_hooks,
@@ -1012,8 +1018,22 @@ pub(crate) async fn create_default_tool_registry(
         SandboxConfig::default(),
     )));
 
-    // Register web tools
+    // Register web tools. When cloud is enabled, prepend the cloud search
+    // provider so logged-in sessions search via `/v1/search` (session token
+    // resolved dynamically) — no local search key needed.
+    #[cfg(feature = "cloud")]
+    let mut search_providers = search_config.to_providers();
+    #[cfg(not(feature = "cloud"))]
     let search_providers = search_config.to_providers();
+    #[cfg(feature = "cloud")]
+    if cloud_config.enabled {
+        search_providers.insert(
+            0,
+            crate::tools::web::SearchProvider::Cloud {
+                api_base: cloud_config.api_base.clone(),
+            },
+        );
+    }
     let shared_providers = std::sync::Arc::new(tokio::sync::RwLock::new(search_providers));
     registry = registry.with_web_search_providers(shared_providers.clone());
     registry.register(Box::new(WebSearchTool::new().with_providers_arc(shared_providers)));

@@ -188,6 +188,8 @@ fn missing_credential(provider: &SearchProvider) -> Option<&'static str> {
         | SearchProvider::Firecrawl { api_key }
         | SearchProvider::Serper { api_key }
         | SearchProvider::Bocha { api_key } => api_key.trim().is_empty().then_some("api_key"),
+        #[cfg(feature = "cloud")]
+        SearchProvider::Cloud { .. } => None,
         SearchProvider::Custom { url, .. } => url.trim().is_empty().then_some("url"),
     }
 }
@@ -526,6 +528,10 @@ pub enum SearchProvider {
     /// Bocha AI Web Search API (requires key)
     /// https://bochaai.com/
     Bocha { api_key: String },
+    /// Syscity Cloud web search (`/v1/search`, session-token auth; feature
+    /// `cloud`). Normalized results identical in shape to the local providers.
+    #[cfg(feature = "cloud")]
+    Cloud { api_base: String },
 }
 
 impl SearchProvider {
@@ -616,6 +622,8 @@ fn provider_name(provider: &SearchProvider) -> &'static str {
         SearchProvider::Firecrawl { .. } => "firecrawl",
         SearchProvider::Serper { .. } => "serper",
         SearchProvider::Bocha { .. } => "bocha",
+        #[cfg(feature = "cloud")]
+        SearchProvider::Cloud { .. } => "cloud",
         SearchProvider::Custom { .. } => "custom",
     }
 }
@@ -650,6 +658,10 @@ impl WebSearchTool {
                     self.search_serper(api_key, query, limit).await
                 }
                 SearchProvider::Bocha { api_key } => self.search_bocha(api_key, query, limit).await,
+                #[cfg(feature = "cloud")]
+                SearchProvider::Cloud { api_base } => {
+                    self.search_cloud(api_base, query, limit).await
+                }
                 SearchProvider::Custom {
                     url,
                     api_key,
@@ -1209,6 +1221,50 @@ impl WebSearchTool {
         }
 
         Ok(results)
+    }
+
+    /// Search via Syscity Cloud `/v1/search` (feature `cloud`). Requires a
+    /// stored cloud session token; results are normalized the same shape as
+    /// the local providers (title/url/snippet).
+    #[cfg(feature = "cloud")]
+    async fn search_cloud(
+        &self,
+        api_base: &str,
+        query: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<SearchResult>> {
+        let token = crate::cloud::session::get_token().await.ok_or_else(|| {
+            crate::error::SyscityError::Internal(
+                "not signed in to Syscity Cloud — web search needs a cloud session".to_string(),
+            )
+        })?;
+        let cfg = crate::cloud::config::CloudConfig {
+            enabled: true,
+            api_base: api_base.to_string(),
+            redirect_base: String::new(),
+        };
+        let resp = crate::cloud::client::CloudClient::new(&cfg, token)
+            .search(query, limit as u32)
+            .await?;
+        let results = resp
+            .get("results")
+            .and_then(|r| r.as_array())
+            .cloned()
+            .unwrap_or_default();
+        Ok(results
+            .into_iter()
+            .filter_map(|r| {
+                Some(SearchResult {
+                    title: r.get("title")?.as_str()?.to_string(),
+                    url: r.get("url")?.as_str()?.to_string(),
+                    snippet: r
+                        .get("snippet")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                })
+            })
+            .collect())
     }
 
     /// Search using custom provider
