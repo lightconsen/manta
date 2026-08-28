@@ -3,15 +3,32 @@
 # Builds web terminal, cleans Rust artifacts, and builds release binary
 #
 # Usage:
-#   ./build.sh        Build frontend + backend (full)
-#   ./build.sh --front  Build frontend only
+#   ./build.sh           Build frontend + backend (full)
+#   ./build.sh --front   Build frontend only
+#   ./build.sh --cloud   Also enable the cloud Cargo feature (off by default)
+#   ./build.sh --front --cloud   Frontend only (cloud is ignored here)
 
 set -e  # Exit on error
 
 FRONT_ONLY=false
-if [ "$1" = "--front" ]; then
-  FRONT_ONLY=true
-fi
+CLOUD=false
+for arg in "$@"; do
+  case "$arg" in
+    --front) FRONT_ONLY=true ;;
+    --cloud) CLOUD=true ;;
+    -h|--help)
+      echo "Usage:"
+      echo "  ./build.sh             Build frontend + backend (full)"
+      echo "  ./build.sh --front     Build frontend only"
+      echo "  ./build.sh --cloud     Include the cloud Cargo feature (off by default)"
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $arg" >&2
+      exit 1
+      ;;
+  esac
+done
 
 echo "🚀 Starting Syscity build..."
 
@@ -39,7 +56,12 @@ cargo clean
 
 # Build release binary (frontend served from dist/ at runtime)
 echo "🔨 Building release binary..."
-cargo build --release
+CARGO_ARGS=(build --release)
+if [ "$CLOUD" = true ]; then
+  echo "   (with cloud feature)"
+  CARGO_ARGS+=(--features cloud)
+fi
+cargo "${CARGO_ARGS[@]}"
 
 echo "✅ Build complete!"
 echo "📍 Binary location: ./target/release/syscity"
