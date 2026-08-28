@@ -398,12 +398,17 @@ mod tests {
                 "runtime": { "type": "node", "version": ">=16" },
                 "init": { "darwin": "echo installed", "linux": "echo installed",
                           "win32": "echo installed" },
-                "version_check": { "command": {"darwin": "echo v1.2.3"},
+                "version_check": { "command": {"darwin": "echo v1.2.3",
+                                               "linux": "echo v1.2.3",
+                                               "win32": "echo v1.2.3"},
                                    "min_version": ">=1.0.0" },
                 "auth": {
-                    "login":  { "darwin": "echo logging-in" },
-                    "status": { "darwin": "echo logged-in" },
-                    "logout": { "darwin": "echo logged-out" }
+                    "login":  { "darwin": "echo logging-in", "linux": "echo logging-in",
+                                "win32": "echo logging-in" },
+                    "status": { "darwin": "echo logged-in", "linux": "echo logged-in",
+                                "win32": "echo logged-in" },
+                    "logout": { "darwin": "echo logged-out", "linux": "echo logged-out",
+                                "win32": "echo logged-out" }
                 }
             }
         }"#,
@@ -477,6 +482,33 @@ mod tests {
         .unwrap();
         assert_eq!(runner.run_version_check(&m).await.unwrap(), VersionCheckOutcome::NotDeclared);
         assert!(runner.run_init(&m).await.unwrap().is_none());
+    }
+
+    /// Regression guard: the lifecycle test fixture must declare commands for
+    /// every platform. CI runs on Linux, so darwin-only fixtures panic there
+    /// ("no version_check command declared for platform linux").
+    #[test]
+    fn cli_manifest_resolves_commands_on_all_platforms() {
+        let m = cli_manifest();
+        let lc = m.lifecycle.as_ref().unwrap();
+        for platform in [Platform::Darwin, Platform::Linux, Platform::Windows] {
+            let vc = lc.version_check.as_ref().unwrap();
+            assert!(
+                resolve_command(&vc.command, platform).is_some(),
+                "version_check command missing for {platform:?}"
+            );
+            let auth = lc.auth.as_ref().unwrap();
+            for (name, map) in [
+                ("login", auth.login.as_ref()),
+                ("status", auth.status.as_ref()),
+                ("logout", auth.logout.as_ref()),
+            ] {
+                assert!(
+                    map.is_some_and(|m| resolve_command(m, platform).is_some()),
+                    "auth.{name} command missing for {platform:?}"
+                );
+            }
+        }
     }
 
     #[test]
