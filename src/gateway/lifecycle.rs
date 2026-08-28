@@ -102,6 +102,21 @@ pub(crate) async fn start_gateway(
     // registry and respect the gateway shutdown token.
     state.infra.model_router.clone().start_health_checks();
 
+    // Register the cloud model provider when cloud is enabled (§2.7). The
+    // provider's credential is a store ref to the session token, so it
+    // resolves dynamically once the user logs in — no rebuild needed.
+    #[cfg(feature = "cloud")]
+    {
+        let cloud_cfg = state.config.read().await.cloud.clone();
+        if cloud_cfg.enabled {
+            let cfg = crate::cloud::provider::provider_config(&cloud_cfg);
+            match state.infra.model_router.add_provider("cloud", cfg).await {
+                Ok(()) => info!("Registered cloud model provider (login to use)"),
+                Err(e) => warn!("Failed to register cloud model provider: {e}"),
+            }
+        }
+    }
+
     // Initialize hot reload if enabled
     let hot_reload = state.infra.hot_reload.read().await.clone();
     if let Some(ref hot_reload) = hot_reload {
