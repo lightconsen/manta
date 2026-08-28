@@ -65,6 +65,43 @@ impl CloudClient {
         self.parse_response(resp, "GET /api/v1/kb").await
     }
 
+    /// GET /api/v1/subscription — plan, credit balance, overdraft state.
+    pub async fn subscription(&self) -> Result<Value> {
+        self.get_json("/api/v1/subscription").await
+    }
+
+    /// GET /api/v1/usage?days= — credit consumption for the period.
+    pub async fn usage(&self, days: u32) -> Result<Value> {
+        let path = format!("/api/v1/usage?days={}", days.clamp(1, 365));
+        self.get_json(&path).await
+    }
+
+    /// POST /api/v1/devices — bind this device to the account, returning the
+    /// `device_token` (P2-9). Re-binds are idempotent; already-bound devices
+    /// return the existing device with a null token.
+    pub async fn bind_device(
+        &self,
+        device_id: &str,
+        display_name: &str,
+        public_key: Option<&str>,
+    ) -> Result<Value> {
+        let mut body = json!({
+            "device_id": device_id,
+            "display_name": display_name,
+        });
+        if let Some(key) = public_key {
+            body["public_key"] = json!(key);
+        }
+        self.post_json("/api/v1/devices", body).await
+    }
+
+    /// GET a JSON endpoint (with the session token).
+    async fn get_json(&self, path: &str) -> Result<Value> {
+        let url = format!("{}{}", self.api_base, path);
+        let resp = self.auth(self.http.get(&url)).send().await?;
+        self.parse_response(resp, path).await
+    }
+
     /// POST /api/v1/kb/:id/query — semantic retrieval (§3.7).
     pub async fn kb_query(&self, kb_id: &str, query: &str, top_k: usize) -> Result<Value> {
         let path = format!("/api/v1/kb/{kb_id}/query");

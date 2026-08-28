@@ -1171,6 +1171,8 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
         .route("/api/v1/cloud/token", post(super::handlers::cloud::token_handler))
         .route("/api/v1/cloud/status", get(super::handlers::cloud::status_handler))
         .route("/api/v1/cloud/logout", post(super::handlers::cloud::logout_handler))
+        .route("/api/v1/cloud/subscription", get(super::handlers::cloud::subscription_handler))
+        .route("/api/v1/cloud/usage", get(super::handlers::cloud::usage_handler))
         .with_state(state.clone());
 
     // Merge all routers and apply global CORS
