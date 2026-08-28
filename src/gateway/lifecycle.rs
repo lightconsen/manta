@@ -1228,9 +1228,18 @@ async fn run_quality_gate_check(
         critic = critic.with_model(model_name.clone());
     }
 
-    // 5. Build harness and gate
-    let harness = crate::eval::harness::EvalHarness::new(agent.clone(), Some(critic));
+    // 5. Build harness and gate.
+    // The harness carries a LayeredScorer (§三 人工复核) so every trial routed
+    // through the daemon gate persists a human-review case on low-confidence /
+    // conflict signals, honoring `eval.human_review.sampling_rate`. The critic
+    // is consumed by the harness; the scorer only calls `route_scored`, so it
+    // is built with no internal critic.
     let evals_dir = crate::eval::loader::default_evals_dir();
+    let harness = crate::eval::harness::EvalHarness::new(agent.clone(), Some(critic)).with_scorer(
+        crate::eval::LayeredScorer::new(None, crate::eval::ScorerConfig::default())
+            .with_review_store(crate::eval::HumanReviewStore::new(&evals_dir))
+            .with_sampling_rate(config.eval.human_review.sampling_rate),
+    );
 
     let gate = match crate::gateway::quality_gate::QualityGate::from_config(
         &config.quality_gate,
@@ -1243,6 +1252,9 @@ async fn run_quality_gate_check(
             return Ok(());
         }
     };
+    let gate = gate.with_badcase_governance(crate::eval::recycle::BadcaseGovernance::from_config(
+        &config.eval.badcase_governance,
+    ));
 
     // 6. Run the gate (returns result + release decision)
     let (result, decision) = gate.check().await;

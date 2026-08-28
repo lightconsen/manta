@@ -207,6 +207,22 @@ pub(super) async fn handle_eval_trace_list(
 const AGG_LIMIT: u32 = 50_000;
 /// Number of most-recent decision traces to embed in the dashboard payload.
 const RECENT_TRACE_LIMIT: usize = 20;
+
+/// Number of daily buckets in the eval-dashboard trend series (§八 评测看板).
+const TREND_DAYS: usize = 14;
+/// Milliseconds per day, for daily bucketing.
+const DAY_MS: i64 = 86_400_000;
+
+/// Map a unix-ms timestamp to its daily bucket index within the 14-day trend
+/// window (0 = oldest day, `TREND_DAYS-1` = today). Rows in the future or
+/// older than the window return `None` (skipped).
+fn trend_bucket(ms: i64, now_ms: i64) -> Option<usize> {
+    let ago_days = (now_ms - ms) / DAY_MS;
+    if ago_days < 0 || ago_days >= TREND_DAYS as i64 {
+        return None;
+    }
+    Some(TREND_DAYS - 1 - ago_days as usize)
+}
 /// Feedback aggregation window: 30 days in milliseconds.
 const FEEDBACK_WINDOW_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 
@@ -238,16 +254,17 @@ pub(super) async fn handle_eval_dashboard(
     let mut traces_by_status = zero_counts(&["pending", "applied", "rejected"]);
     let mut trace_total: usize = 0;
     let mut recent_traces: Vec<serde_json::Value> = Vec::new();
+    let mut all_traces: Vec<_> = Vec::new();
 
     if let Some(store) = state.infra.decision_trace_store.as_ref() {
-        let all = match store.list(None, AGG_LIMIT).await {
+        all_traces = match store.list(None, AGG_LIMIT).await {
             Ok(t) => t,
             Err(e) => {
                 return error_internal(&req.id, format!("failed to load decision traces: {e}"));
             }
         };
-        trace_total = all.len();
-        for t in &all {
+        trace_total = all_traces.len();
+        for t in &all_traces {
             *traces_by_kind
                 .entry(t.kind.as_str().to_string())
                 .or_insert(0) += 1;
@@ -255,7 +272,7 @@ pub(super) async fn handle_eval_dashboard(
                 .entry(t.status.as_str().to_string())
                 .or_insert(0) += 1;
         }
-        recent_traces = all
+        recent_traces = all_traces
             .iter()
             .take(RECENT_TRACE_LIMIT)
             .map(|t| {
@@ -274,9 +291,9 @@ pub(super) async fn handle_eval_dashboard(
     let mut badcases_by_source = zero_counts(&["online:risk", "human:dislike"]);
     let mut badcases_by_status = zero_counts(&["pending", "confirmed", "converted", "dismissed"]);
     let mut badcase_total: usize = 0;
+    let mut all_badcases: Vec<PendingBadcase> = Vec::new();
 
     if let Some(store) = state.infra.pending_badcase_store.as_ref() {
-        let mut all: Vec<PendingBadcase> = Vec::new();
         for status in [
             PendingStatus::Pending,
             PendingStatus::Confirmed,
@@ -284,7 +301,7 @@ pub(super) async fn handle_eval_dashboard(
             PendingStatus::Dismissed,
         ] {
             match store.list_pending(status, AGG_LIMIT).await {
-                Ok(rows) => all.extend(rows),
+                Ok(rows) => all_badcases.extend(rows),
                 Err(e) => {
                     return error_internal(
                         &req.id,
@@ -293,8 +310,8 @@ pub(super) async fn handle_eval_dashboard(
                 }
             }
         }
-        badcase_total = all.len();
-        for b in &all {
+        badcase_total = all_badcases.len();
+        for b in &all_badcases {
             *badcases_by_source
                 .entry(b.source.as_str().to_string())
                 .or_insert(0) += 1;
@@ -304,26 +321,70 @@ pub(super) async fn handle_eval_dashboard(
         }
     }
 
-    // ── feedback: 30-day Like/Dislike tallies ────────────────────────────────
+    // ── feedback: 30-day Like/Dislike tallies + 14-day daily series (§八) ───
     let since_ms = chrono::Utc::now().timestamp_millis() - FEEDBACK_WINDOW_MS;
-    let mut feedback_up: usize = 0;
-    let mut feedback_down: usize = 0;
+    let mut feedback_up_votes: Vec<_> = Vec::new();
+    let mut feedback_down_votes: Vec<_> = Vec::new();
     if let Some(store) = state.infra.feedback_store.as_ref() {
-        feedback_up = match store
+        feedback_up_votes = match store
             .list_votes_by(FeedbackVoteKind::Up, since_ms, AGG_LIMIT)
             .await
         {
-            Ok(v) => v.len(),
+            Ok(v) => v,
             Err(e) => return error_internal(&req.id, format!("failed to load feedback: {e}")),
         };
-        feedback_down = match store
+        feedback_down_votes = match store
             .list_votes_by(FeedbackVoteKind::Down, since_ms, AGG_LIMIT)
             .await
         {
-            Ok(v) => v.len(),
+            Ok(v) => v,
             Err(e) => return error_internal(&req.id, format!("failed to load feedback: {e}")),
         };
     }
+    let feedback_up = feedback_up_votes.len();
+    let feedback_down = feedback_down_votes.len();
+
+    // ── trends: 14-day daily series of the core signals (§八 评测看板) ─────
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let mut trend_up = [0usize; TREND_DAYS];
+    let mut trend_down = [0usize; TREND_DAYS];
+    let mut trend_badcases = [0usize; TREND_DAYS];
+    let mut trend_traces = [0usize; TREND_DAYS];
+    for v in &feedback_up_votes {
+        if let Some(i) = trend_bucket(v.created_at, now_ms) {
+            trend_up[i] += 1;
+        }
+    }
+    for v in &feedback_down_votes {
+        if let Some(i) = trend_bucket(v.created_at, now_ms) {
+            trend_down[i] += 1;
+        }
+    }
+    for b in &all_badcases {
+        if let Some(i) = trend_bucket(b.created_at, now_ms) {
+            trend_badcases[i] += 1;
+        }
+    }
+    for t in &all_traces {
+        if let Some(i) = trend_bucket(t.decided_at, now_ms) {
+            trend_traces[i] += 1;
+        }
+    }
+    let trends: Vec<serde_json::Value> = (0..TREND_DAYS)
+        .map(|i| {
+            let day_ms = now_ms - (TREND_DAYS - 1 - i) as i64 * DAY_MS;
+            let label = chrono::DateTime::<chrono::Utc>::from_timestamp(day_ms / 1000, 0)
+                .map(|dt| dt.format("%m-%d").to_string())
+                .unwrap_or_default();
+            serde_json::json!({
+                "day": label,
+                "up": trend_up[i],
+                "down": trend_down[i],
+                "badcases": trend_badcases[i],
+                "traces": trend_traces[i],
+            })
+        })
+        .collect();
 
     // ── optimizer: live run status ───────────────────────────────────────────
     let runtime = state.infra.optimizer.clone();
@@ -356,6 +417,7 @@ pub(super) async fn handle_eval_dashboard(
                 "down": feedback_down,
                 "total": feedback_up + feedback_down,
             },
+            "trends": trends,
             "optimizer": {
                 "running": st.running,
                 "paused": paused,
@@ -652,6 +714,14 @@ mod tests {
         assert_eq!(p["feedback"]["down"], 0);
         assert_eq!(p["feedback"]["total"], 1);
 
+        // ── trends: 14-day series; the seeded rows land in today's bucket ──
+        let trends = p["trends"].as_array().unwrap();
+        assert_eq!(trends.len(), 14);
+        assert_eq!(trends[13]["up"], 1);
+        assert_eq!(trends[13]["down"], 0);
+        assert_eq!(trends[13]["badcases"], 1);
+        assert_eq!(trends[13]["traces"], 1);
+
         assert_eq!(p["optimizer"]["running"], false);
         assert_eq!(p["optimizer"]["paused"], false);
         assert_eq!(p["optimizer"]["breaker"]["failures"], 0);
@@ -670,7 +740,21 @@ mod tests {
         assert_eq!(p["badcases"]["total"], 0);
         assert_eq!(p["badcases"]["by_source"]["online:risk"], 0);
         assert_eq!(p["feedback"]["total"], 0);
+        assert_eq!(p["trends"].as_array().unwrap().len(), 14);
         assert_eq!(p["optimizer"]["running"], false);
+    }
+
+    #[test]
+    fn trend_bucket_maps_days_within_window() {
+        let now_ms = 1_800_000_000_000i64;
+        let day = 86_400_000i64;
+        // today → last slot, yesterday → 12, 13 days ago → first slot
+        assert_eq!(trend_bucket(now_ms, now_ms), Some(13));
+        assert_eq!(trend_bucket(now_ms - day, now_ms), Some(12));
+        assert_eq!(trend_bucket(now_ms - 13 * day, now_ms), Some(0));
+        // outside the window / in the future → skipped
+        assert_eq!(trend_bucket(now_ms - 14 * day, now_ms), None);
+        assert_eq!(trend_bucket(now_ms + day, now_ms), None);
     }
 
     #[tokio::test]

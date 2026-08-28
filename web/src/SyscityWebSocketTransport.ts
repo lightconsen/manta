@@ -134,6 +134,13 @@ export interface EvalDashboardPayload {
     down: number;
     total: number;
   };
+  trends: {
+    day: string;
+    up: number;
+    down: number;
+    badcases: number;
+    traces: number;
+  }[];
   optimizer: {
     running: boolean;
     paused: boolean;
@@ -1324,6 +1331,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
           down: res.feedback?.down ?? 0,
           total: res.feedback?.total ?? 0,
         },
+        trends: res.trends ?? [],
         optimizer: {
           running: !!res.optimizer?.running,
           paused: !!res.optimizer?.paused,
@@ -1347,6 +1355,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
       traces: { total: 0, by_kind: {}, by_status: {}, recent: [] },
       badcases: { total: 0, by_source: {}, by_status: {} },
       feedback: { since_ms: 0, up: 0, down: 0, total: 0 },
+      trends: [],
       optimizer: {
         running: false,
         paused: false,

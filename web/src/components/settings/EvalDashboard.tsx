@@ -14,6 +14,7 @@ const EMPTY: EvalDashboardPayload = {
   traces: { total: 0, by_kind: {}, by_status: {}, recent: [] },
   badcases: { total: 0, by_source: {}, by_status: {} },
   feedback: { since_ms: 0, up: 0, down: 0, total: 0 },
+  trends: [],
   optimizer: {
     running: false,
     paused: false,
@@ -42,6 +43,27 @@ function Badge({
     <span className={`px-1.5 py-0.5 rounded-full text-xs ${className}`}>
       {children}
     </span>
+  );
+}
+
+/** A single mini bar+count cell for the daily trend rows. */
+function TrendCell({
+  value,
+  max,
+  color,
+}: {
+  value: number;
+  max: number;
+  color: string;
+}) {
+  const pct = value === 0 ? 0 : max > 0 ? Math.max(8, Math.round((value / max) * 100)) : 0;
+  return (
+    <div className="flex items-center gap-2">
+      <div className="h-1.5 flex-1 min-w-[40px] rounded bg-black/5 dark:bg-white/10 overflow-hidden">
+        <div className={`h-full rounded ${color}`} style={{ width: `${pct}%` }} />
+      </div>
+      <span className="text-xs text-secondary tabular-nums w-6 text-right">{value}</span>
+    </div>
   );
 }
 
@@ -82,6 +104,12 @@ export function EvalDashboard({ transport }: EvalDashboardProps) {
   const applied = report?.applied?.length ?? 0;
   const rejected = report?.rejected?.length ?? 0;
   const statCls = "px-3 py-2 rounded-lg bg-card";
+  const maxVals = {
+    up: Math.max(1, ...data.trends.map((t) => t.up)),
+    down: Math.max(1, ...data.trends.map((t) => t.down)),
+    badcases: Math.max(1, ...data.trends.map((t) => t.badcases)),
+    traces: Math.max(1, ...data.trends.map((t) => t.traces)),
+  };
 
   return (
     <div className="space-y-5">
@@ -215,6 +243,48 @@ export function EvalDashboard({ transport }: EvalDashboardProps) {
             <div className="text-[10px] uppercase tracking-wider text-secondary/70">Total</div>
           </div>
         </div>
+      </Section>
+
+      {/* Trends (14d) */}
+      <Section title="Trends (14d)">
+        {data.trends.length === 0 ? (
+          <div className="text-sm text-secondary">No trend data yet.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-[10px] uppercase tracking-wider text-secondary/70">
+                  <th className="py-1.5 pr-3 font-medium">Day</th>
+                  <th className="py-1.5 pr-3 font-medium">Likes</th>
+                  <th className="py-1.5 pr-3 font-medium">Dislikes</th>
+                  <th className="py-1.5 pr-3 font-medium">Badcases</th>
+                  <th className="py-1.5 font-medium">Traces</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.trends.map((t) => (
+                  <tr key={t.day} className="border-t border-subtle">
+                    <td className="py-1.5 pr-3 font-mono text-xs text-secondary whitespace-nowrap">
+                      {t.day}
+                    </td>
+                    <td className="py-1.5 pr-3">
+                      <TrendCell value={t.up} max={maxVals.up} color="bg-green-500" />
+                    </td>
+                    <td className="py-1.5 pr-3">
+                      <TrendCell value={t.down} max={maxVals.down} color="bg-red-500" />
+                    </td>
+                    <td className="py-1.5 pr-3">
+                      <TrendCell value={t.badcases} max={maxVals.badcases} color="bg-amber-500" />
+                    </td>
+                    <td className="py-1.5">
+                      <TrendCell value={t.traces} max={maxVals.traces} color="bg-sky-500" />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Section>
 
       {/* Recent traces */}

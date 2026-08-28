@@ -1,7 +1,7 @@
 # Syscity Agent Harness 架构
 
 > 本页回答：harness 怎么搭、输出品质怎么判/怎么改进、采样覆盖、评估的执行形态、参数与结构性改动的调优边界。
-> 状态标注反映 **2026-08-27 当前代码**：✅ 已实现 / ⚠️ 部分实现 / ❌ 缺失。
+> 状态标注反映 **2026-08-28 当前代码**：✅ 已实现 / ⚠️ 部分实现 / ❌ 缺失。
 > 相关文档：`docs/arch.md`（系统总架构）、`docs/eval-status.md`（评测方法论落地）、`docs/reflection.md`（反思引擎）。
 
 ---
@@ -98,10 +98,8 @@ Harness 不是一组零件，而是把模型与外部世界连接起来的**带�
 
 | 组件 | 现状 | 差距 |
 |------|------|------|
-| 反馈生产线 | 仅 eval 通道可用 | `feedback ops` / `feedback model` 仍为占位 |
-| 回归集治理 | `recycle.rs::load_governed_badcase_suite` + `BadcaseGovernance`：过期淘汰（`filter_expired`，默认 90 天）、同输入去重（`is_duplicate`，默认 3 次）、高频任务降级（`effective_pass_rate`），套件加载时实际应用；难度/覆盖标签 + 加权 trial 已实现（`weighted_trials`，standalone 按 `task.trials` 执行） | 治理参数仍为代码默认值，`BadcaseGovernance::from_config` 未接生产加载路径 |
-| 上下文压缩 | `compressor.rs` 已实现；`CompressionObservation.retention_ratio` + `quality_flag`（阈值 `min_retention_ratio`）已量化 | eval 门禁侧未校验低保留率（仅记录，未据此失败） |
-| 人工复核覆盖 | store + 路由已实现；固定抽样率 `human_review.sampling_rate` 已实现，`score_and_review` 经 `route_case` 按 base_reason ∪ 抽样率路由 | `LayeredScorer` 未接入 harness 生产构造路径（当前仅 eval 测试覆盖） |
+| 反馈生产线 | 人工 👍/👎 管道已通：`feedback.vote` WS + `FeedbackStore` + Web 按钮，down 票转 `human:dislike` 待确认 badcase（§十二） | `feedback ops` / `feedback model`（把投票聚合成结构化诊断信号）仍为占位 |
+| 上下文压缩 | `compressor.rs` 已实现；`CompressionObservation.retention_ratio` + `quality_flag` 已量化；低保留率作为 `online:risk` 风险信号进待确认池（`scan_turn_for_badcase`，受 `CompressionQualityConfig.enabled` 控制，默认关） | 低保留率不直接让 eval 门禁失败（仅采集、进池，不判 fail） |
 
 ---
 
@@ -111,9 +109,9 @@ Harness 不是一组零件，而是把模型与外部世界连接起来的**带�
 |------|--------|------|
 | ① 工具契约 | 工具 schema 精确、参数有校验、误用会被拦 | ✅ |
 | ② 观察/回放 | 每步轨迹可回放、可查因（transcript + trace replay） | ✅ |
-| ③ 上下文/压缩 | 长会话不爆上下文、压缩不丢关键信息 | ⚠️ 实现有，效果无量化 |
+| ③ 上下文/压缩 | 长会话不爆上下文、压缩不丢关键信息 | ✅ 低保留率量化（`retention_ratio` + `quality_flag`）并作为风险信号采集 |
 | ④ 生命周期/恢复 | task 可 spawn/取消/优雅关闭、崩溃可续 | ✅ |
-| ⑤ 评估回路 | 每输出可打分、可回归、可门禁 | ✅（离线完整，在线缺失，见 §八） |
+| ⑤ 评估回路 | 每输出可打分、可回归、可门禁 | ✅ 离线完整；在线采集已接：post-turn 风险粗筛 + 人工投票 + 待确认池（见 §八） |
 
 ---
 
@@ -133,22 +131,27 @@ Trajectory（`src/agent/reflection/trajectory.rs`）从 Turns 构建评分轨迹
 | token 用量 | 每轮 usage + cache 命中 | `observe/record.rs` |
 | 回合元数据 | session、conversation、agent_id、thread、start/finish | `observe/record.rs` |
 
-### 未采样的环节（诊断盲区）
+### 已补齐的环节（原诊断盲区，现已有观测）
+
+| 环节 | 记录内容 | 模块 |
+|------|---------|------|
+| 路由决策 | `RouteRecord`：候选链、选中模型、路由理由、是否 fallback | `observe/record.rs`、`agent_engine.rs`（`route_log`） |
+| 上下文压缩 | `CompressionObservation`：触发时刻、压缩前后 token、策略、`retention_ratio` + `quality_flag` | `observe/record.rs`、`compressor.rs`（`compressions`） |
+| planner 内部 | `PlanSnapshot`：plan_id、目标、步骤 DAG（`PlanStepSnapshot`） | `observe/record.rs`、`observe/collector.rs` |
+| 通道层 | `ChannelObservation`：debounce / enrich / 路由到的 agent | `observe/record.rs`、`gateway/dispatch.rs`（`channel`） |
+
+### 未采样的环节（剩余诊断盲区）
 
 | 环节 | 盲区 |
 |------|------|
-| 路由决策 | 只记录最终选中的 model；**路由理由、fallback 是否发生、候选链**不落盘 —— 无法区分"答错是换模型导致还是提示词导致" |
-| 上下文压缩 | `compressor.rs` 有实现但无观测事件：何时压缩、丢了什么不可见 |
-| planner 内部 | 只记到"调用了 planner"，计划 DAG 与步骤状态不落盘 |
-| 通道层 | inbound 的 debounce / enrich / route 不进 TurnRecord |
 | 生产流量 | ⚠️ 关键：`EvalTaskSource::Online` 仅是数据类型，**真实用户流量未被采样打分**；eval 只跑离线套件 |
 
-**结论：离线评测覆盖"LLM 输出 + 工具行为"这两层（最重要的质量信号），但内部决策层
-（路由 / 压缩 / 计划）无一等轨迹，且生产流量完全未采样。** 线上 badcase 若源于路由选错模型，
-现有 trace 无法直接归因。
+**结论：离线评测覆盖"LLM 输出 + 工具行为"这两层（最重要的质量信号），内部决策层
+（路由 / 压缩 / 计划 / 通道）现均有一等轨迹，可回放、可归因。** 剩余盲区是生产流量未接入
+在线采样打分 —— 线上 badcase 归因仍依赖离线套件 + 人工投票 + post-turn 风险信号。
 
-**与调参的耦合：** 参数调优的前提是诊断准确（见 §十），而诊断依赖采样覆盖 —— 路由决策不
-采样，就无法判断该不该调路由参数。因此"补路由/压缩轨迹 + 接线上流量采样"比调任何参数更优先。
+**与调参的耦合：** 参数调优的前提是诊断准确（见 §十），而诊断依赖采样覆盖。路由 / 压缩 /
+计划现已有观测，调参依据可信；下一步优先级是"接线上流量采样"（把真实流量喂给同一判分器）。
 
 ---
 
@@ -179,7 +182,7 @@ Trajectory（`src/agent/reflection/trajectory.rs`）从 Turns 构建评分轨迹
 
 | 形态 | 位置 | 跑什么 | 现状 |
 |------|------|--------|------|
-| ① 响应路径内联 | daemon 每 turn 结束钩子 | 确定性 GoalCondition · 程序化指标（token/时长/成本）· `RiskSignalChecker` 风险信号 · 可疑 badcase 标记 | ⚠️ 指标采集与 `cost_guard` 已有；post-turn 钩子缺失，`RiskSignalChecker`（`eval/scorer.rs`）可复用 |
+| ① 响应路径内联 | daemon 每 turn 结束钩子 | 确定性 GoalCondition · 程序化指标（token/时长/成本）· `RiskSignalChecker` 风险信号 · 可疑 badcase 标记 | ✅ 指标采集 + `cost_guard` + post-turn 钩子（`scan_turn_for_badcase`：风险粗筛 → 命中触发 LLM Judge 深评 → 进待确认池） |
 | ② 进程门禁 | 启动时 / cron 周期 | 跑完整 eval harness + 判标 `min_pass_rate` / `require_zero_p0` / `max_degradation` → `Proceed/Rollback/Degrade` | ✅ `gateway/quality_gate.rs`、`lifecycle.rs:358` |
 | ③ 离线批量 eval | `syscity eval`（独立进程） | multi-trial + Wilson CI · LLM Judge（Critic / multi-judge）· paired bootstrap 显著性 · RCA / 校准 | ✅ `standalone.rs` + `eval/harness.rs` 等 |
 
@@ -191,7 +194,7 @@ Trajectory（`src/agent/reflection/trajectory.rs`）从 Turns 构建评分轨迹
 确定性检查 ✅               完整 harness ✅               multi-trial + Wilson CI ✅
 指标采集 ✅                 Proceed / Rollback / Degrade  LLM Judge ✅
 风险信号（可复用 ✅）         cron 周期复跑 ✅               bootstrap 显著性 ✅
-badcase 标记 ❌缺钩子                                      提议验证（闭环目标）
+badcase 标记 ✅ post-turn 钩子                              提议验证（闭环目标）
 ```
 
 **术语澄清（"离线批量"不是"停机"）：** ①②③ 都可在 daemon 存活期内运行。② 已如此
@@ -243,7 +246,7 @@ daemon 的后台批量任务触发（§十二 ⑤⑦ 的自动优化器 / 门禁
 
 ## 八、已实现 / 缺失汇总
 
-### ✅ 已实现（离线评测闭环完整）
+### ✅ 已实现（离线评测闭环 + 在线信号采集）
 
 - 多 trial eval harness + Wilson CI + 维度平均 + early stop
 - 四层评分（确定性 → 程序化 → LLM Judge → 人工）
@@ -254,17 +257,18 @@ daemon 的后台批量任务触发（§十二 ⑤⑦ 的自动优化器 / 门禁
 - 反思引擎（后台轨迹自我批判）
 - 反馈闭环：`feedback.vote` WS + Web Like/Dislike 按钮（§十二），down 票转 `human:dislike` 待确认 badcase
 - 在线质量监控：post-turn RiskSignalChecker 粗筛，高风险命中触发 LLM Judge 深评（`scan_turn_for_badcase`，§八）
-- 回归集治理：badcase 难度/覆盖标签 + 加权 trial（`BadcaseGovernance::weighted_trials`，standalone 按 `task.trials` 执行）
+- 回归集治理接入 daemon：`BadcaseGovernance::from_config` + `load_governed_badcase_suite` 在发布门禁 Step 1b 实际生效（`lifecycle.rs` → `quality_gate.rs`），过期淘汰 / 同输入去重 / 高频降级 + 难度标签加权 trial 均随门禁运行
+- LayeredScorer 接入 daemon：`with_review_store` + `with_sampling_rate` 进入 harness 生产构造路径（`lifecycle.rs`），人工复核覆盖生产门禁打分
 - 调优纪律：optimizer/proposer 候选走 harness + `compare_versions` bootstrap verdict，仅 `Improved` 出 patch（`verdict.rs` Gate 1.5，§十二 ⑤⑥）
-- 压缩质量量化：`CompressionObservation.retention_ratio` + `quality_flag`（阈值 `min_retention_ratio`，§三）
+- 压缩质量量化：`CompressionObservation.retention_ratio` + `quality_flag`（阈值 `min_retention_ratio`，§三），低保留率作为 `online:risk` 信号进待确认池
 - 人工复核抽样：`human_review.sampling_rate` 固定抽样，`score_and_review` 经 `route_case` 路由（§三）
+- 评测看板趋势：`eval.dashboard` 返回 14 日趋势（likes / dislikes / badcases / traces），Web Eval 页渲染柱条趋势表（§八）
 
 ### ❌ 缺失（把 harness 从"评测期好用"推向"生产期好用"）
 
 | 缺失项 | 说明 | 建议补法 |
 |--------|------|----------|
-| 评测看板 | 有基础 eval dashboard（Web），缺趋势/对比可视化 | 基于 eval 产物（pass rate / 维度分 / badcase 聚类 / 对比 verdict）出简单趋势页 |
-| Shadow / A-B | 离线 diff 有了（`comparison.rs`），无线上 shadow 分流对比 | 灰度流量按版本分流，用同一判分器离线对比 |
+| Shadow / A-B | 离线 shadow 已有（optimizer/proposer 应用前 `run_shadow` + `compare_versions` 判定，§十二）；无**线上** shadow 分流对比 | 灰度流量按版本分流，用同一判分器离线对比 |
 
 ---
 
@@ -443,17 +447,19 @@ badcase 指向某参数时，按此表确定落点。**config.toml 覆盖了大�
 
 ---
 
-## 十二、全自动闭环：还缺什么（拼图 + 护栏）
+## 十二、全自动闭环：拼图 + 护栏
 
 把 §七 闭环 + §十一 动态化合起来看，目标系统是"生产跑 → 采样 → 自动提议 → eval 判定 → 自动应用"。
-标量可全自动（§十一 🟢）、结构性改动也可全自动（🟢，机械护栏下），但**整条链还缺四块**，按依赖顺序：
+标量可全自动（§十一 🟢）、结构性改动也可全自动（🟢，机械护栏下）。四块拼图已按 §十二 五阶段路线
+全部落地（1a 共享管道 / 1b 人工按钮 / 1c 规则钩子 / 2 决策轨迹 / 3 标量优化器 / 4 护栏 / 5 结构提议，
+实现细节见 §八 已实现清单）。下表标注每块的实现落点：
 
-| 拼图 | 作用 | 现状 | 缺口 |
-|------|------|------|------|
-| ① 在线信号接入 | 把生产流量（§五 盲区）送进评估 | ⚠️ `observe/record.rs` 已落盘 turn 级数据，但无打分 | §六 三形态① 的 post-turn 粗筛钩子（复用 `RiskSignalChecker`）+ **人工 Like/Dislike 通道**（见下）+ badcase 标记；且路由/压缩/planner 决策轨迹未采样（§五），自动优化的诊断依据不完整 |
-| ② 自动优化器 | 产生候选改动 | ❌ | 标量：数值搜索（坐标下降 / 网格 / 贝叶斯）无现成实现；结构：LLM 提议，需一个后台批量进程（§六 三形态③ 语义，daemon 存活期内由 cron / 事件触发） |
-| ③ 自动应用 | 把通过 CI 判定的改动热加载进运行时 | ⚠️ 手动通道已有 | `[hot_reload]` / `config_snapshot()`（`agent_setup.rs:467`）支持配置热更（下一 turn 生效），但"自动写 config.toml + 触发重载"无实现；结构类改动（prompt / 工具描述 / SOP 数据文件）自动落盘无实现 |
-| ④ 护栏 | 防止自动改动劣化 / 失控 | ❌ | canary 灰度（先小流量）、回滚（基线快照可回）、预算封顶，见下 |
+| 拼图 | 作用 | 现状 | 实现落点 |
+|------|------|------|----------|
+| ① 在线信号接入 | 把生产流量（§五 盲区）送进评估 | ✅ | post-turn 粗筛钩子（`scan_turn_for_badcase` 复用 `RiskSignalChecker`）+ **人工 Like/Dislike 通道**（`feedback.vote` WS + `FeedbackStore` + Web 按钮，down 票转待确认 badcase）+ badcase 标记；路由/压缩/planner/通道决策轨迹已采样（§五） |
+| ② 自动优化器 | 产生候选改动 | ✅ | 标量：`eval/optimizer.rs` 数值搜索（坐标下降 / 网格），daemon 后台任务；结构：`eval/proposer.rs` LLM 提议（cap 4 候选），`eval.optimizer.run` / `eval.propose` WS 触发（§六 三形态③ 语义） |
+| ③ 自动应用 | 把通过 CI 判定的改动热加载进运行时 | ✅ | 标量：`apply_patch.rs` CAS 写回 config（`config_revision` + `apply_config_path` + `persist_config_atomic` + `push_*_update` 热更，下一 turn 生效）；结构：`ToolMetadata::set_metadata` 运行时更新（工具描述成为可搜索数据） |
+| ④ 护栏 | 防止自动改动劣化 / 失控 | ✅ | shadow eval 先行（`run_shadow` + `compare_versions`，仅 `Improved` 采纳）、回归即回滚（`BaselineStore` 写回基线）、成本封顶（`cost_guard` 超限拒绝）、熔断暂停（`circuit_breaker` + `eval.optimizer.resume` 逃生舱），见下 |
 
 ### 在线信号的具体形态：规则钩子 vs 人工 Like/Dislike（① 的实现）
 

@@ -18,6 +18,7 @@ use tracing::{info, warn};
 
 use crate::eval::harness::{EvalHarness, EvalSummary};
 use crate::eval::loader::load_suite;
+use crate::eval::recycle::{load_governed_badcase_suite, BadcaseGovernance};
 
 /// Load badcase regression suite for auto-inclusion in gate (§09).
 fn load_badcase_regression_suite(evals_dir: &std::path::Path) -> Option<crate::eval::EvalSuite> {
@@ -260,6 +261,10 @@ pub struct QualityGate {
     pub harness: EvalHarness,
     pub evals_dir: PathBuf,
     pub baseline_store: BaselineStore,
+    /// Governance rules applied to the auto-included badcase regression suite
+    /// (expiry / dedup / downgrade, §十二 回归集治理). `None` falls back to the
+    /// raw `load_badcase_suite` auto-include.
+    pub badcase_governance: Option<BadcaseGovernance>,
 }
 
 impl QualityGate {
@@ -279,7 +284,18 @@ impl QualityGate {
             harness,
             evals_dir,
             baseline_store: BaselineStore::load(),
+            badcase_governance: None,
         }
+    }
+
+    /// Attach the badcase regression suite governance rules (§十二 回归集治理).
+    ///
+    /// When set, the gate's auto-included badcase suite is loaded via
+    /// [`load_governed_badcase_suite`] instead of the raw loader, applying
+    /// expiry / dedup / downgrade before the suite runs.
+    pub fn with_badcase_governance(mut self, governance: BadcaseGovernance) -> Self {
+        self.badcase_governance = Some(governance);
+        self
     }
 
     /// Create from configuration.
@@ -324,6 +340,7 @@ impl QualityGate {
             harness,
             evals_dir,
             baseline_store: BaselineStore::load(),
+            badcase_governance: None,
         })
     }
 
@@ -360,7 +377,15 @@ impl QualityGate {
         }
 
         // ── Step 1b: Auto-include badcase regression suite ────────────
-        if let Some(badcase_suite) = load_badcase_regression_suite(&self.evals_dir) {
+        // Apply governance (expiry / dedup / downgrade, §十二 回归集治理) when
+        // configured; otherwise fall back to the raw badcase suite.
+        let badcase_suite = match &self.badcase_governance {
+            Some(gov) => load_governed_badcase_suite(&self.evals_dir, gov)
+                .ok()
+                .filter(|s| !s.tasks.is_empty()),
+            None => load_badcase_regression_suite(&self.evals_dir),
+        };
+        if let Some(badcase_suite) = badcase_suite {
             info!(
                 "Auto-including badcase regression suite with {} tasks",
                 badcase_suite.tasks.len()
