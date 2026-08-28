@@ -171,6 +171,8 @@ pub async fn make_test_state(config: GatewayConfig) -> GatewayState {
                     std::env::temp_dir()
                         .join(format!("syscity_state_test_sk_{}", uuid::Uuid::new_v4())),
                 )),
+                #[cfg(feature = "cloud")]
+                None,
             )),
             approval_queue: Arc::new(ApprovalQueue::new()),
             ask_queue: Arc::new(crate::tools::ask_user::AskQueue::new()),

@@ -257,6 +257,10 @@ pub async fn init_tools(config: &GatewayConfig, deps: ToolSystemDeps) -> crate::
         crate::dirs::connectors_dir(),
         mcp_manager.clone(),
         Arc::new(crate::skills::SkillStorage::new()?),
+        // kind=cloud connectors route through the cloud MCP relay only when
+        // cloud mode is enabled (§2.7 double gate: feature + cloud.enabled).
+        #[cfg(feature = "cloud")]
+        config.cloud.enabled.then(|| config.cloud.api_base.clone()),
     ));
     let approval_queue = Arc::new(ApprovalQueue::new());
     let ask_queue = Arc::new(AskQueue::new());

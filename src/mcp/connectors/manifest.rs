@@ -29,6 +29,15 @@ use super::super::{McpServerConfig, McpTransport};
 pub struct ConnectorManifest {
     /// Identity and display metadata.
     pub connector: ConnectorMeta,
+    /// Connector kind (`"byoa"` | `"cloud"`, default `"byoa"`):
+    ///
+    /// - `byoa` — the user brings their own account; the connector runs
+    ///   locally and free (a `linear-mcp` shape). This is the default.
+    /// - `cloud` — cloud-provisioned: the cloud holds the credentials and the
+    ///   engine routes the connector through the cloud MCP relay (`McpTransport::Cloud`)
+    ///   with the session token, metered per call. No local `mcp` endpoint needed.
+    #[serde(default = "default_kind")]
+    pub kind: String,
     /// Optional MCP server this connector exposes when enabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp: Option<McpSection>,
@@ -88,6 +97,10 @@ pub struct McpSection {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_kind() -> String {
+    "byoa".to_string()
 }
 
 impl McpSection {
@@ -251,10 +264,23 @@ impl ConnectorManifest {
                 meta.id, meta.version
             )));
         }
-        if self.mcp.is_none() && self.lifecycle.is_none() && self.skills.is_empty() {
+        if !matches!(self.kind.as_str(), "byoa" | "cloud") {
+            return Err(crate::error::SyscityError::Validation(format!(
+                "connector {} has unsupported kind {:?} (expected \"byoa\" or \"cloud\")",
+                meta.id, self.kind
+            )));
+        }
+        // A cloud-provisioned connector needs no local delivery: the cloud
+        // relay holds its tools. Everything else must declare at least one of
+        // mcp / lifecycle / skills.
+        if self.kind != "cloud"
+            && self.mcp.is_none()
+            && self.lifecycle.is_none()
+            && self.skills.is_empty()
+        {
             return Err(crate::error::SyscityError::Validation(format!(
                 "connector {} declares nothing to provide \
-                 (need at least one of mcp / lifecycle / skills)",
+                 (need at least one of mcp / lifecycle / skills, or kind \"cloud\")",
                 meta.id
             )));
         }
@@ -288,14 +314,22 @@ impl ConnectorManifest {
                         meta.id
                     )));
                 }
+                // Cloud relay: no local command/url — the relay holds the
+                // connector's tools and the cloud session authorizes calls.
+                #[cfg(feature = "cloud")]
+                McpTransport::Cloud { .. } => {}
             }
         }
         Ok(())
     }
 
     /// True when enabling this connector should open an MCP connection.
+    ///
+    /// Cloud-provisioned connectors provide MCP tools through the relay
+    /// (feature `cloud`); in default builds a `kind=cloud` manifest with no
+    /// `mcp` section provides nothing locally.
     pub fn provides_mcp(&self) -> bool {
-        self.mcp.is_some()
+        self.mcp.is_some() || (cfg!(feature = "cloud") && self.kind == "cloud")
     }
 }
 
@@ -378,6 +412,35 @@ mod tests {
         let bad = r#"{ "connector": { "id": "empty" } }"#;
         let err = ConnectorManifest::parse(bad).unwrap_err();
         assert!(err.to_string().contains("declares nothing"), "{err}");
+    }
+
+    #[test]
+    fn defaults_kind_to_byoa() {
+        let m = ConnectorManifest::parse(LINEAR_MCP_JSON).unwrap();
+        assert_eq!(m.kind, "byoa");
+        assert!(m.provides_mcp());
+    }
+
+    #[test]
+    fn parses_cloud_kind_manifest_without_local_delivery() {
+        let cloud = r#"{
+            "connector": { "id": "market-data", "display_name": "Market data",
+                           "description": "Cloud-provisioned market data", "version": "1.0.0" },
+            "kind": "cloud"
+        }"#;
+        // A cloud-provisioned connector needs no mcp/lifecycle/skills locally.
+        let m = ConnectorManifest::parse(cloud).unwrap();
+        assert_eq!(m.kind, "cloud");
+        assert!(m.mcp.is_none());
+        // Under the cloud feature it provides MCP tools via the relay.
+        assert_eq!(m.provides_mcp(), cfg!(feature = "cloud"));
+    }
+
+    #[test]
+    fn rejects_unknown_kind() {
+        let bad = r#"{ "connector": { "id": "weird", "version": "" }, "kind": "sneaky" }"#;
+        let err = ConnectorManifest::parse(bad).unwrap_err();
+        assert!(err.to_string().contains("unsupported kind"), "{err}");
     }
 
     #[test]

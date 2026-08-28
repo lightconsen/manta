@@ -57,7 +57,7 @@ fn default_catalog_version() -> u32 {
     1
 }
 
-/// One published connector package.
+/// One published marketplace entry (connector / skill / expert).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CatalogEntry {
     /// Connector id (must match the package manifest id).
@@ -73,6 +73,22 @@ pub struct CatalogEntry {
     /// Icon URL or catalog-relative path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    /// Entry type (`"connector"` | `"skill"` | `"expert"`, default connector).
+    #[serde(default = "default_entry_type", rename = "type")]
+    pub entry_type: String,
+    /// Distribution kind (`"byoa"` | `"cloud"`, default byoa): cloud entries
+    /// are cloud-provisioned and routed through the cloud MCP relay.
+    #[serde(default = "default_kind")]
+    pub kind: String,
+    /// Visibility (`"public"` | `"member"`): member entries are login-only.
+    #[serde(default = "default_visibility")]
+    pub visibility: String,
+    /// Per-call credit cost for cloud entries (0 for byoa / skills).
+    #[serde(default)]
+    pub credits_per_use: i64,
+    /// Single-value capability category for marketplace browse/filter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
     /// Where the package archive lives.
     pub source: CatalogSource,
     /// Expected sha256 (lowercase hex) of the downloaded archive. When set,
@@ -83,6 +99,18 @@ pub struct CatalogEntry {
     /// without an explicit per-entry confirmation.
     #[serde(default)]
     pub auto_update: bool,
+}
+
+fn default_entry_type() -> String {
+    "connector".to_string()
+}
+
+fn default_kind() -> String {
+    "byoa".to_string()
+}
+
+fn default_visibility() -> String {
+    "public".to_string()
 }
 
 /// Archive location and format for a catalog entry.
@@ -243,15 +271,27 @@ impl CatalogCache {
 
     /// Fetch the remote catalog with conditional-request semantics.
     ///
+    /// When `token` is present it is sent as `Authorization: Bearer` so the
+    /// cloud catalog serves the full, login-visible view (anonymous sees only
+    /// `public` entries — §3.6). ETags are per-view, so switching between
+    /// anonymous and authed views naturally refreshes the cache.
+    ///
     /// Returns the (possibly cached) document plus whether the cache was
     /// refreshed during this call.
-    pub async fn sync(&self, url: &str) -> crate::Result<(CatalogDocument, bool)> {
+    pub async fn sync(
+        &self,
+        url: &str,
+        token: Option<&str>,
+    ) -> crate::Result<(CatalogDocument, bool)> {
         tokio::fs::create_dir_all(&self.dir).await?;
         let meta = self.load_meta().await;
 
         let mut request = self.client.get(url);
         if let Some(etag) = &meta.etag {
             request = request.header(reqwest::header::IF_NONE_MATCH, etag);
+        }
+        if let Some(token) = token {
+            request = request.bearer_auth(token);
         }
         let response = request.send().await.map_err(|e| {
             crate::error::SyscityError::Internal(format!("Catalog fetch failed: {e}"))
@@ -431,6 +471,11 @@ mod tests {
             display_name: id.to_string(),
             description: String::new(),
             icon: None,
+            entry_type: "connector".to_string(),
+            kind: "byoa".to_string(),
+            visibility: "public".to_string(),
+            credits_per_use: 0,
+            category: None,
             source: CatalogSource {
                 kind: "tar.gz".to_string(),
                 url: format!("https://example.com/{id}-{version}.tar.gz"),

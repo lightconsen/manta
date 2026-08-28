@@ -15,6 +15,8 @@ pub(super) async fn handle_mcp_list(req: &WsRequest, state: &Arc<GatewayState>) 
                 crate::mcp::McpTransport::Sse => "sse",
                 crate::mcp::McpTransport::StreamableHttp => "streamable_http",
                 crate::mcp::McpTransport::InProcess => "in_process",
+                #[cfg(feature = "cloud")]
+                crate::mcp::McpTransport::Cloud { .. } => "cloud",
             },
             "command": cfg.command,
             "args": cfg.args,

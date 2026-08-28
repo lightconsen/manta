@@ -24,6 +24,16 @@ pub enum McpTransport {
     /// in-process `tokio::mpsc` channel instead of a child-process pipe
     /// (mobile §4.6).
     InProcess,
+    /// Syscity Cloud MCP relay (feature `cloud`): tools/list + tools/call are
+    /// proxied to the cloud (`/api/v1/mcp/tools` + `/api/v1/mcp/call`) with the
+    /// session token, instead of a local MCP server.
+    #[cfg(feature = "cloud")]
+    Cloud {
+        /// Cloud connector id (catalog kind=cloud).
+        connector_id: String,
+        /// Cloud API base (e.g. https://api.syscity.net).
+        api_base: String,
+    },
 }
 
 // ─────────────────────────────────────────────

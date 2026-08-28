@@ -78,6 +78,19 @@ pub struct McpClient {
     /// In-process server handler, when the connection uses the in-process
     /// channel transport (mobile §4.6).
     in_process_handler: Option<Arc<dyn McpInProcessHandler>>,
+    /// Syscity Cloud relay target (feature `cloud`): set when connected with
+    /// `McpTransport::Cloud`. When present, `tools/list` + `tools/call` go to
+    /// the cloud relay REST endpoints instead of an MCP protocol channel.
+    #[cfg(feature = "cloud")]
+    cloud: Option<CloudRelay>,
+}
+
+/// Syscity Cloud MCP relay target (feature `cloud`).
+#[cfg(feature = "cloud")]
+#[derive(Debug, Clone)]
+pub struct CloudRelay {
+    pub connector_id: String,
+    pub api_base: String,
 }
 
 impl McpClient {
@@ -98,6 +111,8 @@ impl McpClient {
             server_config: None,
             access_token: None,
             in_process_handler: None,
+            #[cfg(feature = "cloud")]
+            cloud: None,
         }
     }
 
@@ -697,6 +712,15 @@ impl McpClient {
                 })?;
                 self.connect_in_process(config, Arc::clone(handler)).await
             }
+            #[cfg(feature = "cloud")]
+            McpTransport::Cloud { connector_id, api_base } => {
+                self.cloud = Some(CloudRelay { connector_id, api_base });
+                // The relay answers tools/list like a local server after its
+                // initialize handshake — populate the tool list now so the
+                // connector's tools are registered immediately. Requires a
+                // logged-in cloud session (double gate).
+                self.list_tools().await
+            }
         }
     }
 
@@ -807,6 +831,12 @@ impl McpClient {
 
     /// Refresh the tool list from the server.
     pub async fn list_tools(&mut self) -> crate::Result<()> {
+        #[cfg(feature = "cloud")]
+        if let Some(relay) = &self.cloud {
+            let token = cloud_session_token().await?;
+            self.tools = cloud_list_tools(relay, &token).await?;
+            return Ok(());
+        }
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
         let request = McpRequest {
             jsonrpc: "2.0".to_string(),
@@ -836,6 +866,11 @@ impl McpClient {
         name: &str,
         params: serde_json::Value,
     ) -> crate::Result<serde_json::Value> {
+        #[cfg(feature = "cloud")]
+        if let Some(relay) = &self.cloud {
+            let token = cloud_session_token().await?;
+            return cloud_call_tool(relay, &token, name, &params).await;
+        }
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
         let request = McpRequest {
             jsonrpc: "2.0".to_string(),
@@ -1119,5 +1154,182 @@ impl McpClient {
 impl Default for McpClient {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ── Cloud MCP relay (feature `cloud`) ──────────────────────────────────────
+
+/// The stored cloud session token, erroring when absent (double gate: a cloud
+/// relay call requires a logged-in session).
+#[cfg(feature = "cloud")]
+async fn cloud_session_token() -> crate::Result<String> {
+    crate::cloud::session::get_token().await.ok_or_else(|| {
+        crate::error::SyscityError::Internal(
+            "not signed in to Syscity Cloud — cloud connectors need a cloud session".to_string(),
+        )
+    })
+}
+
+/// List tools from a cloud-provisioned connector via `/api/v1/mcp/tools`.
+#[cfg(feature = "cloud")]
+async fn cloud_list_tools(
+    relay: &CloudRelay,
+    token: &str,
+) -> crate::Result<Vec<McpToolDefinition>> {
+    let value = cloud_relay_call(
+        relay,
+        token,
+        "/api/v1/mcp/tools",
+        &json!({
+            "connector_id": relay.connector_id,
+        }),
+    )
+    .await?;
+    let tools: Vec<McpToolDefinition> =
+        serde_json::from_value(value.get("tools").cloned().unwrap_or_default()).unwrap_or_default();
+    Ok(tools)
+}
+
+/// Call a tool on a cloud-provisioned connector via `/api/v1/mcp/call`.
+#[cfg(feature = "cloud")]
+async fn cloud_call_tool(
+    relay: &CloudRelay,
+    token: &str,
+    name: &str,
+    arguments: &serde_json::Value,
+) -> crate::Result<serde_json::Value> {
+    let value = cloud_relay_call(
+        relay,
+        token,
+        "/api/v1/mcp/call",
+        &json!({
+            "connector_id": relay.connector_id,
+            "name": name,
+            "arguments": arguments,
+        }),
+    )
+    .await?;
+    Ok(value.get("result").cloned().unwrap_or_default())
+}
+
+/// POST to a cloud relay endpoint with the session token, returning parsed JSON.
+#[cfg(feature = "cloud")]
+async fn cloud_relay_call(
+    relay: &CloudRelay,
+    token: &str,
+    path: &str,
+    body: &serde_json::Value,
+) -> crate::Result<serde_json::Value> {
+    let client = reqwest::Client::new();
+    let url = format!("{}{path}", relay.api_base);
+    let resp = client
+        .post(&url)
+        .bearer_auth(token)
+        .json(body)
+        .send()
+        .await?;
+    let status = resp.status();
+    let text = resp.text().await?;
+    if !status.is_success() {
+        return Err(crate::error::SyscityError::Internal(format!(
+            "cloud {path} status {status}: {text}"
+        )));
+    }
+    Ok(serde_json::from_str(&text)?)
+}
+
+#[cfg(all(test, feature = "cloud"))]
+mod cloud_relay_tests {
+    use super::*;
+    use axum::extract::Request;
+    use axum::response::Json;
+    use axum::{http::header, routing::post, Router};
+
+    /// A mock cloud MCP relay: `/api/v1/mcp/tools` lists tools and
+    /// `/api/v1/mcp/call` returns a canned result, echoing the received
+    /// `Authorization` header back so the test can assert the session token
+    /// was forwarded.
+    async fn spawn_mock_relay() -> (String, tokio::sync::watch::Receiver<Option<String>>) {
+        let (tx, rx) = tokio::sync::watch::channel(None::<String>);
+        let tx_tools = tx.clone();
+        let app = Router::new()
+            .route(
+                "/api/v1/mcp/tools",
+                post(move |req: Request| {
+                    let tx = tx_tools.clone();
+                    async move {
+                        tx.send(header_value(req.headers().get(header::AUTHORIZATION)))
+                            .ok();
+                        Json(json!({
+                            "connector_id": "market-data",
+                            "tools": [{
+                                "name": "quote",
+                                "description": "Get a market quote",
+                                "inputSchema": { "type": "object" }
+                            }]
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/api/v1/mcp/call",
+                post(move |req: Request| {
+                    let tx = tx.clone();
+                    async move {
+                        tx.send(header_value(req.headers().get(header::AUTHORIZATION)))
+                            .ok();
+                        Json(json!({
+                            "connector_id": "market-data",
+                            "result": { "ok": true },
+                            "x_credits_used": 3,
+                            "x_credit_balance": 97,
+                        }))
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{addr}"), rx)
+    }
+
+    fn header_value(h: Option<&header::HeaderValue>) -> Option<String> {
+        h.and_then(|v| v.to_str().ok()).map(str::to_string)
+    }
+
+    #[tokio::test]
+    async fn cloud_relay_lists_tools_and_calls_with_session_token() {
+        let (api_base, mut auth_rx) = spawn_mock_relay().await;
+        let relay = CloudRelay {
+            connector_id: "market-data".to_string(),
+            api_base: api_base.clone(),
+        };
+
+        let tools = cloud_list_tools(&relay, "tok_123").await.unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "quote");
+        // The session token must be forwarded as Bearer auth.
+        assert_eq!(*auth_rx.borrow_and_update(), Some("Bearer tok_123".to_string()));
+
+        let result = cloud_call_tool(&relay, "tok_123", "quote", &json!({ "symbol": "AAPL" }))
+            .await
+            .unwrap();
+        assert_eq!(result.get("ok").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(*auth_rx.borrow(), Some("Bearer tok_123".to_string()));
+    }
+
+    #[tokio::test]
+    async fn cloud_relay_reports_non_2xx_status() {
+        let (api_base, _rx) = spawn_mock_relay().await;
+        // Point at a path the mock does not serve → 404/405.
+        let relay = CloudRelay {
+            connector_id: "nope".to_string(),
+            api_base: api_base.clone(),
+        };
+        let err = cloud_relay_call(&relay, "tok", "/api/v1/nope", &json!({})).await;
+        assert!(err.is_err());
+        assert!(err.unwrap_err().to_string().contains("status"));
     }
 }

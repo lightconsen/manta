@@ -91,6 +91,10 @@ pub struct ConnectorManager {
     lifecycle: LifecycleRunner,
     /// Serializes state-mutating operations.
     write_lock: AsyncMutex<()>,
+    /// Syscity Cloud API base (feature `cloud`): kind=cloud connectors route
+    /// through the cloud MCP relay instead of a local MCP server.
+    #[cfg(feature = "cloud")]
+    cloud_api_base: Option<String>,
 }
 
 impl std::fmt::Debug for ConnectorManager {
@@ -105,10 +109,12 @@ impl std::fmt::Debug for ConnectorManager {
 
 impl ConnectorManager {
     /// Manager rooted at `root` (normally [`crate::dirs::connectors_dir()]).
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         root: PathBuf,
         mcp_manager: Arc<McpManager>,
         skill_storage: Arc<SkillStorage>,
+        #[cfg(feature = "cloud")] cloud_api_base: Option<String>,
     ) -> Self {
         Self {
             root,
@@ -116,7 +122,41 @@ impl ConnectorManager {
             skill_storage,
             lifecycle: LifecycleRunner::new(300),
             write_lock: AsyncMutex::new(()),
+            #[cfg(feature = "cloud")]
+            cloud_api_base,
         }
+    }
+
+    /// The `McpServerConfig` a connector should use: its local MCP config when
+    /// present, else (feature `cloud`) a cloud-relay config for kind=cloud
+    /// connectors, else `None` (CLI-only connectors have no MCP server).
+    fn server_config_for(
+        &self,
+        _id: &str,
+        manifest: &ConnectorManifest,
+    ) -> Option<crate::mcp::McpServerConfig> {
+        if let Some(mcp) = &manifest.mcp {
+            return Some(mcp.to_server_config());
+        }
+        #[cfg(feature = "cloud")]
+        if manifest.kind == "cloud" {
+            if let Some(api_base) = &self.cloud_api_base {
+                return Some(crate::mcp::McpServerConfig {
+                    transport: crate::mcp::McpTransport::Cloud {
+                        connector_id: _id.to_string(),
+                        api_base: api_base.clone(),
+                    },
+                    ..Default::default()
+                });
+            }
+        }
+        None
+    }
+
+    /// Whether `manifest` is a cloud-provisioned connector (`kind == "cloud"`),
+    /// independent of the cloud feature — callers gate on availability.
+    fn is_cloud_connector(manifest: &ConnectorManifest) -> bool {
+        manifest.kind == "cloud"
     }
 
     fn state_store(&self) -> StateStore {
@@ -262,8 +302,26 @@ impl ConnectorManager {
         let manifest = self.load_manifest_for(&record).await?;
         let mut next = record.clone();
 
-        if let Some(mcp) = &manifest.mcp {
-            let cfg = mcp.to_server_config();
+        // A cloud-provisioned connector has no local MCP server; it is usable
+        // only when cloud mode is active (feature + cloud.enabled + session).
+        // Fail loudly instead of enabling an inert connector with zero tools.
+        if Self::is_cloud_connector(&manifest) && self.server_config_for(id, &manifest).is_none() {
+            let reason = "connector is cloud-provisioned but cloud mode is not available \
+                          (enable the cloud feature, set SYSCITY_CLOUD_ENABLED=1 and sign in)"
+                .to_string();
+            next.state = StateKind::Error;
+            next.error = Some(reason.clone());
+            next.updated_at = Utc::now();
+            store
+                .update(|f| {
+                    put_record(f, next.clone());
+                    Ok(())
+                })
+                .await?;
+            return Err(crate::error::SyscityError::Internal(reason));
+        }
+
+        if let Some(cfg) = self.server_config_for(id, &manifest) {
             match self.mcp_manager.connect(id, cfg).await {
                 Ok(tools) => {
                     info!("Connector {id} connected ({} tools)", tools.len());
@@ -441,8 +499,15 @@ impl ConnectorManager {
     // ── Catalog operations ────────────────────────────────────────────────
 
     /// Refresh the remote catalog. Returns `(document, refreshed)`.
+    ///
+    /// When a cloud session token is stored it is attached to the request
+    /// (P1-4), so the catalog carries the login-visible view (member entries).
     pub async fn sync_catalog(&self, url: &str) -> crate::Result<(CatalogDocument, bool)> {
-        self.catalog_cache().sync(url).await
+        #[cfg(feature = "cloud")]
+        let token = crate::cloud::session::get_token().await;
+        #[cfg(not(feature = "cloud"))]
+        let token: Option<String> = None;
+        self.catalog_cache().sync(url, token.as_deref()).await
     }
 
     /// Locally cached catalog document (no network).
@@ -554,16 +619,12 @@ impl ConnectorManager {
                     continue;
                 }
             };
-            let Some(mcp) = &manifest.mcp else {
+            let Some(cfg) = self.server_config_for(&record.id, &manifest) else {
                 // CLI-only connectors have nothing to reconnect.
                 connected += 1;
                 continue;
             };
-            match self
-                .mcp_manager
-                .connect(&record.id, mcp.to_server_config())
-                .await
-            {
+            match self.mcp_manager.connect(&record.id, cfg).await {
                 Ok(tools) => {
                     info!("Connector {} reconnected ({} tools)", record.id, tools.len());
                     connected += 1;
@@ -819,6 +880,8 @@ mod tests {
             root.clone(),
             Arc::new(McpManager::new()),
             Arc::new(SkillStorage::with_user_dir(user_skills.clone())),
+            #[cfg(feature = "cloud")]
+            None,
         );
         Fixture {
             root,
@@ -963,5 +1026,104 @@ mod tests {
         // Guards the semver dependency used by lifecycle version checks.
         let v = semver::Version::parse("1.2.3").unwrap();
         assert!(semver::VersionReq::parse(">=1.0.0").unwrap().matches(&v));
+    }
+
+    /// A `kind=cloud` manifest with no local mcp/lifecycle/skills is valid and
+    /// parsed as a cloud connector regardless of the build feature.
+    #[test]
+    fn cloud_kind_manifest_parses() {
+        let m = ConnectorManifest::parse(
+            r#"{
+            "connector": { "id": "market-data", "display_name": "Market data", "version": "1.0.0" },
+            "kind": "cloud"
+        }"#,
+        )
+        .unwrap();
+        assert_eq!(m.kind, "cloud");
+        assert!(m.mcp.is_none());
+    }
+
+    /// Without the cloud feature, a cloud connector has no local server and no
+    /// relay → `server_config_for` yields no MCP config.
+    #[cfg(not(feature = "cloud"))]
+    #[tokio::test]
+    async fn cloud_connector_has_no_config_without_cloud_feature() {
+        let fx = fixture().await;
+        let m = ConnectorManifest::parse(
+            r#"{
+            "connector": { "id": "market-data", "version": "1.0.0" },
+            "kind": "cloud"
+        }"#,
+        )
+        .unwrap();
+        assert!(fx.manager.server_config_for("market-data", &m).is_none());
+    }
+
+    /// With the cloud feature + `cloud_api_base`, a `kind=cloud` connector
+    /// routes through the cloud MCP relay.
+    #[cfg(feature = "cloud")]
+    #[tokio::test]
+    async fn cloud_connector_routes_to_cloud_relay_when_cloud_mode_on() {
+        let base =
+            std::env::temp_dir().join(format!("syscity_connectors_{}", uuid::Uuid::new_v4()));
+        let root = base.join("connectors");
+        let user_skills = base.join("user-skills");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&user_skills).unwrap();
+        let manager = ConnectorManager::new(
+            root.clone(),
+            Arc::new(McpManager::new()),
+            Arc::new(SkillStorage::with_user_dir(user_skills)),
+            Some("https://api.syscity.net".to_string()),
+        );
+
+        let m = ConnectorManifest::parse(
+            r#"{
+            "connector": { "id": "market-data", "version": "1.0.0" },
+            "kind": "cloud"
+        }"#,
+        )
+        .unwrap();
+        let cfg = manager
+            .server_config_for("market-data", &m)
+            .expect("cloud relay config expected");
+        match cfg.transport {
+            crate::mcp::McpTransport::Cloud { connector_id, api_base } => {
+                assert_eq!(connector_id, "market-data");
+                assert_eq!(api_base, "https://api.syscity.net");
+            }
+            other => panic!("expected cloud relay transport, got {other:?}"),
+        }
+    }
+
+    /// A `kind=cloud` connector cannot be enabled without cloud mode — fail
+    /// loudly instead of enabling an inert connector.
+    #[cfg(feature = "cloud")]
+    #[tokio::test]
+    async fn cloud_connector_enable_fails_without_cloud_mode() {
+        let fx = fixture().await; // cloud_api_base = None (cloud mode off)
+        let src = fx.root.parent().unwrap().join("pkg-cloud");
+        write_package(
+            &src,
+            r#"{
+            "connector": { "id": "market-data", "display_name": "Market data", "version": "1.0.0" },
+            "kind": "cloud"
+        }"#,
+            false,
+        );
+        let summary = fx.manager.install_from_dir(&src).await.unwrap();
+        assert_eq!(summary.state, StateKind::Installed);
+
+        let err = fx.manager.enable("market-data").await.unwrap_err();
+        assert!(err.to_string().contains("cloud-provisioned"), "{err}");
+
+        // The failure is recorded on the state.
+        let list = fx.manager.list().await.unwrap();
+        assert_eq!(list[0].state, StateKind::Error);
+        assert!(list[0]
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("cloud-provisioned"));
     }
 }

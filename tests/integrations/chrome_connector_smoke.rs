@@ -56,6 +56,8 @@ async fn chrome_devtools_connector_full_cycle() {
         root.clone(),
         mcp_manager.clone(),
         Arc::new(SkillStorage::with_user_dir(user_skills.clone())),
+        #[cfg(feature = "cloud")]
+        None,
     );
 
     // ── 1. Install: cache copy + bundled-skill bridge ──────────────────────
