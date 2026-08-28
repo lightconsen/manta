@@ -15,6 +15,7 @@
 - [ ] **2. gateway 登录态 + 账号绑定**（P0-2）
       - 引擎 web/UI 加「登录」入口 → 云端 OAuth `GET /auth/{provider}?redirect=<engine>`（github/google/wechat）。
       - 回调拿 session token → 存本地（config/secrets）→ `GET /auth/me` 验证 → 显示账号/登录态。
+      - **首次启动的欢迎/身份向导页（onboarding，`GET/POST /onboarding`，登录前运行）直接提供「登录云端」选项**（与「本地使用」并列）——首启即可一键登录，无需进入后再找入口。云端入口从欢迎页起就可见。
 - [ ] **3. Session token 管理**
       - 存储 + 所有云端调用带 `Authorization: Bearer <token>` + 失效/登出处理（`POST /auth/logout` 吊销）。
 
