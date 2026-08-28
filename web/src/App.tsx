@@ -9,6 +9,7 @@ import {
   type NetworkStatus,
   type ChatMessage,
 } from "@/SyscityWebSocketTransport";
+import { cloudSubmitToken } from "@/lib/cloud";
 import { useChatStore } from "@/stores/chatStore";
 import { Sidebar } from "@/components/chat/Sidebar";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
@@ -134,6 +135,24 @@ function ChatApp() {
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
   // null = not yet checked; true = identity wizard completed.
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
+
+  // Handle the cloud OAuth callback: /cloud/login/callback#token=... — persist
+  // the session token, then return to the home view.
+  useEffect(() => {
+    if (window.location.pathname === "/cloud/login/callback") {
+      const token = new URLSearchParams(window.location.hash.slice(1)).get(
+        "token",
+      );
+      if (token) {
+        cloudSubmitToken(token).finally(() => {
+          window.location.replace("/");
+        });
+      } else {
+        window.location.replace("/");
+      }
+    }
+  }, []);
+
   const isMobile = useIsMobile();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const previewDocument = useChatStore((s) => s.previewDocument);

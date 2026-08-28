@@ -7,6 +7,7 @@ import { Select } from "@/components/ui/Select";
 import { Input } from "@/components/ui/Input";
 import { Toggle } from "@/components/ui/Toggle";
 import { ProviderLogo } from "@/components/ui/ProviderLogo";
+import { CloudSection } from "@/components/settings/CloudSection";
 import { UpdateSection } from "@/components/update/UpdateSection";
 
 interface GeneralSettingsProps {
@@ -52,6 +53,8 @@ export function GeneralSettings({ transport, config, models, currentTheme, updat
           </div>
         </div>
       </Section>
+
+      <CloudSection />
 
       <UpdateSection />
 
