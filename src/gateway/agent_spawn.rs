@@ -112,6 +112,9 @@ pub(crate) async fn spawn_agent_inner(
     // Snapshot the 在线质量监控 (§八) config once; agents read it lock-free at
     // the post-turn risk hook (`scan_turn_for_badcase`).
     let online_monitoring = state.config.read().await.eval.online_monitoring.clone();
+    // Snapshot the 压缩质量门禁 (§三) config; when enabled, the collector flags
+    // low-retention compressions as online risk signals.
+    let compression_quality = state.config.read().await.eval.compression_quality.clone();
 
     // Reserve the agent ID across the async setup to prevent concurrent
     // callers from both passing the duplicate check and creating ghost tasks.
@@ -182,6 +185,7 @@ pub(crate) async fn spawn_agent_inner(
             .with_chat_history(chat_history)
             .with_cost_guard(cost_guard)
             .with_online_monitoring(online_monitoring.clone())
+            .with_compression_quality(compression_quality.clone())
             .with_transcript_store(Arc::clone(&state.infra.transcript_store))
             .with_artifact_store(Arc::clone(&state.infra.artifact_store))
             .with_disk_budget(Arc::clone(&state.infra.disk_budget))
@@ -209,6 +213,7 @@ pub(crate) async fn spawn_agent_inner(
             .with_model(model.clone())
             .with_cost_guard(cost_guard)
             .with_online_monitoring(online_monitoring.clone())
+            .with_compression_quality(compression_quality.clone())
             .with_skill_manager(Arc::clone(&state.tools.skills_manager))
             .with_transcript_store(Arc::clone(&state.infra.transcript_store))
             .with_artifact_store(Arc::clone(&state.infra.artifact_store))

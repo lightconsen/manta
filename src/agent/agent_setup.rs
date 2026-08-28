@@ -71,6 +71,7 @@ impl Agent {
             risk_checker: None,
             pending_badcase_store: None,
             online_monitoring: crate::gateway::config::OnlineMonitoringConfig::default(),
+            compression_quality: crate::gateway::config::CompressionQualityConfig::default(),
         }
     }
 
@@ -475,6 +476,20 @@ impl Agent {
     ) -> Self {
         self.risk_checker = Some(risk_checker);
         self.pending_badcase_store = Some(store);
+        self
+    }
+
+    /// Set the 压缩质量门禁（§三）configuration snapshot.
+    ///
+    /// When `enabled`, turns whose context compression drops below
+    /// `min_retention_ratio` are collected into the pending-badcase pool as
+    /// `online:risk` signals. Disabled by default — existing deployments see
+    /// no behavioral change.
+    pub fn with_compression_quality(
+        mut self,
+        cfg: crate::gateway::config::CompressionQualityConfig,
+    ) -> Self {
+        self.compression_quality = cfg;
         self
     }
 

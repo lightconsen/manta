@@ -63,6 +63,11 @@ pub struct TurnMetricsCollector {
     plan_snapshot: Option<PlanSnapshot>,
     /// Inbound channel-layer observation, if any (see [`ChannelObservation`]).
     channel: Option<ChannelObservation>,
+    /// Token retention threshold below which a compression observation is
+    /// flagged `low_retention` (§三). Threaded from
+    /// `CompressionQualityConfig.min_retention_ratio`; defaults to
+    /// [`DEFAULT_MIN_RETENTION_RATIO`]. `<= 0.0` disables the flag.
+    min_retention_ratio: f64,
     terminal: bool,
     writer: Arc<TurnMetricsWriter>,
     metrics_sink: Option<Arc<dyn TurnMetricsSink>>,
@@ -131,6 +136,7 @@ impl TurnMetricsCollector {
             compressions: Vec::new(),
             plan_snapshot: None,
             channel: None,
+            min_retention_ratio: DEFAULT_MIN_RETENTION_RATIO,
             terminal: false,
             writer,
             metrics_sink: None,
@@ -162,9 +168,19 @@ impl TurnMetricsCollector {
         self.route_log.push(rec);
     }
 
+    /// Override the token retention threshold used to flag compression
+    /// observations `low_retention` (§三). Normally set from
+    /// `CompressionQualityConfig.min_retention_ratio` at collector construction.
+    /// `<= 0.0` disables the quality flag entirely.
+    pub fn with_min_retention_ratio(mut self, ratio: f64) -> Self {
+        self.min_retention_ratio = ratio;
+        self
+    }
+
     /// Record a context-compression event. `triggered_at_ms` is computed as the
     /// elapsed time since the turn started; `retention_ratio` and
-    /// `quality_flag` are derived from the token counts (§三).
+    /// `quality_flag` are derived from the token counts against
+    /// [`Self::min_retention_ratio`] (§三).
     pub fn record_compression(
         &mut self,
         tokens_before: usize,
@@ -176,8 +192,32 @@ impl TurnMetricsCollector {
             tokens_before,
             tokens_after,
             strategy,
-            DEFAULT_MIN_RETENTION_RATIO,
+            self.min_retention_ratio,
         ));
+    }
+
+    /// Compression-quality risk signals for this turn (§三).
+    ///
+    /// Returns one risk string per compression observation whose retention
+    /// ratio falls below [`Self::min_retention_ratio`]. A threshold `<= 0.0`
+    /// disables the signal (nothing is ever flagged), so default-configured
+    /// agents produce no compression badcases. The strategy is included in the
+    /// signal so a reviewer can judge whether the drop was expected
+    /// (`llm_summary`) or suspicious (`heuristic_summary` middle-drop).
+    pub fn compression_risks(&self) -> Vec<String> {
+        if self.min_retention_ratio <= 0.0 {
+            return Vec::new();
+        }
+        self.compressions
+            .iter()
+            .filter(|obs| obs.retention_ratio < self.min_retention_ratio)
+            .map(|obs| {
+                format!(
+                    "context compression low retention (ratio={:.3}, strategy={}, tokens {}→{})",
+                    obs.retention_ratio, obs.strategy, obs.tokens_before, obs.tokens_after
+                )
+            })
+            .collect()
     }
 
     /// Record the planner DAG snapshot for this turn.
@@ -708,6 +748,28 @@ mod tests {
         assert_eq!(rec.plan_snapshot.as_ref().unwrap().steps[0].id, "task_1");
         assert!(rec.channel.as_ref().unwrap().debounced);
         assert_eq!(rec.channel.as_ref().unwrap().route.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn compression_risks_flags_low_retention_only() {
+        // Default threshold 0.5: a 1000→200 compaction (ratio 0.2) is flagged;
+        // a 1000→800 compaction (ratio 0.8) is not.
+        let mut c = make_collector(&tempfile::tempdir().unwrap());
+        c.record_compression(1000, 200, "heuristic_summary");
+        c.record_compression(1000, 800, "llm_summary");
+
+        let risks = c.compression_risks();
+        assert_eq!(risks.len(), 1);
+        assert!(risks[0].contains("low retention"));
+        assert!(risks[0].contains("heuristic_summary"));
+        assert!(risks[0].contains("1000→200"));
+    }
+
+    #[test]
+    fn compression_risks_disabled_by_nonpositive_threshold() {
+        let mut c = make_collector(&tempfile::tempdir().unwrap()).with_min_retention_ratio(0.0);
+        c.record_compression(1000, 200, "llm_summary");
+        assert!(c.compression_risks().is_empty());
     }
 
     #[tokio::test]

@@ -690,12 +690,15 @@ impl Agent {
                 cache_collector.finish(&cached.response).await;
 
                 // Online risk scan for the cache-hit turn (no tools ran).
+                // Cache hits perform no compaction, so there are no
+                // compression-quality risks to carry.
                 self.scan_turn_for_badcase(
                     &content,
                     &cached.response,
                     0,
                     &cache_turn_id,
                     &conversation_id,
+                    Vec::new(),
                 );
 
                 // Return cached response
@@ -870,7 +873,8 @@ impl Agent {
             self.session_store
                 .clone()
                 .map(|s| -> Arc<dyn TurnMetricsSink> { s }),
-        );
+        )
+        .with_min_retention_ratio(self.compression_quality.min_retention_ratio);
 
         // Capture the stable turn id BEFORE the collector is consumed by
         // finish()/fail()/abort(); it is threaded into the Completed event.
@@ -896,6 +900,16 @@ impl Agent {
                 &message.user_id.0,
             )
             .await;
+
+        // Compression-quality risk signals (§三). The compaction observations
+        // are recorded during the LLM loop, so capture them BEFORE the collector
+        // is consumed by finish()/abort()/fail() below. Gated by
+        // `compression_quality.enabled` so default configs collect nothing.
+        let compression_risks = if self.compression_quality.enabled {
+            collector.compression_risks()
+        } else {
+            Vec::new()
+        };
 
         // Complete or interrupt the turn.
         let llm_result = match llm_result {
@@ -1074,6 +1088,7 @@ impl Agent {
             tool_call_count,
             &turn_id,
             &conversation_id,
+            compression_risks,
         );
 
         // Create outgoing message with full metadata
@@ -1193,6 +1208,7 @@ impl Agent {
         tool_call_count: usize,
         turn_id: &str,
         conversation_id: &str,
+        compression_risks: Vec<String>,
     ) {
         let (Some(checker), Some(store)) =
             (self.risk_checker.as_ref(), self.pending_badcase_store.as_ref())
@@ -1208,7 +1224,10 @@ impl Agent {
             response: response.to_string(),
             tool_call_count,
         };
-        let risks = checker.scan_turn(&record);
+        let mut risks = checker.scan_turn(&record);
+        // §三 压缩质量门禁：低保留率压缩是又一类在线风险信号，与响应侧风险
+        // 合并后统一进 pending 池（同样受 dedup 保护，additive，不改判）。
+        risks.extend(compression_risks);
         if risks.is_empty() {
             return;
         }
@@ -3056,6 +3075,7 @@ mod tests {
             0,
             "turn-judged",
             "conv-judged",
+            Vec::new(),
         );
 
         let rows = wait_for_pending(&store, 1).await;
@@ -3104,6 +3124,7 @@ mod tests {
             0,
             "turn-low",
             "conv-low",
+            Vec::new(),
         );
 
         let rows = wait_for_pending(&store, 1).await;
@@ -3148,6 +3169,7 @@ mod tests {
             0,
             "turn-disabled",
             "conv-disabled",
+            Vec::new(),
         );
 
         let rows = wait_for_pending(&store, 1).await;
@@ -3163,6 +3185,55 @@ mod tests {
         assert!(
             !row.risk_signals.iter().any(|s| s.starts_with("llm judge")),
             "no judge verdict when monitoring is disabled"
+        );
+    }
+
+    /// §三 压缩质量门禁：低保留率压缩是又一类在线风险信号。即使 `online_monitoring`
+    /// 保持默认（disabled），压缩风险也应被并入 pending 池，且不触发 deep judge。
+    #[tokio::test]
+    async fn test_compression_risk_collects_pending_badcase() {
+        let provider = Arc::new(JudgeRecordingProvider {
+            judge_calls: AtomicUsize::new(0),
+        });
+        let store = Arc::new(
+            crate::eval::PendingBadcaseStore::new("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        let agent = super::Agent::new(
+            super::AgentConfig::default(),
+            provider.clone(),
+            Arc::new(crate::tools::ToolRegistry::new()),
+        )
+        .with_badcase_pipeline(crate::eval::RiskSignalChecker::default(), store.clone());
+        // `online_monitoring` defaults to disabled → no judge even though a
+        // compression risk is present.
+
+        // Response side is clean, but a low-retention compaction was observed
+        // (ratio 0.100 < default 0.5). The signal rides along as a badcase.
+        agent.scan_turn_for_badcase(
+            "compress my context",
+            "A perfectly safe response with no response-side risks",
+            3,
+            "turn-compressed",
+            "conv-compressed",
+            vec!["context compression low retention (ratio=0.100, strategy=heuristic_summary, tokens 5000→500)"
+                .to_string()],
+        );
+
+        let rows = wait_for_pending(&store, 1).await;
+        assert_eq!(
+            provider.judge_calls.load(Ordering::SeqCst),
+            0,
+            "judge must NOT run for a compression-only risk when monitoring is disabled"
+        );
+        let row = rows
+            .iter()
+            .find(|r| r.turn_id.as_deref() == Some("turn-compressed"))
+            .expect("compression-risk row");
+        assert!(
+            row.risk_signals.iter().any(|s| s.contains("low retention")),
+            "compression risk must be merged into the badcase row"
         );
     }
 }

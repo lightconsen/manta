@@ -277,6 +277,10 @@ pub struct Agent {
     /// Snapshot at spawn time from `GatewayConfig.eval.online_monitoring`; the
     /// judge trigger in `scan_turn_for_badcase` reads this without any lock.
     online_monitoring: crate::gateway::config::OnlineMonitoringConfig,
+    /// 压缩质量门禁（§三）：当 `enabled` 时，turn 内低保留率压缩被当作在线
+    /// 风险信号收集进 pending 池（additive，不改判）。`min_retention_ratio`
+    /// 同时传给 `TurnMetricsCollector` 以量化 `quality_flag`。
+    compression_quality: crate::gateway::config::CompressionQualityConfig,
 }
 
 /// RAII guard that reinserts a Thread into `thread_map` on drop.
