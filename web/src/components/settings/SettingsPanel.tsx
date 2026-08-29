@@ -19,10 +19,12 @@ import { McpEnvModal } from "@/components/settings/McpEnvModal";
 interface SettingsPanelProps {
   transport: SyscityWebSocketTransport;
   onClose: () => void;
+  /** Tab to open on (e.g. "marketplace" when launched from the sidebar). */
+  initialTab?: string;
 }
 
-export function SettingsPanel({ transport, onClose }: SettingsPanelProps) {
-  const d = useSettingsData(transport);
+export function SettingsPanel({ transport, onClose, initialTab = "general" }: SettingsPanelProps) {
+  const d = useSettingsData(transport, initialTab);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-page">

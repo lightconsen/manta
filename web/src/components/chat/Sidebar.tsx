@@ -12,6 +12,7 @@ import {
   Pin,
   PinOff,
   Loader2,
+  Store,
 } from "lucide-react";
 import { useThemeStore } from "@/stores/themeStore";
 import { StatusDot } from "./StatusDot";
@@ -47,6 +48,8 @@ interface SidebarProps {
   onCreateSessionWithAgent: (agentId: string) => void;
   networkStatus: NetworkStatus;
   onOpenSettings: () => void;
+  /** Open the marketplace directly (Settings → Marketplace tab). */
+  onOpenMarketplace: () => void;
   onRenameSession?: (id: string, name: string) => void | Promise<void>;
   onDeleteSession?: (id: string) => void | Promise<void>;
   onPinSession?: (id: string, pinned: boolean) => void | Promise<void>;
@@ -64,6 +67,7 @@ export function Sidebar({
   onCreateSessionWithAgent,
   networkStatus,
   onOpenSettings,
+  onOpenMarketplace,
   onRenameSession,
   onDeleteSession,
   onPinSession,
@@ -347,6 +351,21 @@ export function Sidebar({
           </div>
         </div>
       </div>
+
+      {/* Marketplace entry — a prominent shortcut above the bottom controls. */}
+      {!collapsed && (
+        <div className="px-1 pb-1 shrink-0">
+          <button
+            onClick={onOpenMarketplace}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
+            title="Marketplace"
+            aria-label="Marketplace"
+          >
+            <Store className="w-4 h-4 shrink-0" />
+            <span>Marketplace</span>
+          </button>
+        </div>
+      )}
 
       {/* Bottom: Network + Theme + Settings */}
       <div className="p-3 shrink-0 border-t border-subtle">

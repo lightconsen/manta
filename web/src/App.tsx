@@ -132,10 +132,18 @@ function ChatApp() {
   const [runningSessionIds, setRunningSessionIds] = useState<string[]>([]);
   const [sessionKey, setSessionKey] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Tab to open settings on (e.g. "marketplace" via the sidebar shortcut).
+  const [settingsTab, setSettingsTab] = useState("general");
   // null = not yet checked / not connected; true = no LLM configured (Welcome).
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
   // null = not yet checked; true = identity wizard completed.
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
+
+  /** Open settings on a specific tab (e.g. "marketplace" from the sidebar). */
+  const openSettings = (tab: string) => {
+    setSettingsTab(tab);
+    setSettingsOpen(true);
+  };
 
   // Handle the cloud OAuth callback: /cloud/login/callback#token=... — persist
   // the session token, then return to the home view.
@@ -685,7 +693,8 @@ function ChatApp() {
           agents={agents}
           onCreateSessionWithAgent={handleCreateSessionWithAgent}
           networkStatus={networkStatus}
-          onOpenSettings={() => setSettingsOpen((s) => !s)}
+          onOpenSettings={() => openSettings("general")}
+          onOpenMarketplace={() => openSettings("marketplace")}
           onRenameSession={handleRenameSession}
           onDeleteSession={handleDeleteSession}
           onPinSession={handlePinSession}
@@ -739,7 +748,11 @@ function ChatApp() {
               }}
               networkStatus={networkStatus}
               onOpenSettings={() => {
-                setSettingsOpen((s) => !s);
+                openSettings("general");
+                setMobileNavOpen(false);
+              }}
+              onOpenMarketplace={() => {
+                openSettings("marketplace");
                 setMobileNavOpen(false);
               }}
               onRenameSession={handleRenameSession}
@@ -756,7 +769,12 @@ function ChatApp() {
         {/* First-login cloud guidance (shown once after a successful login). */}
         {!settingsOpen && <CloudEnabledBanner />}
         {settingsOpen ? (
-          <SettingsPanel transport={transport} onClose={() => setSettingsOpen(false)} />
+          <SettingsPanel
+            key={settingsTab}
+            transport={transport}
+            initialTab={settingsTab}
+            onClose={() => setSettingsOpen(false)}
+          />
         ) : (previewDocument || workspacePanelOpen) && !isMobile ? (
           <div
             ref={splitContainerRef}

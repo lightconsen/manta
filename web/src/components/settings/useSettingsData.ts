@@ -108,14 +108,14 @@ export interface ToastState {
 
 // Hook -------------------------------------------------------------------------
 
-export function useSettingsData(transport: SyscityWebSocketTransport) {
+export function useSettingsData(transport: SyscityWebSocketTransport, initialTab = "general") {
   const [config, setConfig] = useState<SyscityConfig>({});
   const [models, setModels] = useState<Array<{ id: string; name: string; provider: string; provider_name: string }>>([]);
   const [agentRegistry, setAgentRegistry] = useState<Array<{ id: string; display_name: string; emoji?: string; is_valid: boolean; has_heartbeat: boolean }>>([]);
   const [crons, setCrons] = useState<Array<Record<string, unknown>>>([]);
   const [skills, setSkills] = useState<Array<Record<string, unknown>>>([]);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState("general");
+  const [activeTab, setActiveTab] = useState(initialTab);
   const currentTheme = useThemeStore((s) => s.theme);
   const [channelActionLoading, setChannelActionLoading] = useState<string>("");
   const [showAddModel, setShowAddModel] = useState(false);
