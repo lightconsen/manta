@@ -25,9 +25,14 @@ export interface CloudUsage {
   by_category: Array<{ category: string; calls: number; credits: number }>;
 }
 
+/** Engine status — the cloud block is `null` in default (non-cloud) builds. */
 export async function cloudStatus(): Promise<CloudStatus> {
-  const res = await fetch("/api/v1/cloud/status");
-  return res.json();
+  const res = await fetch("/api/v1/status");
+  if (!res.ok) throw new Error(`status: HTTP ${res.status}`);
+  const body = await res.json();
+  const cloud = body.cloud as CloudStatus | null | undefined;
+  if (!cloud) return { enabled: false, logged_in: false, user: null };
+  return cloud;
 }
 
 /** Plan + credit balance (+ low-credit/overdraft flags). */

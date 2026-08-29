@@ -76,24 +76,6 @@ pub async fn token_handler(
     }
 }
 
-/// GET /api/v1/cloud/status — enabled + logged-in + user.
-pub async fn status_handler(State(state): State<Arc<GatewayState>>) -> Response {
-    let cfg = { state.config.read().await.cloud.clone() };
-    if !cfg.enabled {
-        return Json(json!({ "enabled": false, "logged_in": false, "user": null })).into_response();
-    }
-    let logged_in = session::logged_in().await;
-    let mut user = None;
-    if logged_in {
-        if let Some(token) = session::get_token().await {
-            if let Ok(Some(u)) = CloudClient::new(&cfg, token).me().await {
-                user = Some(u);
-            }
-        }
-    }
-    Json(json!({ "enabled": true, "logged_in": logged_in, "user": user })).into_response()
-}
-
 /// POST /api/v1/cloud/logout — forget the stored session token.
 pub async fn logout_handler(State(_state): State<Arc<GatewayState>>) -> Response {
     let _ = session::clear_token().await;

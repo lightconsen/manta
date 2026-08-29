@@ -988,6 +988,7 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
         .route("/ready", get(super::ready_handler))
         .route("/live", get(super::live_handler))
         .route("/api/v1/health", get(super::health_handler))
+        .route("/api/v1/status", get(super::status_handler))
         .route("/api/v1/metrics", get(super::metrics_handler))
         .route("/api/v1/artifacts/*path", get(super::artifact_handler))
         .route(
@@ -1169,7 +1170,6 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
     let cloud_router = Router::new()
         .route("/api/v1/cloud/login", get(super::handlers::cloud::login_handler))
         .route("/api/v1/cloud/token", post(super::handlers::cloud::token_handler))
-        .route("/api/v1/cloud/status", get(super::handlers::cloud::status_handler))
         .route("/api/v1/cloud/logout", post(super::handlers::cloud::logout_handler))
         .route("/api/v1/cloud/subscription", get(super::handlers::cloud::subscription_handler))
         .route("/api/v1/cloud/usage", get(super::handlers::cloud::usage_handler))

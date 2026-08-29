@@ -336,6 +336,12 @@ async fn api_status_returns_summary() {
     assert!(json["agents"]["total"].is_number());
     assert!(json["channels"].is_number());
     assert!(json["version"].is_string());
+    // The cloud block is always present: null in default builds, an object
+    // reflecting the runtime config in cloud builds.
+    #[cfg(feature = "cloud")]
+    assert!(json["cloud"]["enabled"].is_boolean(), "{json}");
+    #[cfg(not(feature = "cloud"))]
+    assert!(json["cloud"].is_null(), "{json}");
 }
 
 // ── Auth mode ambiguity detection ──
