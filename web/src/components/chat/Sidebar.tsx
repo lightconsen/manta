@@ -179,7 +179,7 @@ export function Sidebar({
         collapsed ? "w-16" : "w-64"
       }`}
     >
-      {/* Top: Logo + Name + Account + Collapse */}
+      {/* Top: Logo + Name + Collapse */}
       <div className="h-14 flex items-center justify-between px-3 shrink-0">
         <div className="flex items-center gap-2 overflow-hidden">
           <img
@@ -193,9 +193,6 @@ export function Sidebar({
               Syscity
             </span>
           )}
-          {/* Account/login entry, at the top between the logo and + New Session.
-              Hidden when collapsed (the collapsed top bar is too tight). */}
-          {!collapsed && <AccountButton />}
         </div>
         <button
           onClick={onToggle}
@@ -210,6 +207,14 @@ export function Sidebar({
           )}
         </button>
       </div>
+
+      {/* Account/login entry, in its own row right below the logo bar (above
+          + New Session). Hidden when collapsed (no room in the narrow bar). */}
+      {!collapsed && (
+        <div className="px-3 pb-2 shrink-0">
+          <AccountButton />
+        </div>
+      )}
 
       <div
         ref={listContainerRef}
