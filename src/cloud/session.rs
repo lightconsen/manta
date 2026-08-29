@@ -37,11 +37,17 @@ pub async fn logged_in() -> bool {
     get_token().await.is_some()
 }
 
-/// Cloud OAuth login URL for a provider. After auth the cloud redirects back
-/// to `config.redirect_base#token=...`.
-pub fn login_url(cfg: &CloudConfig, provider: &str) -> String {
-    let redirect = format!("{}{}", cfg.redirect_base, "");
-    format!("{}/auth/{provider}?redirect={}", cfg.api_base, urlencoding(&redirect))
+/// Cloud login URL: the console's provider-chooser page. The user picks
+/// GitHub/Google/WeChat there; the console passes `redirect` (the engine
+/// callback) through to the chosen provider's OAuth, which lands back on
+/// `config.redirect_base#token=...`.
+pub fn login_url(cfg: &CloudConfig, _provider: &str) -> String {
+    let redirect = cfg.redirect_base.clone();
+    format!(
+        "{}/login?redirect={}",
+        cfg.console_url.trim_end_matches('/'),
+        urlencoding(&redirect)
+    )
 }
 
 /// Minimal percent-encoding for the `redirect` query param.

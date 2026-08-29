@@ -1242,6 +1242,7 @@ impl WebSearchTool {
             enabled: true,
             api_base: api_base.to_string(),
             redirect_base: String::new(),
+            console_url: String::new(),
         };
         let resp = crate::cloud::client::CloudClient::new(&cfg, token)
             .search(query, limit as u32)

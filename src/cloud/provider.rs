@@ -45,6 +45,7 @@ mod tests {
             enabled: true,
             api_base: "https://api.example.com".to_string(),
             redirect_base: "http://localhost:18080/cloud/login/callback".to_string(),
+            console_url: "https://api.example.com".to_string(),
         }
     }
 

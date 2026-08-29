@@ -22,6 +22,13 @@ pub struct CloudConfig {
     /// Engine web URL the cloud OAuth callback lands on after login.
     #[serde(default = "default_redirect_base")]
     pub redirect_base: String,
+    /// The cloud **console** origin hosting the provider-chooser login page
+    /// (e.g. `http://localhost:5173` in dev). Sign-in redirects here so the
+    /// user picks GitHub/Google/WeChat on the cloud, instead of the engine
+    /// hardcoding a provider. The console's `/login?redirect=…` passes the
+    /// engine callback through to the chosen provider's OAuth.
+    #[serde(default = "default_console_url")]
+    pub console_url: String,
 }
 
 fn default_api_base() -> String {
@@ -30,6 +37,12 @@ fn default_api_base() -> String {
 
 fn default_redirect_base() -> String {
     "http://localhost:18080/cloud/login/callback".to_string()
+}
+
+fn default_console_url() -> String {
+    // Assume the console SPA is served at the API host by default; dev setups
+    // override with SYSCITY_CLOUD_CONSOLE_URL (e.g. http://localhost:5173).
+    default_api_base()
 }
 
 impl Default for CloudConfig {
@@ -45,6 +58,8 @@ impl Default for CloudConfig {
                 .unwrap_or_else(|_| default_api_base()),
             redirect_base: std::env::var("SYSCITY_CLOUD_REDIRECT_BASE")
                 .unwrap_or_else(|_| default_redirect_base()),
+            console_url: std::env::var("SYSCITY_CLOUD_CONSOLE_URL")
+                .unwrap_or_else(|_| default_console_url()),
         }
     }
 }
