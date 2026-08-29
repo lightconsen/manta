@@ -34,6 +34,9 @@ impl CloudClient {
         let url = format!("{}/auth/me", self.api_base);
         let resp = self.auth(self.http.get(&url)).send().await?;
         if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+            // Expired or revoked session — forget the token so the UI flips
+            // back to "Sign in" instead of reporting a dead signed-in state.
+            let _ = crate::cloud::session::clear_token().await;
             return Ok(None);
         }
         if !resp.status().is_success() {
@@ -138,10 +141,17 @@ impl CloudClient {
     }
 
     /// Read a response: error on non-success status, else parse JSON.
+    ///
+    /// A `401 Unauthorized` means the stored session token is invalid, expired,
+    /// or revoked — forget it (fail-safe: the UI then reports signed-out and
+    /// the user re-logs-in) before surfacing the error.
     async fn parse_response(&self, resp: reqwest::Response, what: &str) -> Result<Value> {
         let status = resp.status();
         let text = resp.text().await?;
         if !status.is_success() {
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                let _ = crate::cloud::session::clear_token().await;
+            }
             return Err(SyscityError::Internal(format!("cloud {what} status {status}: {text}")));
         }
         Ok(serde_json::from_str(&text)?)
