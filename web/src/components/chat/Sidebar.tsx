@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { useThemeStore } from "@/stores/themeStore";
 import { StatusDot } from "./StatusDot";
+import { AccountButton } from "./AccountButton";
 import type { NetworkStatus } from "@/SyscityWebSocketTransport";
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 
@@ -375,6 +376,8 @@ export function Sidebar({
             >
               <Settings className="w-4 h-4" />
             </button>
+            {/* Account/login entry — layout: [网络] [主题] [设置] [头像/登录] */}
+            <AccountButton />
           </div>
         </div>
       </div>
