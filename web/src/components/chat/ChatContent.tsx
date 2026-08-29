@@ -10,7 +10,7 @@ import { CommandPalette } from "./CommandPalette";
 import { ModelSelector } from "./ModelSelector";
 import { getCommandCompletions, type CommandDef } from "@/slash-commands";
 import { useChatStore } from "@/stores/chatStore";
-import { Mic, Image, Paperclip, Square, Send, ChevronDown, FolderOpen } from "lucide-react";
+import { Mic, Paperclip, Square, Send, ChevronDown, FolderOpen } from "lucide-react";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import { MessageSkeleton } from "@/components/ui/Skeleton";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
@@ -421,23 +421,13 @@ export function ChatContent({ transport }: ChatContentProps) {
                 </button>
                 <button
                   type="button"
-                  title="Upload image"
-                  aria-label="Upload image"
+                  title="Attach an image or file"
+                  aria-label="Attach an image or file"
                   className="p-2 rounded-lg text-secondary hover:text-primary-600 dark:hover:text-primary-400 hover:bg-black/5 dark:hover:bg-white/5 transition"
-                  onClick={() => alert("Image upload coming soon")}
-                >
-                  <Image className="w-5 h-5" />
-                </button>
-                <button
-                  type="button"
-                  title="Upload file"
-                  aria-label="Upload file"
-                  className="p-2 rounded-lg text-secondary hover:text-primary-600 dark:hover:text-primary-400 hover:bg-black/5 dark:hover:bg-white/5 transition"
-                  onClick={() => alert("File upload coming soon")}
+                  onClick={() => alert("Attachments coming soon")}
                 >
                   <Paperclip className="w-5 h-5" />
                 </button>
-                <ModelSelector transport={transport} />
                 {!isMobile && (
                   <button
                     type="button"
@@ -455,21 +445,24 @@ export function ChatContent({ transport }: ChatContentProps) {
                   </button>
                 )}
               </div>
-              {isRunning ? (
-                <button
-                  type="button"
-                  onClick={() => transport.abort(transport.getSessionId())}
-                  title="Stop generating"
-                  aria-label="Stop generating"
-                  className="shrink-0 p-2 rounded-lg bg-red-500 hover:bg-red-600 text-white transition shadow-sm"
-                >
-                  <Square className="w-4 h-4 fill-current" />
-                </button>
-              ) : (
-                <ComposerPrimitive.Send className="shrink-0 p-2 rounded-lg bg-gradient-to-r from-primary-500 to-primary-700 hover:from-primary-600 hover:to-primary-800 disabled:opacity-40 text-white transition shadow-sm">
-                  <Send className="w-4 h-4" />
-                </ComposerPrimitive.Send>
-              )}
+              <div className="flex items-center gap-1">
+                <ModelSelector transport={transport} />
+                {isRunning ? (
+                  <button
+                    type="button"
+                    onClick={() => transport.abort(transport.getSessionId())}
+                    title="Stop generating"
+                    aria-label="Stop generating"
+                    className="shrink-0 p-2 rounded-lg bg-red-500 hover:bg-red-600 text-white transition shadow-sm"
+                  >
+                    <Square className="w-4 h-4 fill-current" />
+                  </button>
+                ) : (
+                  <ComposerPrimitive.Send className="shrink-0 p-2 rounded-lg bg-gradient-to-r from-primary-500 to-primary-700 hover:from-primary-600 hover:to-primary-800 disabled:opacity-40 text-white transition shadow-sm">
+                    <Send className="w-4 h-4" />
+                  </ComposerPrimitive.Send>
+                )}
+              </div>
             </div>
           </div>
         </ComposerPrimitive.Root>
