@@ -17,6 +17,7 @@ const en = {
     quickstart: "Quick Start",
     starLong: "Star on GitHub",
     starShort: "Star",
+    cloud: "Syscity Cloud",
     switchTo: "中文",
   },
   hero: {
@@ -132,6 +133,7 @@ const zh: Dict = {
     quickstart: "快速开始",
     starLong: "在 GitHub 上点赞",
     starShort: "Star",
+    cloud: "Syscity 云端",
     switchTo: "EN",
   },
   hero: {

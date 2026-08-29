@@ -52,12 +52,12 @@ export default function Nav() {
             <span className="sm:hidden">{t.nav.starShort}</span>
           </a>
           <a
-            href="https://discord.gg/aaXghvzD"
+            href="https://cloud.syscity.net"
             target="_blank"
             rel="noreferrer"
             className="hidden rounded-md bg-brand-500 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-brand-600 sm:inline-flex"
           >
-            Discord
+            {t.nav.cloud}
           </a>
         </div>
       </nav>
