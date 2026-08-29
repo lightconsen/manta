@@ -31,6 +31,16 @@ export default function Footer() {
               <li><a href="#features" className="transition hover:text-ink">{t.footer.features}</a></li>
               <li><a href="#platforms" className="transition hover:text-ink">{t.footer.platforms}</a></li>
               <li><a href="#quickstart" className="transition hover:text-ink">{t.footer.quickstart}</a></li>
+              <li>
+                <a
+                  href="https://cloud.syscity.net"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="transition hover:text-ink"
+                >
+                  {t.footer.cloud}
+                </a>
+              </li>
             </ul>
           </div>
 

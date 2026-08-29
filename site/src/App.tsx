@@ -4,6 +4,7 @@ import Demo from "./components/Demo";
 import Platforms from "./components/Platforms";
 import Features from "./components/Features";
 import ActionCognition from "./components/ActionCognition";
+import CloudSection from "./components/Cloud";
 import QuickStart from "./components/QuickStart";
 import Footer from "./components/Footer";
 import { LangProvider } from "./i18n";
@@ -19,6 +20,7 @@ export default function App() {
           <Features />
           <ActionCognition />
           <Platforms />
+          <CloudSection />
           <QuickStart />
         </main>
         <Footer />
