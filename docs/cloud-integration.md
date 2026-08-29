@@ -21,11 +21,42 @@
       - 所有云集成代码收进 `cloud` feature（默认关闭、运行时双闸 `cloud.enabled` + 登录态）。
       - 目的：公开仓库不含任何云耦合，运营侧代码可审计。
 - [x] **2. gateway 登录态 + 账号绑定**（P0-2）
-      - 引擎 web/UI 加「登录」入口 → 云端 OAuth `GET /auth/{provider}?redirect=<engine>`（github/google/wechat）。
+      - 引擎 web/UI 加「登录」入口 → **popup 打开云端 console 的登录页**（`{console_url}/login?redirect=<engine>`，用户选 github/google/wechat）→ 云端 OAuth → 回调回引擎 `redirect_base#token=...`。
+      - popup 自关 + postMessage 通知引擎 web；引擎 web 轮询 `/api/v1/status` 兜底 → 登录态自动刷新（按钮从「Signing in…」变头像）。
       - 回调拿 session token → 存本地（config/secrets）→ `GET /auth/me` 验证 → 显示账号/登录态。
       - **首次启动的欢迎/身份向导页（onboarding，`GET/POST /onboarding`，登录前运行）直接提供「登录云端」选项**（与「本地使用」并列）——首启即可一键登录，无需进入后再找入口。云端入口从欢迎页起就可见。
 - [x] **3. Session token 管理**
       - 存储 + 所有云端调用带 `Authorization: Bearer <token>` + 失效/登出处理（`POST /auth/logout` 吊销）。
+
+### 登录流程（popup 复用云端 console 登录页）
+
+```
+引擎 Sign in（sidebar 顶部按钮，popup 打开新 tab）
+  → GET /api/v1/cloud/login              （引擎 login_handler，校验 cloud.enabled）
+  → 302 → {console_url}/login?redirect=<engine 回调>
+  → console 登录页列出 GitHub/Google/微信   （console 读取 ?redirect= 并透传）
+  → 用户选 provider → /auth/{provider}?redirect=<engine 回调>
+  → 云端 OAuth → 签发 session token
+  → 302 回 <engine 回调>#token=...        （redirect 必须在 server 白名单内）
+  → popup 里：POST /api/v1/cloud/token（存 token）→ postMessage{type:"syscity:login"} → 自关
+  → 引擎 web：收到 postMessage 立即查 /api/v1/status，轮询兜底（1.5s×60s）
+  → logged_in=true → 按钮变头像，首次登录横幅出现
+```
+
+**要点**：
+- 登录方式的选择在**云端 console** 上，引擎不硬编码 provider；`provider` 参数已忽略。
+- 引擎 web 全程不离开页面；popup 自关后靠 postMessage + 轮询 `/api/v1/status` 感知登录成功。
+- 欢迎页（onboarding）仍用旧的整页跳转（`cloudLogin` 保留）。
+
+**配置要求（三件套都要对，否则登录断在某一环）**：
+
+| 配置 | 位置 | 本地 dev 值 | 说明 |
+|---|---|---|---|
+| `SYSCITY_CLOUD_CONSOLE_URL` | 引擎 | `http://localhost:5173` | console 登录页所在 origin；默认回退 api_base |
+| `OAUTH_CONSOLE_ORIGINS` | **云端 server** | `http://localhost:18080`（+ console 自己的 origin）| **必须含引擎回调 origin**，否则 OAuth 的 `?redirect=` 被开放重定向校验拒掉，登录完回不到引擎 |
+| `VITE_API_BASE` | console | dev 走 vite 代理；prod 填 server URL | console 调 `/auth/*`、`/api/v1/*` 用 |
+
+> `OAUTH_CONSOLE_ORIGINS` 是最容易漏的：server 的 `allowed_redirect` 只认白名单 origin。本地验证时把它设成 `http://localhost:5173,http://localhost:18080`（console + 引擎回调）。
 
 ## P1 — 市场分发
 
