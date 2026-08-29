@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { LogIn, LogOut } from "lucide-react";
+import { User, LogOut } from "lucide-react";
 import { cloudLogin, cloudLogout, cloudStatus, type CloudStatus } from "@/lib/cloud";
 
 /**
@@ -65,7 +65,7 @@ export function AccountButton() {
         title="Sign in to Syscity Cloud"
         aria-label="Sign in to Syscity Cloud"
       >
-        <LogIn className="w-4 h-4" />
+        <User className="w-4 h-4" />
       </button>
     );
   }

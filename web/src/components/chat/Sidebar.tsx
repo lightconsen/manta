@@ -179,7 +179,7 @@ export function Sidebar({
         collapsed ? "w-16" : "w-64"
       }`}
     >
-      {/* Top: Logo + Name + Collapse */}
+      {/* Top: Logo + Name + Account + Collapse */}
       <div className="h-14 flex items-center justify-between px-3 shrink-0">
         <div className="flex items-center gap-2 overflow-hidden">
           <img
@@ -193,6 +193,9 @@ export function Sidebar({
               Syscity
             </span>
           )}
+          {/* Account/login entry, at the top between the logo and + New Session.
+              Hidden when collapsed (the collapsed top bar is too tight). */}
+          {!collapsed && <AccountButton />}
         </div>
         <button
           onClick={onToggle}
@@ -376,8 +379,6 @@ export function Sidebar({
             >
               <Settings className="w-4 h-4" />
             </button>
-            {/* Account/login entry — layout: [网络] [主题] [设置] [头像/登录] */}
-            <AccountButton />
           </div>
         </div>
       </div>
