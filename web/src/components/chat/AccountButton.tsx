@@ -8,7 +8,7 @@ import {
   type CloudStatus,
 } from "@/lib/cloud";
 
-const LOGIN_TIMEOUT_MS = 60_000;
+const LOGIN_TIMEOUT_MS = 180_000;
 const POLL_MS = 1_500;
 
 /**
