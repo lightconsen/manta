@@ -2,9 +2,35 @@
 
 use super::*;
 
+/// Whether a provider's models should be listed for the given login state.
+///
+/// Cloud models require a signed-in session (the cloud provider is registered
+/// on `cloud.enabled`, independent of login), so anonymous users don't see
+/// unusable cloud entries in the picker.
+fn provider_visible(provider: &str, logged_in: bool) -> bool {
+    #[cfg(feature = "cloud")]
+    {
+        provider != "cloud" || logged_in
+    }
+    #[cfg(not(feature = "cloud"))]
+    {
+        let _ = (provider, logged_in);
+        true
+    }
+}
+
 pub(super) async fn handle_models_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
     // List (provider, model_id) pairs from provider configs + catalog.
     let pairs = state.infra.model_router.models_with_providers().await;
+
+    // Cloud models only make sense to a signed-in session — the cloud provider
+    // is registered on cloud.enabled (independent of login), so without a
+    // session token its models are unusable. Hide them for anonymous users
+    // ("登录后云模型自动进入模型列表" — docs/cloud-integration.md).
+    #[cfg(feature = "cloud")]
+    let logged_in = crate::cloud::session::logged_in().await;
+    #[cfg(not(feature = "cloud"))]
+    let logged_in = false;
 
     // Per-provider credential metadata so the UI can render the add/update form
     // (e.g. show that a key is already saved) without exposing the raw key.
@@ -28,6 +54,7 @@ pub(super) async fn handle_models_list(req: &WsRequest, state: &Arc<GatewayState
 
     let entries: Vec<serde_json::Value> = pairs
         .iter()
+        .filter(|(provider, _model)| provider_visible(provider, logged_in))
         .map(|(provider, model)| {
             let (has_api_key, api_key_masked, base_url) = provider_meta
                 .get(provider)
@@ -591,6 +618,25 @@ mod tests {
             .add_provider(name, provider_config(models))
             .await
             .expect("register provider");
+    }
+
+    /// Cloud models must be hidden from signed-out users (the picker is the
+    /// one place the user sees models; the provider is registered regardless
+    /// of login state).
+    #[test]
+    fn provider_visible_hides_cloud_models_from_anonymous_users() {
+        #[cfg(feature = "cloud")]
+        {
+            assert!(!provider_visible("cloud", false), "cloud hidden when signed out");
+            assert!(provider_visible("cloud", true), "cloud shown when signed in");
+            assert!(provider_visible("openai", false), "local providers always visible");
+        }
+        // Default builds compile no cloud provider — nothing to filter.
+        #[cfg(not(feature = "cloud"))]
+        {
+            assert!(provider_visible("cloud", false));
+            assert!(provider_visible("openai", false));
+        }
     }
 
     #[tokio::test]
