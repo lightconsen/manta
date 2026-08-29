@@ -208,10 +208,11 @@ export function Sidebar({
         </button>
       </div>
 
-      {/* Account/login entry, in its own row right below the logo bar (above
-          + New Session). Hidden when collapsed (no room in the narrow bar). */}
+      {/* Account/login entry, in its own full-width row right below the logo
+          bar (above + New Session). `px-1` matches the sessions container so
+          the row aligns with "+ New session". Hidden when collapsed. */}
       {!collapsed && (
-        <div className="px-3 pb-2 shrink-0">
+        <div className="px-1 pb-2 shrink-0">
           <AccountButton />
         </div>
       )}
