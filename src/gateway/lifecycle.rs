@@ -988,7 +988,6 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
         .route("/ready", get(super::ready_handler))
         .route("/live", get(super::live_handler))
         .route("/api/v1/health", get(super::health_handler))
-        .route("/api/v1/status", get(super::status_handler))
         .route("/api/v1/metrics", get(super::metrics_handler))
         .route("/api/v1/artifacts/*path", get(super::artifact_handler))
         .route(
@@ -1175,12 +1174,21 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
         .route("/api/v1/cloud/usage", get(super::handlers::cloud::usage_handler))
         .with_state(state.clone());
 
+    // Public engine status — always present in both builds and deliberately
+    // NOT behind the trusted-proxy / auth layers (like the webhook router),
+    // so a health-style check stays reachable from direct localhost.
+    let status_router = Router::new()
+        .route("/api/v1/status", get(super::status_handler))
+        .with_state(state.clone());
+
     // Merge all routers and apply global CORS
     let app = frontend_router
         .merge(public_router)
         .merge(auth_router)
         .merge(admin_router)
         .merge(ws_router);
+
+    let app = app.merge(status_router);
 
     #[cfg(feature = "cloud")]
     let app = app.merge(cloud_router);
