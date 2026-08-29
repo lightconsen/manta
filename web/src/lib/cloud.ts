@@ -49,9 +49,14 @@ export async function cloudUsage(days = 30): Promise<CloudUsage> {
   return res.json();
 }
 
-/** Redirect to the cloud OAuth login for a provider. */
+/** The cloud OAuth login URL (engine route that 302s to the cloud). */
+export function cloudLoginUrl(provider = "github"): string {
+  return `/api/v1/cloud/login?provider=${provider}`;
+}
+
+/** Redirect the current tab to the cloud OAuth login (welcome-page flow). */
 export function cloudLogin(provider = "github") {
-  window.location.href = `/api/v1/cloud/login?provider=${provider}`;
+  window.location.href = cloudLoginUrl(provider);
 }
 
 /** Persist a session token returned by the cloud OAuth callback. */

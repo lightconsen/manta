@@ -144,6 +144,22 @@ function ChatApp() {
       const token = new URLSearchParams(window.location.hash.slice(1)).get(
         "token",
       );
+      // In the sidebar popup flow this page runs inside the OAuth popup
+      // (window.opener present): persist the token, notify the opener, then
+      // self-close. Otherwise (direct navigation, e.g. from the welcome page)
+      // fall back to returning to the home view.
+      const isPopup = Boolean(window.opener);
+      const finish = () => {
+        if (isPopup) {
+          try {
+            window.close();
+          } catch {
+            /* ignore */
+          }
+        } else {
+          window.location.replace("/");
+        }
+      };
       if (token) {
         cloudSubmitToken(token)
           .then((ok) => {
@@ -156,12 +172,24 @@ function ChatApp() {
                 /* ignore */
               }
             }
+            if (isPopup) {
+              // Tell the opener the flow finished (it polls /api/v1/status as
+              // the reliable fallback). targetOrigin "*": the opener may be on
+              // 127.0.0.1 while this callback is on localhost — the receiver
+              // validates the origin.
+              try {
+                window.opener.postMessage(
+                  { type: "syscity:login", ok },
+                  "*",
+                );
+              } catch {
+                /* ignore */
+              }
+            }
           })
-          .finally(() => {
-            window.location.replace("/");
-          });
+          .finally(finish);
       } else {
-        window.location.replace("/");
+        finish();
       }
     }
   }, []);
