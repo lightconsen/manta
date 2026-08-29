@@ -515,6 +515,7 @@ function ChatApp() {
 
   const handleNewSession = useCallback(() => {
     setSettingsOpen(false);
+    setMarketplaceOpen(false);
     // Don't create a new session if the current one already has no messages
     if (transport.getMessages().length === 0) {
       transport.setMessages([]);
@@ -530,6 +531,7 @@ function ChatApp() {
   const handleCreateSessionWithAgent = useCallback(
     async (agentId: string) => {
       setSettingsOpen(false);
+      setMarketplaceOpen(false);
 
       // If a session already exists for this agent, switch to it instead
       // of creating another one.
@@ -555,6 +557,7 @@ function ChatApp() {
   const handleSwitchSession = useCallback(
     async (id: string) => {
       setSettingsOpen(false);
+      setMarketplaceOpen(false);
       const currentId = transport.getSessionId();
       if (currentId !== id) {
         // Save current session's in-memory messages before switching
