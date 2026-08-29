@@ -22,6 +22,7 @@ import { DocumentPreviewPanel } from "@/components/shared/DocumentPreviewPanel";
 import { WorkspacePanel } from "@/components/workspace/WorkspacePanel";
 import { UpdateBanner } from "@/components/update/UpdateBanner";
 import { CloudEnabledBanner } from "@/components/update/CloudEnabledBanner";
+import { MarketplaceView } from "@/components/marketplace/MarketplaceView";
 import { AskModal, type AskPrompt } from "@/components/ask/AskModal";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 
@@ -134,6 +135,8 @@ function ChatApp() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Tab to open settings on (e.g. "marketplace" via the sidebar shortcut).
   const [settingsTab, setSettingsTab] = useState("general");
+  // Full-screen marketplace view (replaces the chat area).
+  const [marketplaceOpen, setMarketplaceOpen] = useState(false);
   // null = not yet checked / not connected; true = no LLM configured (Welcome).
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
   // null = not yet checked; true = identity wizard completed.
@@ -141,8 +144,15 @@ function ChatApp() {
 
   /** Open settings on a specific tab (e.g. "marketplace" from the sidebar). */
   const openSettings = (tab: string) => {
+    setMarketplaceOpen(false);
     setSettingsTab(tab);
     setSettingsOpen(true);
+  };
+
+  /** Open the full-screen marketplace view (replaces the chat area). */
+  const openMarketplace = () => {
+    setSettingsOpen(false);
+    setMarketplaceOpen(true);
   };
 
   // Handle the cloud OAuth callback: /cloud/login/callback#token=... — persist
@@ -694,7 +704,7 @@ function ChatApp() {
           onCreateSessionWithAgent={handleCreateSessionWithAgent}
           networkStatus={networkStatus}
           onOpenSettings={() => openSettings("general")}
-          onOpenMarketplace={() => openSettings("marketplace")}
+          onOpenMarketplace={openMarketplace}
           onRenameSession={handleRenameSession}
           onDeleteSession={handleDeleteSession}
           onPinSession={handlePinSession}
@@ -752,7 +762,7 @@ function ChatApp() {
                 setMobileNavOpen(false);
               }}
               onOpenMarketplace={() => {
-                openSettings("marketplace");
+                openMarketplace();
                 setMobileNavOpen(false);
               }}
               onRenameSession={handleRenameSession}
@@ -765,10 +775,12 @@ function ChatApp() {
 
       <main className="flex-1 flex flex-col overflow-hidden">
         {/* New-release banner; the settings General tab shows the full controls. */}
-        {!settingsOpen && <UpdateBanner />}
+        {!settingsOpen && !marketplaceOpen && <UpdateBanner />}
         {/* First-login cloud guidance (shown once after a successful login). */}
-        {!settingsOpen && <CloudEnabledBanner />}
-        {settingsOpen ? (
+        {!settingsOpen && !marketplaceOpen && <CloudEnabledBanner />}
+        {marketplaceOpen ? (
+          <MarketplaceView onClose={() => setMarketplaceOpen(false)} />
+        ) : settingsOpen ? (
           <SettingsPanel
             key={settingsTab}
             transport={transport}
