@@ -52,8 +52,6 @@ export function MarketplaceSettings({
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState("all");
-  const [catalogUrl, setCatalogUrl] = useState("");
-  const [syncError, setSyncError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -73,28 +71,6 @@ export function MarketplaceSettings({
   useEffect(() => {
     load();
   }, [load]);
-
-  const syncFromUrl = async () => {
-    const url = catalogUrl.trim();
-    if (!url) return;
-    setSyncError(null);
-    setBusyId("__sync__");
-    try {
-      const res = await fetch("/api/v1/connectors/sync", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ url }),
-      });
-      const body = await res.json();
-      if (body.error) throw new Error(body.error);
-      setCatalogUrl("");
-      await load();
-    } catch (e) {
-      setSyncError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusyId(null);
-    }
-  };
 
   /** Install a catalog entry; for experts returns the installed agent id. */
   const install = async (id: string): Promise<string | null> => {
@@ -189,7 +165,7 @@ export function MarketplaceSettings({
         ) : entries.length === 0 ? (
           <p className="text-sm text-secondary py-4">
             {data && !data.synced
-              ? "Catalog is empty. Enable cloud mode and sign in, or sync from a catalog URL below."
+              ? "Catalog is empty. Enable cloud mode and sign in to load the marketplace."
               : "No entries in this category yet."}
           </p>
         ) : (
@@ -303,29 +279,6 @@ export function MarketplaceSettings({
             })}
           </div>
         )}
-      </Section>
-
-      <Section title="Sync from URL">
-        <div className="flex gap-2">
-          <input
-            value={catalogUrl}
-            onChange={(e) => setCatalogUrl(e.target.value)}
-            placeholder="https://example.com/catalog.json"
-            className="flex-1 text-sm border border-subtle rounded-lg px-3 py-2 bg-card text-primary placeholder-gray-400"
-          />
-          <button
-            onClick={syncFromUrl}
-            disabled={!catalogUrl.trim() || busyId === "__sync__"}
-            className="px-3 py-2 rounded-md bg-primary-500 hover:bg-primary-600 disabled:opacity-50 text-white text-xs font-medium transition"
-          >
-            Sync
-          </button>
-        </div>
-        {syncError && <p className="text-xs text-red-500 mt-1">{syncError}</p>}
-        <p className="text-[11px] text-secondary mt-1.5 leading-snug">
-          Cloud mode auto-syncs on first visit. Point this at any self-hosted
-          catalog URL to add more entries (BYOA connectors are local and free).
-        </p>
       </Section>
     </div>
   );

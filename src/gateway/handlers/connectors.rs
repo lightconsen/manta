@@ -112,26 +112,6 @@ pub async fn connector_auth_status_handler(
     }
 }
 
-#[derive(Debug, Deserialize)]
-pub struct SyncCatalogRequest {
-    pub url: String,
-}
-
-/// Sync the marketplace catalog from `url` (ETag/304-aware).
-pub async fn sync_connectors_handler(
-    State(state): State<Arc<GatewayState>>,
-    Json(body): Json<SyncCatalogRequest>,
-) -> impl IntoResponse {
-    match state.tools.connector_manager.sync_catalog(&body.url).await {
-        Ok((doc, refreshed)) => Json(serde_json::json!({
-            "refreshed": refreshed,
-            "version": doc.version,
-            "entries": doc.connectors.len(),
-        })),
-        Err(e) => Json(serde_json::json!({ "error": e.to_string() })),
-    }
-}
-
 /// Report pending connector updates, or apply them when `apply=true`.
 pub async fn connector_updates_handler(
     State(state): State<Arc<GatewayState>>,

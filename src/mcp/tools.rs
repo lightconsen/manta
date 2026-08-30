@@ -362,7 +362,7 @@ Actions:
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["connect", "disconnect", "list", "tools", "resources", "resource_read", "subscribe", "unsubscribe", "prompts", "prompt_get", "sampling", "connector_list", "connector_install", "connector_enable", "connector_disable", "connector_uninstall", "connector_auth_status", "connector_auth_login", "connector_auth_logout", "connector_check_version", "connector_sync_catalog", "connector_updates"],
+                    "enum": ["connect", "disconnect", "list", "tools", "resources", "resource_read", "subscribe", "unsubscribe", "prompts", "prompt_get", "sampling", "connector_list", "connector_install", "connector_enable", "connector_disable", "connector_uninstall", "connector_auth_status", "connector_auth_login", "connector_auth_logout", "connector_check_version", "connector_updates"],
                     "description": "Action to perform. `connector_*` actions manage marketplace-style connector packages (install/enable/auth); they need the subsystem attached."
                 },
                 "server_id": {
@@ -821,24 +821,6 @@ Actions:
                     "Connector {id} version check: {outcome:?}"
                 ))
                 .with_data(json!({ "outcome": format!("{outcome:?}") })))
-            }
-            "connector_sync_catalog" => {
-                let connectors = self.require_connectors()?;
-                let url = args["url"].as_str().ok_or_else(|| {
-                    crate::error::SyscityError::Validation(
-                        "url is required for connector_sync_catalog".to_string(),
-                    )
-                })?;
-                let (doc, refreshed) = connectors.sync_catalog(url).await?;
-                Ok(ToolExecutionResult::success(format!(
-                    "Catalog {} ({} entries) from {url}",
-                    if refreshed { "refreshed" } else { "unchanged" },
-                    doc.connectors.len()
-                ))
-                .with_data(json!({
-                    "refreshed": refreshed,
-                    "entries": doc.connectors.len(),
-                })))
             }
             "connector_updates" => {
                 let connectors = self.require_connectors()?;

@@ -1028,7 +1028,6 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
             "/api/v1/connectors/catalog/install",
             post(super::catalog_install_handler),
         )
-        .route("/api/v1/connectors/sync", post(super::sync_connectors_handler))
         .route("/api/v1/connectors/updates", get(super::connector_updates_handler))
         .route("/api/v1/connectors/:id/enable", post(super::enable_connector_handler))
         .route("/api/v1/connectors/:id/disable", post(super::disable_connector_handler))

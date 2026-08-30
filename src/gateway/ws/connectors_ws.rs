@@ -123,39 +123,6 @@ pub(super) async fn handle_connectors_auth_status(
     }
 }
 
-pub(super) async fn handle_connectors_sync(
-    req: &WsRequest,
-    state: &Arc<GatewayState>,
-) -> WsResponse {
-    #[derive(Debug, Deserialize)]
-    struct SyncPayload {
-        url: String,
-    }
-    let payload: SyncPayload = match parse_params(req) {
-        Ok(p) => p,
-        Err(res) => return res,
-    };
-    if payload.url.trim().is_empty() {
-        return WsResponse::err(&req.id, "INVALID_PARAMS", "url is required");
-    }
-    match state
-        .tools
-        .connector_manager
-        .sync_catalog(&payload.url)
-        .await
-    {
-        Ok((doc, refreshed)) => WsResponse::ok(
-            &req.id,
-            serde_json::json!({
-                "refreshed": refreshed,
-                "version": doc.version,
-                "entries": doc.connectors.len(),
-            }),
-        ),
-        Err(e) => connector_error(&req.id, e),
-    }
-}
-
 pub(super) async fn handle_connectors_updates(
     req: &WsRequest,
     state: &Arc<GatewayState>,
@@ -348,18 +315,6 @@ mod tests {
         .await;
         assert!(!resp.ok);
         assert_eq!(resp.error.as_ref().unwrap().code, "CONNECTOR_NOT_FOUND");
-    }
-
-    #[tokio::test]
-    async fn connectors_sync_missing_url_errors() {
-        let state = state().await;
-        let resp = handle_connectors_sync(
-            &req("r1", "connectors.sync", Some(serde_json::json!({ "url": "" }))),
-            &state,
-        )
-        .await;
-        assert!(!resp.ok);
-        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_PARAMS");
     }
 
     #[tokio::test]

@@ -531,7 +531,6 @@ async fn dispatch_method(
         "connectors.disable" => connectors_ws::handle_connectors_disable(req, state).await,
         "connectors.uninstall" => connectors_ws::handle_connectors_uninstall(req, state).await,
         "connectors.auth_status" => connectors_ws::handle_connectors_auth_status(req, state).await,
-        "connectors.sync" => connectors_ws::handle_connectors_sync(req, state).await,
         "connectors.updates" => connectors_ws::handle_connectors_updates(req, state).await,
         "logs.subscribe" => logs::handle_logs_subscribe(req, conn, state, cmd_tx).await,
         "logs.unsubscribe" => logs::handle_logs_unsubscribe(req, conn, state).await,
