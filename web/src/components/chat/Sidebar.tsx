@@ -6,7 +6,6 @@ import {
   Moon,
   Settings,
   Bot,
-  HeartPulse,
   Pencil,
   Trash2,
   Pin,
@@ -341,9 +340,6 @@ export function Sidebar({
                     <span className="truncate flex-1 min-w-0">
                       {agent.display_name}
                     </span>
-                    {agent.has_heartbeat && (
-                      <HeartPulse className="w-3 h-3 text-emerald-500 shrink-0" />
-                    )}
                   </>
                 )}
               </button>
