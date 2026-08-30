@@ -33,6 +33,13 @@ const TYPE_LABELS: Record<string, string> = {
   expert: "Experts",
 };
 
+/** Fallback glyph per type, used when a catalog entry has no logo. */
+const TYPE_ICON: Record<string, string> = {
+  connector: "🧩",
+  skill: "📦",
+  expert: "🧠",
+};
+
 const TYPE_ORDER = ["connector", "skill", "expert"];
 
 /** Fetch + install + enable cloud/BYOA connectors from the marketplace catalog
@@ -183,7 +190,9 @@ export function MarketplaceSettings({
                     {e.icon ? (
                       <img src={e.icon} alt="" className="w-5 h-5 object-contain shrink-0 mt-0.5" />
                     ) : (
-                      <span className="w-5 h-5 shrink-0 mt-0.5 text-sm">🧩</span>
+                      <span className="w-5 h-5 shrink-0 mt-0.5 text-sm">
+                        {TYPE_ICON[e.type] ?? "🧩"}
+                      </span>
                     )}
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
