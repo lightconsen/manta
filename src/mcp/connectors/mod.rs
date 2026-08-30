@@ -294,6 +294,56 @@ impl ConnectorManager {
         Ok(self.summary_from_parts(record, Some(&manifest)))
     }
 
+    /// Install an expert role package (`type=expert`, §3.6): extract the
+    /// archive and copy its role definition(s) into the agents directory so
+    /// the expert becomes summonable as an agent (new session bound to its id).
+    ///
+    /// Recognized layouts:
+    /// - `SOUL.md` at the package root → a single agent named after the entry id;
+    /// - `agents/<id>/SOUL.md` → one agent per subdirectory.
+    ///
+    /// Optional `skills/` dirs are installed like a connector's bundled skills.
+    /// The caller must re-run the agent registry `discover()` afterwards so the
+    /// new personality is visible to on-demand spawn.
+    ///
+    /// Returns the installed agent ids.
+    pub async fn install_expert(
+        &self,
+        entry: &catalog::CatalogEntry,
+    ) -> crate::Result<Vec<String>> {
+        let cache_root = self.cache_root();
+        let dest = self
+            .catalog_cache()
+            .install_entry(entry, &cache_root)
+            .await?;
+        let agents_dir = crate::dirs::agents_dir();
+        let mut installed = Vec::new();
+
+        install_agent_roles(&dest, &agents_dir, &entry.id, &mut installed).await?;
+        if installed.is_empty() {
+            return Err(crate::error::SyscityError::Validation(format!(
+                "expert {}: no role definition found (expected SOUL.md at package root \
+                 or agents/<id>/SOUL.md)",
+                entry.id
+            )));
+        }
+
+        // Bundled skills (optional): `skills/` dir, mirroring the connector bridge.
+        let skills_dir = dest.join("skills");
+        if skills_dir.is_dir() {
+            if let Some(discovered) = discover_skill_dirs(&skills_dir) {
+                for (leaf, skill_dir) in discovered {
+                    let name = format!("expert-{}-{leaf}", entry.id);
+                    if let Err(e) = self.skill_storage.install_to_user(&skill_dir, &name).await {
+                        warn!("Expert {} skill '{leaf}' install failed: {e}", entry.id);
+                    }
+                }
+            }
+        }
+
+        Ok(installed)
+    }
+
     /// Enable a connector: connect its MCP server (if any) and flip state.
     pub async fn enable(&self, id: &str) -> crate::Result<ConnectorSummary> {
         let _guard = self.write_lock.lock().await;
@@ -798,6 +848,39 @@ fn async_recursion<'a>(
     })
 }
 
+/// Copy an expert package's role definition(s) into the agents directory
+/// (`§3.6`). Supports `SOUL.md` at the package root (single agent named after
+/// the entry id) or `agents/<id>/SOUL.md` (one agent per subdirectory). The
+/// whole role directory is copied so IDENTITY.md / avatars come along.
+async fn install_agent_roles(
+    pkg: &Path,
+    agents_dir: &Path,
+    entry_id: &str,
+    installed: &mut Vec<String>,
+) -> crate::Result<()> {
+    if pkg.join("SOUL.md").exists() {
+        let target = agents_dir.join(entry_id);
+        copy_dir_recursive(pkg, &target).await?;
+        installed.push(entry_id.to_string());
+        return Ok(());
+    }
+
+    let agents_sub = pkg.join("agents");
+    if agents_sub.is_dir() {
+        let mut rd = tokio::fs::read_dir(&agents_sub).await?;
+        while let Some(e) = rd.next_entry().await? {
+            let sub = e.path();
+            if sub.is_dir() && sub.join("SOUL.md").exists() {
+                let id = e.file_name().to_string_lossy().to_string();
+                let target = agents_dir.join(&id);
+                copy_dir_recursive(&sub, &target).await?;
+                installed.push(id);
+            }
+        }
+    }
+    Ok(())
+}
+
 // ─────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────
@@ -1026,6 +1109,47 @@ mod tests {
         // Guards the semver dependency used by lifecycle version checks.
         let v = semver::Version::parse("1.2.3").unwrap();
         assert!(semver::VersionReq::parse(">=1.0.0").unwrap().matches(&v));
+    }
+
+    /// An expert package with `SOUL.md` at the root installs a single agent
+    /// named after the entry id.
+    #[tokio::test]
+    async fn expert_install_copies_root_soul_to_agents_dir() {
+        let base = std::env::temp_dir().join(format!("syscity_expert_{}", uuid::Uuid::new_v4()));
+        let pkg = base.join("pkg");
+        let agents = base.join("agents");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(pkg.join("SOUL.md"), "---\nname: equity-research\n---\n# Expert\n").unwrap();
+        std::fs::write(pkg.join("IDENTITY.md"), "# Identity\n").unwrap();
+
+        let mut installed = Vec::new();
+        install_agent_roles(&pkg, &agents, "equity-research", &mut installed)
+            .await
+            .unwrap();
+        assert_eq!(installed, vec!["equity-research".to_string()]);
+        assert!(agents.join("equity-research").join("SOUL.md").exists());
+        assert!(agents.join("equity-research").join("IDENTITY.md").exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// An expert package with an `agents/<id>/SOUL.md` layout installs one
+    /// agent per role subdirectory.
+    #[tokio::test]
+    async fn expert_install_supports_agents_subdir_layout() {
+        let base = std::env::temp_dir().join(format!("syscity_expert_{}", uuid::Uuid::new_v4()));
+        let pkg = base.join("pkg");
+        let agents = base.join("agents");
+        let role = pkg.join("agents").join("analyst");
+        std::fs::create_dir_all(&role).unwrap();
+        std::fs::write(role.join("SOUL.md"), "---\nname: analyst\n---\n").unwrap();
+
+        let mut installed = Vec::new();
+        install_agent_roles(&pkg, &agents, "expert-pack", &mut installed)
+            .await
+            .unwrap();
+        assert_eq!(installed, vec!["analyst".to_string()]);
+        assert!(agents.join("analyst").join("SOUL.md").exists());
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// A `kind=cloud` manifest with no local mcp/lifecycle/skills is valid and

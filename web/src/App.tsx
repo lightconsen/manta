@@ -782,7 +782,10 @@ function ChatApp() {
         {/* First-login cloud guidance (shown once after a successful login). */}
         {!settingsOpen && !marketplaceOpen && <CloudEnabledBanner />}
         {marketplaceOpen ? (
-          <MarketplaceView onClose={() => setMarketplaceOpen(false)} />
+          <MarketplaceView
+            onClose={() => setMarketplaceOpen(false)}
+            onSummonExpert={handleCreateSessionWithAgent}
+          />
         ) : settingsOpen ? (
           <SettingsPanel
             key={settingsTab}

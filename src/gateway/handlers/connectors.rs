@@ -229,6 +229,9 @@ pub async fn catalog_handler(State(state): State<Arc<GatewayState>>) -> impl Int
         .flat_map(|d| d.connectors.iter())
         .map(|e| {
             let inst = installed_by_id.get(&e.id);
+            // Experts are "installed" once their role dir exists in agents/.
+            let expert_installed =
+                e.entry_type == "expert" && crate::dirs::agents_dir().join(&e.id).is_dir();
             serde_json::json!({
                 "id": e.id,
                 "version": e.version,
@@ -240,7 +243,7 @@ pub async fn catalog_handler(State(state): State<Arc<GatewayState>>) -> impl Int
                 "visibility": e.visibility,
                 "credits_per_use": e.credits_per_use,
                 "category": e.category,
-                "installed": inst.is_some(),
+                "installed": inst.is_some() || expert_installed,
                 "installed_version": inst.map(|s| s.version.clone()),
                 "state": inst.map(|s| serde_json::to_value(s.state).unwrap_or_default()),
             })
@@ -280,20 +283,38 @@ pub async fn catalog_install_handler(
     else {
         return Json(serde_json::json!({ "error": format!("no catalog entry for '{}'", body.id) }));
     };
-    match manager.upgrade(&entry).await {
-        Ok(summary) => {
-            let state_name = match summary.state {
-                crate::mcp::connectors::state::StateKind::Enabled => "enabled",
-                _ => "installed",
-            };
-            emit_connector_event(&state, &summary.id, state_name, Some(&summary)).await;
-            Json(serde_json::json!({
-                "id": summary.id,
-                "version": summary.version,
-                "state": serde_json::to_value(summary.state).unwrap_or_default(),
-            }))
+
+    // Experts are role packages: install the role into agents/ and re-discover
+    // so the expert becomes summonable (new session bound to its agent id).
+    if entry.entry_type == "expert" {
+        match manager.install_expert(&entry).await {
+            Ok(agents) => {
+                let _ = state.agents.registry.write().await.discover().await;
+                Json(serde_json::json!({
+                    "id": entry.id,
+                    "type": "expert",
+                    "agents": agents,
+                    "installed": true,
+                }))
+            }
+            Err(e) => Json(serde_json::json!({ "error": e.to_string() })),
         }
-        Err(e) => Json(serde_json::json!({ "error": e.to_string() })),
+    } else {
+        match manager.upgrade(&entry).await {
+            Ok(summary) => {
+                let state_name = match summary.state {
+                    crate::mcp::connectors::state::StateKind::Enabled => "enabled",
+                    _ => "installed",
+                };
+                emit_connector_event(&state, &summary.id, state_name, Some(&summary)).await;
+                Json(serde_json::json!({
+                    "id": summary.id,
+                    "version": summary.version,
+                    "state": serde_json::to_value(summary.state).unwrap_or_default(),
+                }))
+            }
+            Err(e) => Json(serde_json::json!({ "error": e.to_string() })),
+        }
     }
 }
 

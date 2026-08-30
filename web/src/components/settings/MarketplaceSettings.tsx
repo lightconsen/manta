@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Download, Loader2, Lock, RefreshCw, Zap } from "lucide-react";
+import { Download, Loader2, Lock, RefreshCw, Sparkles, Zap } from "lucide-react";
 import { Section } from "@/components/ui/Section";
 
 interface CatalogEntry {
@@ -37,8 +37,16 @@ const TYPE_ORDER = ["connector", "skill", "expert"];
 
 /** Fetch + install + enable cloud/BYOA connectors from the marketplace catalog
  * (P1-4 / P2-8). Cloud entries are metered (`credits_per_use`) and routed
- * through the cloud relay once enabled; BYOA entries are local and free. */
-export function MarketplaceSettings() {
+ * through the cloud relay once enabled; BYOA entries are local and free.
+ *
+ * Experts are summoned, not installed: the Summon button installs the role if
+ * needed, then opens a new session bound to the expert agent via
+ * `onSummonExpert(agentId)`. */
+export function MarketplaceSettings({
+  onSummonExpert,
+}: {
+  onSummonExpert?: (agentId: string) => void;
+}) {
   const [data, setData] = useState<CatalogResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -88,7 +96,8 @@ export function MarketplaceSettings() {
     }
   };
 
-  const install = async (id: string) => {
+  /** Install a catalog entry; for experts returns the installed agent id. */
+  const install = async (id: string): Promise<string | null> => {
     setBusyId(id);
     setError(null);
     try {
@@ -100,11 +109,24 @@ export function MarketplaceSettings() {
       const body = await res.json();
       if (body.error) throw new Error(body.error);
       await load();
+      return body.agents?.[0] ?? null;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      return null;
     } finally {
       setBusyId(null);
     }
+  };
+
+  /** Summon an expert: install the role if needed, then open a session bound
+   * to its agent. */
+  const summon = async (e: CatalogEntry) => {
+    if (e.installed) {
+      onSummonExpert?.(e.id);
+      return;
+    }
+    const agentId = await install(e.id);
+    if (agentId) onSummonExpert?.(agentId);
   };
 
   const setState = async (id: string, action: "enable" | "disable") => {
@@ -230,19 +252,34 @@ export function MarketplaceSettings() {
                   </div>
 
                   <div className="flex items-center gap-1.5 mt-auto">
-                    <button
-                      onClick={() => install(e.id)}
-                      disabled={busy || upToDate}
-                      className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition ${
-                        upToDate
-                          ? "bg-sidebar text-secondary cursor-default"
-                          : "bg-primary-500 hover:bg-primary-600 text-white"
-                      } ${busy ? "opacity-50" : ""}`}
-                    >
-                      {busy ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
-                      {upToDate ? "Installed" : needsUpdate ? "Update" : "Install"}
-                    </button>
-                    {e.installed && e.state === "disabled" && (
+                    {e.type === "expert" ? (
+                      <button
+                        onClick={() => summon(e)}
+                        disabled={busy}
+                        className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition ${
+                          e.installed
+                            ? "bg-sidebar text-secondary hover:bg-black/5 dark:hover:bg-white/5"
+                            : "bg-primary-500 hover:bg-primary-600 text-white"
+                        } ${busy ? "opacity-50" : ""}`}
+                      >
+                        {busy ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />}
+                        Summon
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => install(e.id)}
+                        disabled={busy || upToDate}
+                        className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition ${
+                          upToDate
+                            ? "bg-sidebar text-secondary cursor-default"
+                            : "bg-primary-500 hover:bg-primary-600 text-white"
+                        } ${busy ? "opacity-50" : ""}`}
+                      >
+                        {busy ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
+                        {upToDate ? "Installed" : needsUpdate ? "Update" : "Install"}
+                      </button>
+                    )}
+                    {e.type !== "expert" && e.installed && e.state === "disabled" && (
                       <button
                         onClick={() => setState(e.id, "enable")}
                         disabled={busyId === `${e.id}:enable`}
@@ -251,7 +288,7 @@ export function MarketplaceSettings() {
                         Enable
                       </button>
                     )}
-                    {e.installed && (e.state === "enabled" || e.state === "installed") && (
+                    {e.type !== "expert" && e.installed && (e.state === "enabled" || e.state === "installed") && (
                       <button
                         onClick={() => setState(e.id, "disable")}
                         disabled={busyId === `${e.id}:disable`}

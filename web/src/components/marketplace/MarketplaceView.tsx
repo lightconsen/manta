@@ -3,8 +3,15 @@ import { MarketplaceSettings } from "@/components/settings/MarketplaceSettings";
 
 /** Full-screen marketplace view that replaces the chat area when opened from
  * the sidebar. Reuses the same MarketplaceSettings content as the settings
- * tab, but as its own page (own header + back to chat). */
-export function MarketplaceView({ onClose }: { onClose: () => void }) {
+ * tab, but as its own page (own header + back to chat). `onSummonExpert` is
+ * forwarded so summoning an expert opens a new session with its agent. */
+export function MarketplaceView({
+  onClose,
+  onSummonExpert,
+}: {
+  onClose: () => void;
+  onSummonExpert?: (agentId: string) => void;
+}) {
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-page">
       <div className="flex items-center justify-between px-4 md:px-5 py-3 border-b border-subtle shrink-0">
@@ -19,7 +26,7 @@ export function MarketplaceView({ onClose }: { onClose: () => void }) {
         </button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 md:px-5 py-4">
-        <MarketplaceSettings />
+        <MarketplaceSettings onSummonExpert={onSummonExpert} />
       </div>
     </div>
   );
