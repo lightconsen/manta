@@ -547,11 +547,22 @@ function ChatApp() {
       }
 
       transport.createSession(agentId);
-      transport.setMessages([]);
+      // Summon feedback: preset a one-line opener from the expert so the new
+      // session reads as "summoned" immediately (web-side; a reload replays
+      // the real history).
+      const opener: ChatMessage = {
+        id: `summon-${Date.now()}`,
+        role: "assistant",
+        content: `👋 我是 ${agentId}，已就绪。请告诉我你的任务。`,
+        timestamp: Date.now(),
+      };
+      transport.setMessages([opener]);
+      useChatStore.getState().setMessages([opener]);
       setSessionKey((k) => k + 1);
       await refreshSessions();
+      await refreshAgents();
     },
-    [transport, refreshSessions, sessions]
+    [transport, refreshSessions, refreshAgents, sessions]
   );
 
   const handleSwitchSession = useCallback(
