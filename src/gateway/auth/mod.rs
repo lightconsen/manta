@@ -3,20 +3,9 @@
 //! Provides session cookie management and OAuth2 authentication flows
 //! to complement the existing Bearer token auth in `security::AuthManager`.
 
-use std::sync::Arc;
-
-use axum::{
-    extract::{Request, State},
-    http::{header, StatusCode},
-    middleware::Next,
-    response::Response,
-};
+use axum::extract::Request;
+use axum::http::header;
 use serde::{Deserialize, Serialize};
-use tracing::debug;
-
-use crate::gateway::GatewayState;
-
-pub mod oauth;
 
 /// Session cookie configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,114 +59,6 @@ pub fn extract_session_cookie_from_headers(
         }
     }
     None
-}
-
-/// Build a Set-Cookie header value
-pub fn build_set_cookie(config: &SessionCookieConfig, token: &str) -> String {
-    let mut parts = vec![
-        format!("{}={}", config.name, token),
-        format!("Path={}", config.path),
-        format!("Max-Age={}", config.max_age_secs),
-    ];
-
-    if config.secure {
-        parts.push("Secure".to_string());
-    }
-    if config.http_only {
-        parts.push("HttpOnly".to_string());
-    }
-    if let Some(ref domain) = config.domain {
-        parts.push(format!("Domain={}", domain));
-    }
-    parts.push(format!("SameSite={}", config.same_site));
-
-    parts.join("; ")
-}
-
-/// Build a cookie clear header (expires immediately)
-pub fn build_clear_cookie(config: &SessionCookieConfig) -> String {
-    format!(
-        "{}=; Path={}; Max-Age=0; HttpOnly; SameSite={}",
-        config.name, config.path, config.same_site
-    )
-}
-
-/// Middleware: Session cookie authentication
-///
-/// Checks for a session cookie and validates it against the auth manager.
-/// If valid, the request proceeds. Falls through to allow other auth
-/// mechanisms (e.g., Bearer token) to be checked downstream.
-pub async fn session_cookie_middleware(
-    State(state): State<Arc<GatewayState>>,
-    req: Request,
-    next: Next,
-) -> Result<Response, StatusCode> {
-    // Check if auth is required
-    let auth_required = {
-        let config = state.config.read().await;
-        config.security.auth_required
-    };
-
-    if !auth_required {
-        return Ok(next.run(req).await);
-    }
-
-    // Try to extract session from cookie
-    let cookie_config = SessionCookieConfig::default();
-    if let Some(token) = extract_session_cookie(&req, &cookie_config.name) {
-        let _session: Option<crate::security::Session> =
-            state.auth.manager.validate_session(&token).await;
-        if _session.is_some() {
-            debug!("Valid session cookie, allowing request");
-            return Ok(next.run(req).await);
-        }
-    }
-
-    // No valid session cookie — allow through so Bearer token auth can check
-    Ok(next.run(req).await)
-}
-
-/// OAuth provider configuration
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct OAuthConfig {
-    /// Enable OAuth authentication
-    pub enabled: bool,
-    /// GitHub OAuth configuration
-    pub github: Option<OAuthProviderConfig>,
-    /// Google OAuth configuration
-    pub google: Option<OAuthProviderConfig>,
-}
-
-/// Single OAuth provider configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OAuthProviderConfig {
-    /// Client ID from OAuth provider
-    pub client_id: String,
-    /// Client secret from OAuth provider
-    pub client_secret: String,
-    /// Authorization endpoint URL (optional, uses default if not set)
-    pub auth_url: Option<String>,
-    /// Token endpoint URL (optional, uses default if not set)
-    pub token_url: Option<String>,
-    /// Redirect URI — must match OAuth app settings
-    pub redirect_uri: String,
-    /// Scopes to request
-    pub scopes: Vec<String>,
-}
-
-/// OAuth user profile returned by providers
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OAuthUserProfile {
-    /// Provider-assigned user ID
-    pub provider_user_id: String,
-    /// Provider name (github, google, etc.)
-    pub provider: String,
-    /// User email
-    pub email: Option<String>,
-    /// Display name
-    pub name: Option<String>,
-    /// Avatar URL
-    pub avatar_url: Option<String>,
 }
 
 /// CORS configuration

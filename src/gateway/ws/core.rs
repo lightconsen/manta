@@ -52,25 +52,7 @@ async fn validate_ws_upgrade_request(
     headers: &axum::http::HeaderMap,
     query_token: Option<&str>,
 ) -> Result<WsAuthResult, axum::response::Response> {
-    // 1. Try session cookie
-    let cookie_config = crate::gateway::auth::SessionCookieConfig::default();
-    if let Some(token) =
-        crate::gateway::auth::extract_session_cookie_from_headers(headers, &cookie_config.name)
-    {
-        if let Some(session) = state.auth.manager.validate_session(&token).await {
-            let scopes = if session.scopes.is_empty() {
-                DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect()
-            } else {
-                session.scopes.clone()
-            };
-            return Ok(WsAuthResult {
-                user_id: session.user_id,
-                scopes,
-            });
-        }
-    }
-
-    // 2. Try Bearer token from Authorization header
+    // 1. Try Bearer token from Authorization header
     let token_from_header = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())

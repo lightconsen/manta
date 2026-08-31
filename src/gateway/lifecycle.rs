@@ -971,16 +971,8 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
     // Public tier: Webhooks (no authentication, signature verification per-channel)
     let public_router = super::webhooks::create_webhook_router(state.clone());
 
-    // Auth tier: OAuth login/logout (public-facing, no tailscale restriction)
-    let auth_router = Router::new()
-        .route("/auth/github", get(super::auth::oauth::github_login_handler))
-        .route("/auth/github/callback", get(super::auth::oauth::github_callback_handler))
-        .route("/auth/google", get(super::auth::oauth::google_login_handler))
-        .route("/auth/google/callback", get(super::auth::oauth::google_callback_handler))
-        .route("/auth/logout", post(super::auth::oauth::logout_handler))
-        .layer(from_fn_with_state(state.clone(), super::middleware::rate_limit_middleware))
-        .layer(from_fn(super::middleware::security_headers_middleware))
-        .with_state(state.clone());
+    // (Local OAuth login/logout was removed — the UI authenticates via the
+    // Syscity Cloud OAuth flow instead; the auth_router is now empty.)
 
     // Admin tier: Essential APIs (not deprecated)
     let essential_public_router = Router::new()
@@ -1086,7 +1078,6 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
     // Apply remaining middleware layers to essential routes
     let admin_router = essential_router
         .layer(from_fn_with_state(state.clone(), super::middleware::rate_limit_middleware))
-        .layer(from_fn_with_state(state.clone(), super::auth::session_cookie_middleware))
         .layer(from_fn_with_state(state.clone(), super::middleware::tailscale_auth_middleware))
         .layer(from_fn_with_state(
             state.clone(),
@@ -1183,7 +1174,6 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
     // Merge all routers and apply global CORS
     let app = frontend_router
         .merge(public_router)
-        .merge(auth_router)
         .merge(admin_router)
         .merge(ws_router);
 

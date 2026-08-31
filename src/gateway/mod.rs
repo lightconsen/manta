@@ -863,18 +863,8 @@ pub(crate) fn validate_auth_config(config: &GatewayConfig) -> crate::Result<()> 
         .as_deref()
         .map(|t| !t.is_empty())
         .unwrap_or(false);
-    let has_oauth = config.security.oauth.enabled
-        && (config.security.oauth.github.is_some() || config.security.oauth.google.is_some());
     let mode = config.security.auth_mode;
     let mode_unset = mode == crate::gateway::protocol::AuthMode::None;
-
-    if has_token && has_oauth && mode_unset {
-        return Err(crate::error::SyscityError::Validation(
-            "Auth mode ambiguity: both shared_token and OAuth are configured but auth_mode is not \
-             set. Please set auth_mode to 'token' or 'device' in your security configuration."
-                .into(),
-        ));
-    }
 
     // Token mode requires a non-empty shared token.
     if mode == crate::gateway::protocol::AuthMode::Token && !has_token {
@@ -883,37 +873,13 @@ pub(crate) fn validate_auth_config(config: &GatewayConfig) -> crate::Result<()> 
         ));
     }
 
-    // OAuth providers must be complete when enabled.
-    if config.security.oauth.enabled {
-        let providers = [
-            ("github", config.security.oauth.github.as_ref()),
-            ("google", config.security.oauth.google.as_ref()),
-        ];
-        for (name, provider) in providers.iter() {
-            if let Some(p) = provider {
-                if p.client_id.is_empty() || p.client_secret.is_empty() {
-                    return Err(crate::error::SyscityError::Validation(format!(
-                        "OAuth provider '{}' is missing client_id or client_secret",
-                        name
-                    )));
-                }
-                if p.redirect_uri.is_empty() {
-                    return Err(crate::error::SyscityError::Validation(format!(
-                        "OAuth provider '{}' is missing redirect_uri",
-                        name
-                    )));
-                }
-            }
-        }
-    }
-
     // When auth is required, at least one mechanism must be configured.
     let has_device = mode == crate::gateway::protocol::AuthMode::Device;
     let has_tailscale = mode == crate::gateway::protocol::AuthMode::Tailscale;
-    if !has_token && !has_oauth && !has_device && !has_tailscale {
+    if !has_token && !has_device && !has_tailscale {
         return Err(crate::error::SyscityError::Validation(
             "security.auth_required is true but no authentication mechanism is configured \
-             (shared_token, OAuth, device, or tailscale)"
+             (shared_token, device, or tailscale)"
                 .into(),
         ));
     }

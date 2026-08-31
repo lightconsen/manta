@@ -12,9 +12,7 @@ use crate::error::{Result, SyscityError};
 use crate::gateway::GatewayConfig;
 #[cfg(feature = "keyring")]
 use crate::secrets::{probe_keyring, KeyringStore, SecretStore};
-use crate::secrets::{
-    route_store, FileStore, SecretId, SecretOrigin, SENSITIVE_CHANNEL_CREDENTIALS,
-};
+use crate::secrets::{route_store, FileStore, SENSITIVE_CHANNEL_CREDENTIALS};
 
 /// Namespaces handled by the secret store and their human-readable label.
 const NAMESPACES: &[(&str, &str)] = &[
@@ -76,19 +74,9 @@ fn file_entities(namespace: &str) -> Vec<String> {
     entities
 }
 
-/// The OAuth providers understood by the gateway (`github`, `google`).
-fn oauth_provider_configs(
-    config: &GatewayConfig,
-) -> [(&'static str, &Option<crate::gateway::auth::OAuthProviderConfig>); 2] {
-    [
-        ("github", &config.security.oauth.github),
-        ("google", &config.security.oauth.google),
-    ]
-}
-
 /// Gather every known `(namespace, entity)` pair — from the on-disk file
-/// backend and from channels / OAuth providers referenced in the gateway
-/// config (which may live in the keyring and have no file).
+/// backend and from channels referenced in the gateway config (which may live
+/// in the keyring and have no file).
 async fn collect_pairs() -> BTreeSet<(String, String)> {
     let mut pairs = BTreeSet::new();
     for (namespace, _label) in NAMESPACES {
@@ -99,13 +87,6 @@ async fn collect_pairs() -> BTreeSet<(String, String)> {
     if let Some(config) = load_gateway_config().await {
         for id in config.channels.keys() {
             pairs.insert(("channel".to_string(), id.clone()));
-        }
-        for (provider, cfg) in oauth_provider_configs(&config) {
-            if let Some(cfg) = cfg {
-                if !cfg.client_secret.is_empty() {
-                    pairs.insert(("security".to_string(), format!("oauth-{provider}")));
-                }
-            }
         }
     }
     pairs
@@ -210,23 +191,7 @@ async fn run_secrets_migrate() -> Result<()> {
         crate::secrets::persist_channel_secrets(id, &channel.credentials).await?;
     }
 
-    // 4. Mirror OAuth client secrets into the store (namespace `security`).
-    for (provider, cfg) in oauth_provider_configs(&config) {
-        if let Some(cfg) = cfg {
-            if !cfg.client_secret.is_empty() {
-                route_store("security")
-                    .set(
-                        &SecretId::new("security", &format!("oauth-{provider}"), "client_secret"),
-                        &cfg.client_secret,
-                        SecretOrigin::UserEntered,
-                    )
-                    .await?;
-                stored += 1;
-            }
-        }
-    }
-
-    // 5. Advisory for shared_token (kept in config; env reference preferred).
+    // 4. Advisory for shared_token (kept in config; env reference preferred).
     if config
         .security
         .shared_token
@@ -245,18 +210,6 @@ async fn run_secrets_migrate() -> Result<()> {
             if channel.credentials.remove(*kind).is_some() {
                 changed = true;
             }
-        }
-    }
-    for cfg in [
-        config.security.oauth.github.as_mut(),
-        config.security.oauth.google.as_mut(),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        if !cfg.client_secret.is_empty() {
-            cfg.client_secret.clear();
-            changed = true;
         }
     }
 
@@ -292,18 +245,8 @@ async fn run_secrets_purge(namespace: &str) -> Result<()> {
     // that may live there in addition to the on-disk file entities.
     let mut entities = file_entities(namespace);
     if let Some(config) = load_gateway_config().await {
-        match namespace {
-            "channel" => entities.extend(config.channels.keys().cloned()),
-            "security" => {
-                for (provider, cfg) in oauth_provider_configs(&config) {
-                    if let Some(cfg) = cfg {
-                        if !cfg.client_secret.is_empty() {
-                            entities.push(format!("oauth-{provider}"));
-                        }
-                    }
-                }
-            }
-            _ => {}
+        if namespace == "channel" {
+            entities.extend(config.channels.keys().cloned());
         }
     }
     entities.sort();

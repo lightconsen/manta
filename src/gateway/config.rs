@@ -1068,9 +1068,7 @@ pub struct SecurityConfig {
     pub rate_limit: RateLimitConfig,
     /// Enable security headers
     pub security_headers: bool,
-    /// OAuth2 configuration
-    #[serde(default)]
-    pub oauth: crate::gateway::auth::OAuthConfig,
+
     /// CORS configuration
     #[serde(default)]
     pub cors: crate::gateway::auth::CorsConfig,
@@ -1177,7 +1175,6 @@ impl Default for SecurityConfig {
             shared_token: None,
             rate_limit: RateLimitConfig::default(),
             security_headers: true,
-            oauth: crate::gateway::auth::OAuthConfig::default(),
             cors: crate::gateway::auth::CorsConfig::default(),
             csp: crate::gateway::auth::CspConfig::default(),
             mention_gating: crate::security::mention_gate::MentionGatingConfig::default(),
