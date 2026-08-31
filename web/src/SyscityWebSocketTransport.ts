@@ -13,6 +13,8 @@ import {
   LOCAL_COMMANDS,
 } from "./slash-commands";
 
+import { apiFetch, setGatewayBase } from "./lib/gatewayBase";
+
 export interface WsRequest {
   id: string;
   method: string;
@@ -309,6 +311,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
       // Pre-resolve the gateway URL from the Tauri command (port already detected).
       try {
         const apiUrl = await invoke<string>("get_api_url");
+        setGatewayBase(apiUrl);
         this.gatewayUrl = apiUrl.replace(/^http/, "ws") + "/ws";
       } catch {
         // Fallback if command unavailable
@@ -328,6 +331,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
       // Wait for the gateway-ready event so we know the backend is listening.
       await listen<string>("gateway-ready", (event) => {
         const apiUrl = event.payload;
+        setGatewayBase(apiUrl);
         this.gatewayUrl = apiUrl.replace(/^http/, "ws") + "/ws";
         this.connect();
       });
@@ -1444,15 +1448,9 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
 
   /* ── Onboarding (first-launch identity wizard) ── */
 
-  /** Bearer auth headers for plain-HTTP gateway calls (mobile builds only). */
-  private authHeaders(): Record<string, string> {
-    const token = localStorage.getItem("syscity_gateway_token");
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  }
-
   /** Query the identity wizard status (GET /onboarding). */
   async onboardingStatus(): Promise<OnboardingStatus> {
-    const res = await fetch("/onboarding", { headers: this.authHeaders() });
+    const res = await apiFetch("/onboarding");
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return (await res.json()) as OnboardingStatus;
   }
@@ -1462,9 +1460,9 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     payload: OnboardingPayload
   ): Promise<{ ok: boolean; error?: string }> {
     try {
-      const res = await fetch("/onboarding", {
+      const res = await apiFetch("/onboarding", {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...this.authHeaders() },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       if (!res.ok) {

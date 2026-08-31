@@ -12,6 +12,7 @@ import { MarketplaceSettings } from "@/components/settings/MarketplaceSettings";
 import { EvalDashboard } from "@/components/settings/EvalDashboard";
 import { JobsSettings } from "@/components/settings/JobsSettings";
 import { DevicesSettings } from "@/components/settings/DevicesSettings";
+import { ConnectionSettings } from "@/components/settings/ConnectionSettings";
 import { LogsSettings } from "@/components/settings/LogsSettings";
 import { McpAuthModal } from "@/components/settings/McpAuthModal";
 import { McpEnvModal } from "@/components/settings/McpEnvModal";
@@ -135,6 +136,7 @@ export function SettingsPanel({ transport, onClose, initialTab = "general" }: Se
             {d.activeTab === "logs" && (
               <LogsSettings transport={transport} />
             )}
+            {d.activeTab === "connection" && <ConnectionSettings />}
           </div>
         </div>
       )}

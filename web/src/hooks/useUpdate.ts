@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { apiFetch } from "@/lib/gatewayBase";
 
 /** Latest release info from GET /api/v1/update/status. */
 export interface UpdateStatus {
@@ -30,14 +31,8 @@ export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI__" in window;
 }
 
-/** Mobile gateway requires the per-install token as a Bearer credential. */
-function authHeaders(): Record<string, string> {
-  const gatewayToken = localStorage.getItem("syscity_gateway_token");
-  return gatewayToken ? { Authorization: `Bearer ${gatewayToken}` } : {};
-}
-
 async function fetchJson<T>(path: string): Promise<T> {
-  const res = await fetch(path, { headers: authHeaders() });
+  const res = await apiFetch(path);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return (await res.json()) as T;
 }
@@ -125,9 +120,8 @@ export function useUpdate() {
     }
 
     try {
-      const res = await fetch("/api/v1/update", {
+      const res = await apiFetch("/api/v1/update", {
         method: "POST",
-        headers: authHeaders(),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { message?: string } | null;

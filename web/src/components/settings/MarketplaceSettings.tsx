@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Download, Loader2, Lock, RefreshCw, Sparkles, Zap } from "lucide-react";
 import { Section } from "@/components/ui/Section";
+import { apiFetch } from "@/lib/gatewayBase";
 
 interface CatalogEntry {
   id: string;
@@ -64,7 +65,7 @@ export function MarketplaceSettings({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/v1/connectors/catalog");
+      const res = await apiFetch("/api/v1/connectors/catalog");
       const body = await res.json();
       if (body.error) throw new Error(body.error);
       setData(body);
@@ -84,7 +85,7 @@ export function MarketplaceSettings({
     setBusyId(id);
     setError(null);
     try {
-      const res = await fetch("/api/v1/connectors/catalog/install", {
+      const res = await apiFetch("/api/v1/connectors/catalog/install", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id }),
@@ -116,7 +117,7 @@ export function MarketplaceSettings({
     setBusyId(`${id}:${action}`);
     setError(null);
     try {
-      const res = await fetch(`/api/v1/connectors/${id}/${action}`, { method: "POST" });
+      const res = await apiFetch(`/api/v1/connectors/${id}/${action}`, { method: "POST" });
       const body = await res.json();
       if (body.error) throw new Error(body.error);
       await load();

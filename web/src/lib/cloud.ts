@@ -1,4 +1,6 @@
-// Syscity Cloud session helpers (same-origin with the gateway).
+// Syscity Cloud session helpers (resolved against the gateway base).
+
+import { apiFetch, getGatewayBase } from "./gatewayBase";
 
 export interface CloudStatus {
   enabled: boolean;
@@ -27,7 +29,7 @@ export interface CloudUsage {
 
 /** Engine status — the cloud block is `null` in default (non-cloud) builds. */
 export async function cloudStatus(): Promise<CloudStatus> {
-  const res = await fetch("/api/v1/status");
+  const res = await apiFetch("/api/v1/status");
   if (!res.ok) throw new Error(`status: HTTP ${res.status}`);
   const body = await res.json();
   const cloud = body.cloud as CloudStatus | null | undefined;
@@ -37,21 +39,21 @@ export async function cloudStatus(): Promise<CloudStatus> {
 
 /** Plan + credit balance (+ low-credit/overdraft flags). */
 export async function cloudSubscription(): Promise<CloudSubscription> {
-  const res = await fetch("/api/v1/cloud/subscription");
+  const res = await apiFetch("/api/v1/cloud/subscription");
   if (!res.ok) throw new Error(`subscription: HTTP ${res.status}`);
   return res.json();
 }
 
 /** Credit usage for the last `days` (default 30). */
 export async function cloudUsage(days = 30): Promise<CloudUsage> {
-  const res = await fetch(`/api/v1/cloud/usage?days=${days}`);
+  const res = await apiFetch(`/api/v1/cloud/usage?days=${days}`);
   if (!res.ok) throw new Error(`usage: HTTP ${res.status}`);
   return res.json();
 }
 
 /** The cloud OAuth login URL (engine route that 302s to the cloud). */
 export function cloudLoginUrl(provider = "github"): string {
-  return `/api/v1/cloud/login?provider=${provider}`;
+  return `${getGatewayBase()}/api/v1/cloud/login?provider=${provider}`;
 }
 
 /** Redirect the current tab to the cloud OAuth login (welcome-page flow). */
@@ -61,7 +63,7 @@ export function cloudLogin(provider = "github") {
 
 /** Persist a session token returned by the cloud OAuth callback. */
 export async function cloudSubmitToken(token: string): Promise<boolean> {
-  const res = await fetch("/api/v1/cloud/token", {
+  const res = await apiFetch("/api/v1/cloud/token", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ token }),
@@ -71,5 +73,5 @@ export async function cloudSubmitToken(token: string): Promise<boolean> {
 
 /** Forget the cloud session token. */
 export async function cloudLogout(): Promise<void> {
-  await fetch("/api/v1/cloud/logout", { method: "POST" });
+  await apiFetch("/api/v1/cloud/logout", { method: "POST" });
 }

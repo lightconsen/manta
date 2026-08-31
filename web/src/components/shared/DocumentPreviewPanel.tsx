@@ -10,6 +10,7 @@ import {
   Check,
 } from "lucide-react";
 import { MarkdownMessage } from "./MarkdownMessage";
+import { apiFetch, getGatewayBase } from "@/lib/gatewayBase";
 
 interface DocumentPreviewPanelProps {
   document: {
@@ -107,16 +108,12 @@ export function DocumentPreviewPanel({
     setLoadState("loading");
     setContent(null);
 
-    // Mobile gateway requires the per-install token as a Bearer credential
-    // (stashed by the WS transport); absent on desktop, where auth is off.
     // Prefer the owner-addressed URL from the tool result; fall back to the
-    // legacy flat path for older artifacts.
-    const gatewayToken = localStorage.getItem("syscity_gateway_token");
+    // legacy flat path for older artifacts. `apiFetch` prepends the gateway
+    // base for relative paths and attaches the gateway token (mobile/remote).
     const artifactUrl =
       document.url ?? `/api/v1/artifacts/${document.filename}`;
-    fetch(artifactUrl, {
-      headers: gatewayToken ? { Authorization: `Bearer ${gatewayToken}` } : {},
-    })
+    apiFetch(artifactUrl)
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.text();
@@ -151,7 +148,7 @@ export function DocumentPreviewPanel({
   }, [document.filename, isTauri]);
 
   const handleCopyLink = useCallback(async () => {
-    const url = `${window.location.origin}/api/v1/artifacts/${document.filename}`;
+    const url = `${getGatewayBase()}/api/v1/artifacts/${document.filename}`;
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
@@ -173,10 +170,7 @@ export function DocumentPreviewPanel({
     // Server-side export (authored HTML → real Office file) when available.
     if (document.exportUrl) {
       try {
-        const gatewayToken = localStorage.getItem("syscity_gateway_token");
-        const res = await fetch(document.exportUrl, {
-          headers: gatewayToken ? { Authorization: `Bearer ${gatewayToken}` } : {},
-        });
+        const res = await apiFetch(document.exportUrl);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const blob = await res.blob();
         const objUrl = URL.createObjectURL(blob);
