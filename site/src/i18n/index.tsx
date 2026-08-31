@@ -100,6 +100,12 @@ const en = {
     lead: "The same local runtime and memory on every machine you own. Chat, voice, camera, and device tools on your phone — full desktop control on your computer.",
     iosAlt: "Syscity on iOS",
     androidAlt: "Syscity on Android",
+    downloadCta: "Download the client",
+  },
+  download: {
+    title: "Download Syscity",
+    lead: "Pick your platform — the client includes cloud features (cloud models, search, marketplace) after you sign in.",
+    cloudNote: "After install, sign in to your Syscity Cloud account to use cloud models, search, and the marketplace.",
   },
   cloud: {
     eyebrow: "Syscity Cloud",
@@ -246,6 +252,12 @@ const zh: Dict = {
     lead: "你拥有的每台机器上，都是同一套本地运行时和同一份记忆。手机上有聊天、语音、相机和设备工具，电脑上则是完整的桌面控制。",
     iosAlt: "iOS 上的 Syscity",
     androidAlt: "Android 上的 Syscity",
+    downloadCta: "下载客户端",
+  },
+  download: {
+    title: "下载 Syscity",
+    lead: "选择你的平台——客户端含云端功能（云模型、搜索、市场），登录后即用。",
+    cloudNote: "安装后登录你的 Syscity 云端账号，即可使用云模型、搜索与市场。",
   },
   cloud: {
     eyebrow: "Syscity 云端",
