@@ -18,13 +18,10 @@ export default function CloudSection() {
       <div className="mx-auto max-w-6xl px-6 py-28">
         <div className="mb-14 max-w-2xl">
           <h2 className="text-4xl font-black tracking-tight sm:text-5xl">
-            {t.cloud.titleA}{" "}
-            <span className="text-gradient">{t.cloud.titleB}</span>
-          </h2>
-          <p className="mt-4 text-muted">{t.cloud.lead}</p>
-          <p className="mt-2 text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">
             {t.cloud.eyebrow}
-          </p>
+          </h2>
+          <p className="mt-2 text-lg text-muted">{t.cloud.titleA} {t.cloud.titleB}</p>
+          <p className="mt-4 text-muted">{t.cloud.lead}</p>
         </div>
 
         <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
