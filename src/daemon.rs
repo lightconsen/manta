@@ -189,6 +189,34 @@ fn apply_env_security_overrides(config: &mut crate::gateway::GatewayConfig) {
             CredentialPrecedence::ConfigFirst => {}
         }
     }
+
+    // Enable an auth mode via env. config.toml is not reliably parsed by the
+    // gateway (the [server]/[model] template does not match GatewayConfig's
+    // top-level fields — see the config-parse bug), so the env path is the
+    // dependable way to secure a remote listener.
+    if let Ok(mode) = std::env::var("SYSCITY_SECURITY_AUTH_MODE") {
+        let parsed = match mode.trim().to_ascii_lowercase().as_str() {
+            "none" => Some(crate::gateway::protocol::AuthMode::None),
+            "token" => Some(crate::gateway::protocol::AuthMode::Token),
+            "device" => Some(crate::gateway::protocol::AuthMode::Device),
+            "tailscale" => Some(crate::gateway::protocol::AuthMode::Tailscale),
+            _ => {
+                tracing::warn!("Ignoring unknown SYSCITY_SECURITY_AUTH_MODE value: {}", mode);
+                None
+            }
+        };
+        if let Some(mode) = parsed {
+            config.security.auth_mode = mode;
+        }
+    }
+    if let Ok(v) = std::env::var("SYSCITY_SECURITY_AUTH_REQUIRED") {
+        match v.parse::<bool>() {
+            Ok(b) => config.security.auth_required = b,
+            Err(_) => {
+                tracing::warn!("Ignoring invalid SYSCITY_SECURITY_AUTH_REQUIRED value: {}", v)
+            }
+        }
+    }
 }
 
 /// Apply environment variable overrides for LLM provider credentials,
