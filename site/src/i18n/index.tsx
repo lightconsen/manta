@@ -29,6 +29,7 @@ const en = {
     getStarted: "Get Started",
     viewOnGithub: "View on GitHub",
     copyInstall: "Copy install command",
+    installNote: "macOS/Linux use the shell command; Windows uses PowerShell.",
   },
   demo: {
     chromeTitle: "syscity — agent preview",
@@ -184,6 +185,7 @@ const zh: Dict = {
     getStarted: "开始使用",
     viewOnGithub: "在 GitHub 查看",
     copyInstall: "复制安装命令",
+    installNote: "macOS/Linux 用 shell 命令；Windows 用 PowerShell。",
   },
   demo: {
     chromeTitle: "syscity — 智能体预览",

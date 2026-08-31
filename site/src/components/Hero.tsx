@@ -4,15 +4,19 @@ import GithubMark from "./GithubMark";
 import { useLanguage } from "../i18n";
 
 const base = import.meta.env.BASE_URL;
-const INSTALL_CMD = "curl -sSL https://syscity.net/install.sh | bash";
+const INSTALL_CMD_UNIX = "curl -sSL https://syscity.net/install.sh | bash";
+const INSTALL_CMD_WINDOWS = "irm https://syscity.net/install.ps1 | iex";
 
 function InstallChip() {
   const [copied, setCopied] = useState(false);
+  const [tab, setTab] = useState<"unix" | "windows">("unix");
   const { t } = useLanguage();
+
+  const cmd = tab === "unix" ? INSTALL_CMD_UNIX : INSTALL_CMD_WINDOWS;
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(INSTALL_CMD);
+      await navigator.clipboard.writeText(cmd);
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
     } catch {
@@ -21,16 +25,42 @@ function InstallChip() {
   };
 
   return (
-    <div className="mx-auto flex max-w-xl items-center gap-3 rounded-lg border border-line bg-panel-2 px-4 py-3 font-mono text-[13px] text-muted">
-      <span className="font-semibold text-brand-500">$</span>
-      <span className="flex-1 truncate text-left text-ink/90">{INSTALL_CMD}</span>
-      <button
-        onClick={copy}
-        aria-label={t.hero.copyInstall}
-        className="shrink-0 rounded-md p-1.5 text-faint transition hover:bg-line hover:text-ink"
-      >
-        {copied ? <Check className="h-4 w-4 text-brand-500" /> : <Copy className="h-4 w-4" />}
-      </button>
+    <div className="mx-auto max-w-xl space-y-3">
+      <div className="flex justify-center gap-1 rounded-lg border border-line bg-panel-2 p-1">
+        <button
+          onClick={() => setTab("unix")}
+          className={`rounded-md px-4 py-1.5 text-xs font-semibold transition ${
+            tab === "unix"
+              ? "bg-brand-500 text-white"
+              : "text-muted hover:text-ink"
+          }`}
+        >
+          macOS / Linux
+        </button>
+        <button
+          onClick={() => setTab("windows")}
+          className={`rounded-md px-4 py-1.5 text-xs font-semibold transition ${
+            tab === "windows"
+              ? "bg-brand-500 text-white"
+              : "text-muted hover:text-ink"
+          }`}
+        >
+          Windows
+        </button>
+      </div>
+      <div className="flex items-center gap-3 rounded-lg border border-line bg-panel-2 px-4 py-3 font-mono text-[13px] text-muted">
+        <span className="font-semibold text-brand-500">
+          {tab === "unix" ? "$" : "PS>"}
+        </span>
+        <span className="flex-1 truncate text-left text-ink/90">{cmd}</span>
+        <button
+          onClick={copy}
+          aria-label={t.hero.copyInstall}
+          className="shrink-0 rounded-md p-1.5 text-faint transition hover:bg-line hover:text-ink"
+        >
+          {copied ? <Check className="h-4 w-4 text-brand-500" /> : <Copy className="h-4 w-4" />}
+        </button>
+      </div>
     </div>
   );
 }
