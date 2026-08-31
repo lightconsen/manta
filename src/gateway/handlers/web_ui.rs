@@ -111,7 +111,7 @@ mod tests {
 
     #[tokio::test]
     async fn asset_found_returns_content() {
-        let resp = asset_handler(Path("favicon.svg".into()))
+        let resp = asset_handler(Path("favicon-32.png".into()))
             .await
             .into_response();
         assert_eq!(resp.status(), StatusCode::OK);
