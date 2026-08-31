@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/gatewayBase";
+import { getActiveTransport } from "@/SyscityWebSocketTransport";
 
-/** Latest release info from GET /api/v1/update/status. */
+/** Latest release info (WS `update.status` / GET /api/v1/update/status). */
 export interface UpdateStatus {
   enabled: boolean;
   current: string;
@@ -10,7 +11,7 @@ export interface UpdateStatus {
   embedded: boolean;
 }
 
-/** Phase/percent from GET /api/v1/update/progress. */
+/** Phase/percent (WS `update.progress` / GET /api/v1/update/progress). */
 export interface UpdateProgress {
   phase:
     | "idle"
@@ -31,10 +32,24 @@ export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI__" in window;
 }
 
-async function fetchJson<T>(path: string): Promise<T> {
-  const res = await apiFetch(path);
+async function fetchStatus(): Promise<UpdateStatus> {
+  const transport = getActiveTransport();
+  if (transport) {
+    return (await transport.getUpdateStatus()) as UpdateStatus;
+  }
+  const res = await apiFetch("/api/v1/update/status");
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return (await res.json()) as T;
+  return (await res.json()) as UpdateStatus;
+}
+
+async function fetchProgress(): Promise<UpdateProgress> {
+  const transport = getActiveTransport();
+  if (transport) {
+    return (await transport.getUpdateProgress()) as UpdateProgress;
+  }
+  const res = await apiFetch("/api/v1/update/progress");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()) as UpdateProgress;
 }
 
 /**
@@ -53,7 +68,7 @@ export function useUpdate() {
 
   const refreshStatus = useCallback(async () => {
     try {
-      setStatus(await fetchJson<UpdateStatus>("/api/v1/update/status"));
+      setStatus(await fetchStatus());
     } catch {
       // Gateway unreachable — banner stays hidden until the next poll.
     }
@@ -61,7 +76,7 @@ export function useUpdate() {
 
   const refreshProgress = useCallback(async () => {
     try {
-      const p = await fetchJson<UpdateProgress>("/api/v1/update/progress");
+      const p = await fetchProgress();
       setProgress(p);
       // The daemon reports idle/error when a run finished; stop polling.
       if (p.phase === "idle" || p.phase === "error") {
@@ -120,13 +135,16 @@ export function useUpdate() {
     }
 
     try {
-      const res = await apiFetch("/api/v1/update", {
-        method: "POST",
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { message?: string } | null;
-        setError(body?.message || `Update request failed (HTTP ${res.status}).`);
-        return;
+      const transport = getActiveTransport();
+      if (transport) {
+        await transport.triggerUpdate();
+      } else {
+        const res = await apiFetch("/api/v1/update", { method: "POST" });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => null)) as { message?: string } | null;
+          setError(body?.message || `Update request failed (HTTP ${res.status}).`);
+          return;
+        }
       }
       setMessage("Downloading update…");
       setBusy(true);
@@ -144,7 +162,7 @@ export function useUpdate() {
       return;
     }
     try {
-      setStatus(await fetchJson<UpdateStatus>("/api/v1/update/status?refresh=1"));
+      setStatus(await fetchStatus());
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }

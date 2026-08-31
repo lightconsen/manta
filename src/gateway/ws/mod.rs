@@ -132,6 +132,7 @@ async fn persist_config(state: &Arc<GatewayState>) -> Result<(), WsResponse> {
 }
 
 mod acp;
+mod admin_ws;
 mod agents;
 mod ask;
 mod chat;

@@ -13,7 +13,7 @@ import {
   LOCAL_COMMANDS,
 } from "./slash-commands";
 
-import { apiFetch, getGatewayBase, setGatewayBase } from "./lib/gatewayBase";
+import { getGatewayBase, setGatewayBase } from "./lib/gatewayBase";
 
 export interface WsRequest {
   id: string;
@@ -916,7 +916,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     });
   }
 
-  private sendRequestAndWait(
+  sendRequestAndWait(
     method: string,
     params?: Record<string, unknown>,
     timeoutMs = 5000
@@ -1449,33 +1449,77 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
 
   /* ── Onboarding (first-launch identity wizard) ── */
 
-  /** Query the identity wizard status (GET /onboarding). */
+  /** Query the identity wizard status (WS `onboarding.status`). */
   async onboardingStatus(): Promise<OnboardingStatus> {
-    const res = await apiFetch("/onboarding");
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return (await res.json()) as OnboardingStatus;
+    await this.waitForConnected(8000);
+    const res = (await this.sendRequestAndWait("onboarding.status", {})) as {
+      status?: string;
+    };
+    return { status: res.status === "done" ? "done" : "pending" };
   }
 
-  /** Submit the identity wizard form (POST /onboarding). */
+  /** Submit the identity wizard form (WS `onboarding.apply`). */
   async applyOnboarding(
     payload: OnboardingPayload
   ): Promise<{ ok: boolean; error?: string }> {
     try {
-      const res = await apiFetch("/onboarding", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as {
-          message?: string;
-        } | null;
-        return { ok: false, error: body?.message || `HTTP ${res.status}` };
-      }
+      await this.waitForConnected(8000);
+      await this.sendRequestAndWait("onboarding.apply", { ...payload });
       return { ok: true };
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
+  }
+
+  // ── Cloud (WS admin methods) ────────────────────────────────────────────
+
+  /** Cloud status block (WS `cloud.status`). */
+  async getCloudStatus(): Promise<unknown> {
+    return this.sendRequestAndWait("cloud.status", {});
+  }
+
+  /** Plan + credit balance (WS `cloud.subscription`). */
+  async getCloudSubscription(): Promise<unknown> {
+    return this.sendRequestAndWait("cloud.subscription", {});
+  }
+
+  /** Credit usage for the last `days` (WS `cloud.usage`). */
+  async getCloudUsage(days = 30): Promise<unknown> {
+    return this.sendRequestAndWait("cloud.usage", { days });
+  }
+
+  /** Persist a cloud session token (WS `cloud.token`). */
+  async submitCloudToken(token: string): Promise<unknown> {
+    return this.sendRequestAndWait("cloud.token", { token });
+  }
+
+  /** Forget the cloud session (WS `cloud.logout`). */
+  async cloudLogout(): Promise<void> {
+    await this.sendRequestAndWait("cloud.logout", {});
+  }
+
+  // ── Update (WS admin methods) ───────────────────────────────────────────
+
+  /** Latest release info (WS `update.status`). */
+  async getUpdateStatus(): Promise<unknown> {
+    return this.sendRequestAndWait("update.status", {});
+  }
+
+  /** Current update progress (WS `update.progress`). */
+  async getUpdateProgress(): Promise<unknown> {
+    return this.sendRequestAndWait("update.progress", {});
+  }
+
+  /** Trigger the self-update (WS `update.trigger`). */
+  async triggerUpdate(): Promise<unknown> {
+    return this.sendRequestAndWait("update.trigger", {});
+  }
+
+  // ── Marketplace catalog (WS `connectors.catalog`) ───────────────────────
+
+  /** The marketplace catalog document (WS `connectors.catalog`). */
+  async getConnectorsCatalog(): Promise<unknown> {
+    return this.sendRequestAndWait("connectors.catalog", {});
   }
 
   async listModels(): Promise<{ models: ModelInfo[]; default_model: string }> {
@@ -2551,4 +2595,22 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
       this.notifyRunningSessionsChanged();
     }
   }
+}
+
+// ── Active-transport singleton ──────────────────────────────────────────
+//
+// The app creates one transport in App.tsx and registers it here so that
+// standalone modules (lib/cloud.ts, hooks/useUpdate.ts, settings components)
+// can drive admin operations over the WebSocket instead of REST.
+
+let activeTransport: SyscityWebSocketTransport | null = null;
+
+/** Register the app's transport instance. */
+export function setActiveTransport(t: SyscityWebSocketTransport): void {
+  activeTransport = t;
+}
+
+/** The registered transport, or null before App registers it. */
+export function getActiveTransport(): SyscityWebSocketTransport | null {
+  return activeTransport;
 }

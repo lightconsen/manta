@@ -557,6 +557,34 @@ async fn dispatch_method(
             conn.write().await.subscriptions.clear();
             WsResponse::ok(&req.id, serde_json::json!({"status": "subscribed_all"}))
         }
+        // Admin WS methods (plugins / providers / update / cloud / onboarding /
+        // catalog) — see ws/admin_ws.rs.
+        "onboarding.status" => admin_ws::handle_onboarding_status(req, state).await,
+        "onboarding.apply" => admin_ws::handle_onboarding_apply(req, state).await,
+        "connectors.catalog" => admin_ws::handle_connectors_catalog(req, state).await,
+        "connectors.catalog_install" => {
+            admin_ws::handle_connectors_catalog_install(req, state).await
+        }
+        "cloud.status" => admin_ws::handle_cloud_status(req, state).await,
+        "cloud.subscription" => admin_ws::handle_cloud_subscription(req, state).await,
+        "cloud.usage" => admin_ws::handle_cloud_usage(req, state).await,
+        "cloud.token" => admin_ws::handle_cloud_token(req, state).await,
+        "cloud.logout" => admin_ws::handle_cloud_logout(req, state).await,
+        "update.status" => admin_ws::handle_update_status(req, state).await,
+        "update.progress" => admin_ws::handle_update_progress(req, state).await,
+        "update.trigger" => admin_ws::handle_update_trigger(req, state).await,
+        "plugins.list" => admin_ws::handle_plugins_list(req, state).await,
+        "plugins.enable" => admin_ws::handle_plugins_set_enabled(req, state, true).await,
+        "plugins.disable" => admin_ws::handle_plugins_set_enabled(req, state, false).await,
+        "plugins.install" => admin_ws::handle_plugins_install(req, state).await,
+        "plugins.search" => admin_ws::handle_plugins_search(req, state).await,
+        "plugins.unload" => admin_ws::handle_plugins_unload(req, state).await,
+        "plugins.reload" => admin_ws::handle_plugins_reload(req, state).await,
+        "plugins.uninstall" => admin_ws::handle_plugins_uninstall(req, state).await,
+        "providers.list" => admin_ws::handle_providers_list(req, state).await,
+        "providers.enable" => admin_ws::handle_providers_set_enabled(req, state, true).await,
+        "providers.disable" => admin_ws::handle_providers_set_enabled(req, state, false).await,
+        "providers.usage" => admin_ws::handle_providers_usage(req, state).await,
         _ => error_method_not_found(&req.id, &req.method),
     }
 }

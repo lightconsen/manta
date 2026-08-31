@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Download, Loader2, Lock, RefreshCw, Sparkles, Zap } from "lucide-react";
 import { Section } from "@/components/ui/Section";
 import { apiFetch } from "@/lib/gatewayBase";
+import { getActiveTransport } from "@/SyscityWebSocketTransport";
 
 interface CatalogEntry {
   id: string;
@@ -65,9 +66,11 @@ export function MarketplaceSettings({
     setLoading(true);
     setError(null);
     try {
-      const res = await apiFetch("/api/v1/connectors/catalog");
-      const body = await res.json();
-      if (body.error) throw new Error(body.error);
+      const transport = getActiveTransport();
+      const body = transport
+        ? ((await transport.getConnectorsCatalog()) as CatalogResponse)
+        : ((await (await apiFetch("/api/v1/connectors/catalog")).json()) as CatalogResponse);
+      if ((body as { error?: string }).error) throw new Error((body as { error?: string }).error);
       setData(body);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -85,12 +88,19 @@ export function MarketplaceSettings({
     setBusyId(id);
     setError(null);
     try {
-      const res = await apiFetch("/api/v1/connectors/catalog/install", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id }),
-      });
-      const body = await res.json();
+      const transport = getActiveTransport();
+      const body = transport
+        ? ((await transport.sendRequestAndWait("connectors.catalog_install", { id })) as {
+            error?: string;
+            agents?: string[];
+          })
+        : ((await (
+            await apiFetch("/api/v1/connectors/catalog/install", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ id }),
+            })
+          ).json()) as { error?: string; agents?: string[] });
       if (body.error) throw new Error(body.error);
       await load();
       return body.agents?.[0] ?? null;
@@ -117,8 +127,15 @@ export function MarketplaceSettings({
     setBusyId(`${id}:${action}`);
     setError(null);
     try {
-      const res = await apiFetch(`/api/v1/connectors/${id}/${action}`, { method: "POST" });
-      const body = await res.json();
+      const transport = getActiveTransport();
+      const body = transport
+        ? ((await transport.sendRequestAndWait(
+            action === "enable" ? "connectors.enable" : "connectors.disable",
+            { id }
+          )) as { error?: string })
+        : ((await (
+            await apiFetch(`/api/v1/connectors/${id}/${action}`, { method: "POST" })
+          ).json()) as { error?: string });
       if (body.error) throw new Error(body.error);
       await load();
     } catch (e) {

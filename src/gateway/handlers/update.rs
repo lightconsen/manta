@@ -179,7 +179,7 @@ async fn fetch_or_cached(state: &GatewayState, force: bool) -> crate::update::Up
 }
 
 /// The background update run: check → download → verify → apply → restart.
-async fn run_update_task(
+pub(crate) async fn run_update_task(
     state: Arc<GatewayState>,
     shutdown_token: CancellationToken,
     host: String,
@@ -276,7 +276,7 @@ async fn fail(state: &GatewayState, message: String) {
 }
 
 /// Update the shared progress record.
-async fn set_progress(
+pub(crate) async fn set_progress(
     state: &GatewayState,
     phase: UpdatePhase,
     percent: u8,

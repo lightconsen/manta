@@ -6,6 +6,7 @@ import {
 } from "@assistant-ui/react";
 import {
   SyscityWebSocketTransport,
+  setActiveTransport,
   type NetworkStatus,
   type ChatMessage,
 } from "@/SyscityWebSocketTransport";
@@ -107,6 +108,9 @@ function ChatAppInner({ transport }: { transport: SyscityWebSocketTransport }) {
 /* ── ChatApp ── */
 function ChatApp() {
   const transport = useMemo(() => new SyscityWebSocketTransport(), []);
+  useEffect(() => {
+    setActiveTransport(transport);
+  }, [transport]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     return localStorage.getItem("syscity_sidebar_collapsed") === "true";
   });

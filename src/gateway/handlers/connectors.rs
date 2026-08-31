@@ -299,7 +299,7 @@ pub async fn catalog_install_handler(
 }
 
 /// Ordering key for catalog versions (semver when parseable, else raw string).
-fn catalog_version_key(v: &str) -> (u64, u64, u64, String) {
+pub(crate) fn catalog_version_key(v: &str) -> (u64, u64, u64, String) {
     if let Ok(p) = crate::skills::semver::Version::parse(v) {
         (p.major, p.minor, p.patch, v.to_string())
     } else {
