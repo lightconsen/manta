@@ -375,13 +375,42 @@ pub fn run() {
                 set_window_subtitle(&window, &format!("v{VERSION} · Your AI Assistant"));
             }
 
-            // Spawn the Syscity Gateway in a background task.
+            // Spawn the Syscity Gateway in a background task. Mobile always runs
+            // its own embedded gateway (loopback is shared between apps, so it
+            // enforces a per-install token). On desktop we prefer to reuse an
+            // already-running gateway (e.g. the CLI daemon) so two processes never
+            // fight over the same ~/.syscity state — and only fall back to the
+            // embedded gateway when nothing else is listening.
             tauri::async_runtime::spawn(async move {
+                #[cfg(mobile)]
                 let port = match find_available_port("127.0.0.1", 18080, 100).await {
                     Some(p) => p,
                     None => {
                         eprintln!("No available port found in range 18080-18179");
                         return;
+                    }
+                };
+                #[cfg(not(mobile))]
+                let (port, reuse_external) = {
+                    let configured = configured_gateway_port().await;
+                    if gateway_healthy("127.0.0.1", configured).await {
+                        eprintln!(
+                            "Reusing existing Syscity Gateway on http://127.0.0.1:{}",
+                            configured
+                        );
+                        (configured, true)
+                    } else {
+                        match find_available_port("127.0.0.1", configured, 100).await {
+                            Some(p) => (p, false),
+                            None => {
+                                eprintln!(
+                                    "No available port found in range {}-{}",
+                                    configured,
+                                    configured + 99
+                                );
+                                return;
+                            }
+                        }
                     }
                 };
 
@@ -399,6 +428,21 @@ pub fn run() {
                     std::sync::Arc<dyn syscity::device::DeviceBridge>,
                 > = None;
 
+                #[cfg(not(mobile))]
+                if reuse_external {
+                    // An external gateway (e.g. the CLI daemon) is already
+                    // listening — reuse it instead of starting a second one, and
+                    // fall back to the embedded gateway if it disappears.
+                    announce_gateway_ready(&handle, "127.0.0.1", port).await;
+                    watch_reused_gateway(handle, state, port, device_bridge).await;
+                    return;
+                }
+
+                // We own this gateway — start it embedded and watch its health.
+                let h2 = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    monitor_owned_gateway(h2, port).await;
+                });
                 if let Err(e) = start_gateway(handle.clone(), port, device_bridge).await {
                     eprintln!("Gateway failed: {}", e);
                 }
@@ -446,6 +490,112 @@ fn set_window_subtitle(window: &tauri::WebviewWindow, subtitle: &str) {
             let ns_subtitle = NSString::from_str(subtitle);
             ns_window.setSubtitle(&ns_subtitle);
         }
+    }
+}
+
+/// Read the configured gateway port from `~/.syscity/config.toml`
+/// (defaults to 18080 when the config is missing or unparseable).
+/// Desktop only — mobile always runs the embedded gateway.
+#[cfg(not(mobile))]
+async fn configured_gateway_port() -> u16 {
+    use syscity::gateway::GatewayConfig;
+    let config_path = syscity::dirs::default_config_file();
+    if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
+        if let Ok(config) = toml::from_str::<GatewayConfig>(&content) {
+            return config.port;
+        }
+    }
+    18080
+}
+
+/// Probe `GET /live` on `host:port` to detect an already-running gateway.
+///
+/// `/live` returns 200 whenever the process is up, unlike `/health` which is
+/// 503 until the gateway reports fully healthy — so this answers "is a gateway
+/// running here?" rather than "is it healthy?".
+async fn gateway_healthy(host: &str, port: u16) -> bool {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let Ok(mut stream) = tokio::net::TcpStream::connect((host, port)).await else {
+        return false;
+    };
+    let request = format!("GET /live HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n", host);
+    if stream.write_all(request.as_bytes()).await.is_err() {
+        return false;
+    }
+    let mut buf = [0u8; 512];
+    let Ok(n) = stream.read(&mut buf).await else {
+        return false;
+    };
+    let head = String::from_utf8_lossy(&buf[..n]);
+    head.starts_with("HTTP/1.1 200") || head.starts_with("HTTP/1.0 200")
+}
+
+/// Show the main window and notify the frontend that a gateway is ready.
+async fn announce_gateway_ready(handle: &tauri::AppHandle, host: &str, port: u16) {
+    if let Some(window) = handle.get_webview_window("main") {
+        window.show().unwrap();
+    }
+    handle
+        .emit("gateway-ready", format!("http://{}:{}", host, port))
+        .ok();
+}
+
+/// Periodically probe a gateway we own (the embedded one) and emit
+/// `gateway-down` if it stops responding, so the WebView can surface it.
+async fn monitor_owned_gateway(handle: tauri::AppHandle, port: u16) {
+    let probe_interval = std::time::Duration::from_secs(10);
+    loop {
+        tokio::time::sleep(probe_interval).await;
+        if gateway_healthy("127.0.0.1", port).await {
+            continue;
+        }
+        eprintln!("Embedded gateway on 127.0.0.1:{} stopped responding", port);
+        let _ = handle.emit("gateway-down", format!("http://127.0.0.1:{}", port));
+        return;
+    }
+}
+
+/// Desktop only: watch a reused (external) gateway and fall back to the
+/// embedded gateway when it stops responding.
+#[cfg(not(mobile))]
+async fn watch_reused_gateway(
+    handle: tauri::AppHandle,
+    state: Arc<tokio::sync::Mutex<AppState>>,
+    port: u16,
+    device_bridge: Option<std::sync::Arc<dyn syscity::device::DeviceBridge>>,
+) {
+    let probe_interval = std::time::Duration::from_secs(5);
+    loop {
+        tokio::time::sleep(probe_interval).await;
+        if gateway_healthy("127.0.0.1", port).await {
+            continue;
+        }
+        eprintln!(
+            "External gateway on 127.0.0.1:{} stopped responding — starting the embedded gateway",
+            port
+        );
+        break;
+    }
+
+    // Fall back to the embedded gateway on the next free port.
+    let configured = configured_gateway_port().await;
+    let Some(new_port) = find_available_port("127.0.0.1", configured, 100).await else {
+        eprintln!("No available port found in range {}-{}", configured, configured + 99);
+        return;
+    };
+    {
+        let mut s = state.lock().await;
+        s.gateway_port = new_port;
+    }
+
+    // Watch the embedded gateway too, once it is running.
+    let h2 = handle.clone();
+    tauri::async_runtime::spawn(async move {
+        monitor_owned_gateway(h2, new_port).await;
+    });
+
+    if let Err(e) = start_gateway(handle, new_port, device_bridge).await {
+        eprintln!("Embedded gateway failed to start: {}", e);
     }
 }
 
@@ -597,18 +747,8 @@ async fn start_gateway(
     .await
     .map_err(|e| format!("Failed to create gateway: {}", e))?;
 
-    // Show the main window now that the backend is ready.
-    if let Some(window) = handle.get_webview_window("main") {
-        window.show().unwrap();
-    }
-
-    // Notify the frontend that the backend is ready.
-    handle
-        .emit(
-            "gateway-ready",
-            format!("http://{}:{}", gateway_config.host, gateway_config.port),
-        )
-        .ok();
+    // Show the main window and notify the frontend now that the backend is ready.
+    announce_gateway_ready(&handle, &gateway_config.host, gateway_config.port).await;
 
     // Blocks until the server shuts down.
     gateway
