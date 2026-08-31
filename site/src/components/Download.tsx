@@ -25,37 +25,39 @@ export default function Download() {
           <h2 className="text-3xl font-black tracking-tight sm:text-4xl">
             {t.download.title}
           </h2>
-          <p className="mx-auto mt-4 max-w-2xl text-muted">{t.download.lead}</p>
+          <p className="mx-auto mt-4 max-w-2xl text-lg font-medium text-brand-600">
+            {t.download.lead}
+          </p>
         </div>
 
         {/* Desktop downloads */}
-        <div className="mb-8 grid gap-4 sm:grid-cols-3">
+        <div className="mb-8 flex justify-center gap-3">
           {DESKTOP.map((p) => (
             <a
               key={p.name}
               href={p.url}
               target="_blank"
               rel="noreferrer"
-              className="card flex flex-col items-center gap-3 rounded-xl p-6 text-center transition hover:border-brand-500/40 hover:shadow-[0_12px_32px_rgba(178,42,194,0.10)]"
+              title={p.name}
+              className="card inline-flex items-center justify-center rounded-xl p-3 transition hover:border-brand-500/40 hover:shadow-[0_8px_24px_rgba(178,42,194,0.10)]"
             >
-              <p.icon className="h-8 w-8 text-brand-500" />
-              <span className="text-sm font-semibold">{p.name}</span>
+              <p.icon className="h-6 w-6 text-brand-500" />
             </a>
           ))}
         </div>
 
         {/* Mobile app stores */}
-        <div className="mb-8 grid gap-4 sm:grid-cols-2">
+        <div className="mb-8 flex justify-center gap-3">
           {MOBILE.map((p) => (
             <a
               key={p.name}
               href={p.url}
               target="_blank"
               rel="noreferrer"
-              className="card flex flex-col items-center gap-3 rounded-xl p-6 text-center transition hover:border-brand-500/40 hover:shadow-[0_12px_32px_rgba(178,42,194,0.10)]"
+              title={p.name}
+              className="card inline-flex items-center justify-center rounded-xl p-3 transition hover:border-brand-500/40 hover:shadow-[0_8px_24px_rgba(178,42,194,0.10)]"
             >
-              <p.icon className="h-8 w-8 text-brand-500" />
-              <span className="text-sm font-semibold">{p.name}</span>
+              <p.icon className="h-6 w-6 text-brand-500" />
             </a>
           ))}
         </div>
