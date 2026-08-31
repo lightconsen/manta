@@ -102,7 +102,7 @@ jobs:
       - name: Install Rust MSRV
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.93"
+          toolchain: "1.94"
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2

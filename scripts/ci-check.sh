@@ -97,10 +97,10 @@ check "cargo check (all-features)" cargo check --all-features
 check "cargo doc" cargo doc --no-deps --all-features
 
 # ── Job: msrv (ci.yml `msrv`) ───────────────────────────────────────────────
-if cargo +1.93 --version >/dev/null 2>&1; then
-    check "msrv (1.93)" cargo +1.93 check --all-features
+if cargo +1.94 --version >/dev/null 2>&1; then
+    check "msrv (1.94)" cargo +1.94 check --all-features
 else
-    skip_with_hint "msrv (1.93)" "rustup toolchain install 1.93 --profile minimal"
+    skip_with_hint "msrv (1.94)" "rustup toolchain install 1.94 --profile minimal"
 fi
 
 # ── Job: build (ci.yml `build`: default + all-features) ─────────────────────
