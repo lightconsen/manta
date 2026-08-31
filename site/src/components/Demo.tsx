@@ -27,19 +27,25 @@ export default function Demo() {
       </p>
 
       {/* Mobile app screenshots (iOS + Android), below the demo GIF. */}
-      <div className="mt-10 grid gap-6 sm:grid-cols-2">
-        <img
-          src={`${base}assets/mobile-ios-light.png`}
-          alt="Syscity on iOS"
-          className="card w-full rounded-2xl object-contain"
-          loading="lazy"
-        />
-        <img
-          src={`${base}assets/mobile-android-light.png`}
-          alt="Syscity on Android"
-          className="card w-full rounded-2xl object-contain"
-          loading="lazy"
-        />
+      <div className="mt-10 flex justify-center gap-4">
+        <figure className="flex flex-col items-center">
+          <img
+            src={`${base}assets/mobile-ios-light.png`}
+            alt="Syscity on iOS"
+            className="card h-[480px] rounded-2xl object-contain"
+            loading="lazy"
+          />
+          <figcaption className="mt-2 text-sm text-muted">{t.demo.iosCaption}</figcaption>
+        </figure>
+        <figure className="flex flex-col items-center">
+          <img
+            src={`${base}assets/mobile-android-light.png`}
+            alt="Syscity on Android"
+            className="card h-[480px] rounded-2xl object-contain"
+            loading="lazy"
+          />
+          <figcaption className="mt-2 text-sm text-muted">{t.demo.androidCaption}</figcaption>
+        </figure>
       </div>
     </section>
   );
