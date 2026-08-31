@@ -4,8 +4,8 @@ import { useLanguage } from "../i18n";
 const base = import.meta.env.BASE_URL;
 
 const DESKTOP = [
-  { name: "Windows", icon: `${base}assets/platforms/window.svg`, url: "https://syscity.net/syscity-windows.exe" },
-  { name: "Linux", icon: `${base}assets/platforms/linux.svg`, url: "https://syscity.net/syscity-linux.AppImage" },
+  { name: "Windows", icon: `${base}assets/platforms/window.svg`, url: "https://syscity.net/releases/syscity-desktop-windows-amd64.exe" },
+  { name: "Linux", icon: `${base}assets/platforms/linux.svg`, url: "https://syscity.net/releases/syscity-desktop-linux-amd64.AppImage" },
 ];
 
 const MOBILE = [
@@ -14,8 +14,8 @@ const MOBILE = [
 ];
 
 const MAC_VARIANTS = [
-  { name: "Apple Silicon", url: "https://syscity.net/syscity-macos-arm64.dmg" },
-  { name: "Intel", url: "https://syscity.net/syscity-macos-x64.dmg" },
+  { name: "Apple Silicon", url: "https://syscity.net/releases/syscity-desktop-macos-arm64.dmg" },
+  { name: "Intel", url: "https://syscity.net/releases/syscity-desktop-macos-amd64.dmg" },
 ];
 
 /** Download section: the merged Platforms + Download area — per-platform
