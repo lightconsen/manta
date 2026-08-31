@@ -3,7 +3,8 @@ import { useLanguage } from "../i18n";
 const base = import.meta.env.BASE_URL;
 
 const DESKTOP = [
-  { name: "macOS", icon: `${base}assets/platforms/mac.svg`, url: "https://syscity.net/syscity-macos.dmg" },
+  { name: "macOS (Apple Silicon)", icon: `${base}assets/platforms/mac.svg`, url: "https://syscity.net/syscity-macos-arm64.dmg" },
+  { name: "macOS (Intel)", icon: `${base}assets/platforms/mac.svg`, url: "https://syscity.net/syscity-macos-x64.dmg" },
   { name: "Windows", icon: `${base}assets/platforms/window.svg`, url: "https://syscity.net/syscity-windows.exe" },
   { name: "Linux", icon: `${base}assets/platforms/linux.svg`, url: "https://syscity.net/syscity-linux.AppImage" },
 ];
