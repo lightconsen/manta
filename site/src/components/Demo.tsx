@@ -25,6 +25,22 @@ export default function Demo() {
         {t.demo.captionBefore} <code className="font-mono">{t.demo.captionTool}</code>
         {t.demo.captionAfter}
       </p>
+
+      {/* Mobile app screenshots (iOS + Android), below the demo GIF. */}
+      <div className="mt-10 grid gap-6 sm:grid-cols-2">
+        <img
+          src={`${base}assets/mobile-ios-light.png`}
+          alt="Syscity on iOS"
+          className="card w-full rounded-2xl object-contain"
+          loading="lazy"
+        />
+        <img
+          src={`${base}assets/mobile-android-light.png`}
+          alt="Syscity on Android"
+          className="card w-full rounded-2xl object-contain"
+          loading="lazy"
+        />
+      </div>
     </section>
   );
 }

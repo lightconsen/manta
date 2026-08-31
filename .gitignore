@@ -75,3 +75,9 @@ lcov.info
 
 # Local secret material (never commit)
 .tavily-key
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+!.env.example

@@ -1,7 +1,6 @@
 import Nav from "./components/Nav";
 import Hero from "./components/Hero";
 import Demo from "./components/Demo";
-import Platforms from "./components/Platforms";
 import Download from "./components/Download";
 import Features from "./components/Features";
 import ActionCognition from "./components/ActionCognition";
@@ -20,7 +19,6 @@ export default function App() {
           <Demo />
           <Features />
           <ActionCognition />
-          <Platforms />
           <Download />
           <CloudSection />
           <QuickStart />
