@@ -26,12 +26,12 @@ function InstallChip() {
 
   return (
     <div className="mx-auto max-w-xl space-y-3">
-      <div className="flex justify-center gap-1 rounded-lg border border-line bg-panel-2 p-1">
+      <div className="flex justify-center gap-4">
         <button
           onClick={() => setTab("unix")}
-          className={`rounded-md px-4 py-1.5 text-xs font-semibold transition ${
+          className={`px-2 py-1 text-xs font-semibold transition ${
             tab === "unix"
-              ? "bg-brand-500 text-white"
+              ? "text-brand-500 border-b-2 border-brand-500"
               : "text-muted hover:text-ink"
           }`}
         >
@@ -39,9 +39,9 @@ function InstallChip() {
         </button>
         <button
           onClick={() => setTab("windows")}
-          className={`rounded-md px-4 py-1.5 text-xs font-semibold transition ${
+          className={`px-2 py-1 text-xs font-semibold transition ${
             tab === "windows"
-              ? "bg-brand-500 text-white"
+              ? "text-brand-500 border-b-2 border-brand-500"
               : "text-muted hover:text-ink"
           }`}
         >
