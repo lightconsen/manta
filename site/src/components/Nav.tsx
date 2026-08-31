@@ -8,7 +8,7 @@ export default function Nav() {
 
   const LINKS = [
     { href: "#features", label: t.nav.features },
-    { href: "#platforms", label: t.nav.platforms },
+    { href: "#download", label: t.nav.platforms },
     { href: "#quickstart", label: t.nav.quickstart },
   ];
 

@@ -13,7 +13,7 @@ const STORAGE_KEY = "syscity-lang";
 const en = {
   nav: {
     features: "Features",
-    platforms: "Platforms",
+    platforms: "Download",
     quickstart: "Quick Start",
     starLong: "Star on GitHub",
     starShort: "Star",
@@ -36,6 +36,8 @@ const en = {
     captionBefore: "An agent generates a markdown report via",
     captionTool: "write_report",
     captionAfter: ", then previews it in a split-panel view.",
+    iosCaption: "Chat, voice, camera & device tools on iOS",
+    androidCaption: "Chat, voice, camera & device tools on Android",
   },
   features: {
     eyebrow: "Features",
@@ -166,7 +168,7 @@ export type Dict = typeof en;
 const zh: Dict = {
   nav: {
     features: "功能",
-    platforms: "平台",
+    platforms: "下载",
     quickstart: "快速开始",
     starLong: "在 GitHub 上点赞",
     starShort: "Star",
@@ -189,6 +191,8 @@ const zh: Dict = {
     captionBefore: "智能体通过",
     captionTool: "write_report",
     captionAfter: "生成一份 Markdown 报告，随后在分栏视图中预览。",
+    iosCaption: "iOS 上的聊天、语音、相机与设备工具",
+    androidCaption: "Android 上的聊天、语音、相机与设备工具",
   },
   features: {
     eyebrow: "功能",
