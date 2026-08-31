@@ -302,8 +302,8 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         | "connectors.install"
         | "connectors.enable"
         | "connectors.disable"
-        | "connectors.uninstall"
-        | "acp.spawn"
+        | "connectors.uninstall" => Some(SCOPE_WRITE),
+        "acp.spawn"
         | "acp.terminate"
         | "acp.message"
         | "acp.pause"
