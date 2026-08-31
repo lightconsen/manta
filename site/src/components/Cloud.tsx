@@ -1,5 +1,5 @@
 import { ArrowRight, Cloud, RefreshCw, Store } from "lucide-react";
-import { useLanguage } from "../i18n";
+import { cloudUrl, useLanguage } from "../i18n";
 
 const PLANS = [
   { key: "free", priceKey: "free" },
@@ -11,7 +11,7 @@ const PLANS = [
  * sync, and the connector/expert marketplace, plus the plan tiers, with a CTA
  * to the console. */
 export default function CloudSection() {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
 
   return (
     <section id="cloud" className="border-y border-line bg-page">
@@ -95,7 +95,7 @@ export default function CloudSection() {
 
         <div className="mt-12 text-center">
           <a
-            href="https://cloud.syscity.net"
+            href={cloudUrl(lang)}
             target="_blank"
             rel="noreferrer"
             className="inline-flex h-12 items-center gap-2 rounded-md bg-brand-500 px-6 text-[15px] font-semibold text-white shadow-[0_8px_24px_rgba(178,42,194,0.3)] transition hover:bg-brand-600"

@@ -1,11 +1,11 @@
 import { MessageSquare, FileText } from "lucide-react";
 import GithubMark from "./GithubMark";
-import { useLanguage } from "../i18n";
+import { cloudUrl, useLanguage } from "../i18n";
 
 const base = import.meta.env.BASE_URL;
 
 export default function Footer() {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
 
   return (
     <footer className="border-t border-line bg-alt">
@@ -33,7 +33,7 @@ export default function Footer() {
               <li><a href="#quickstart" className="transition hover:text-ink">{t.footer.quickstart}</a></li>
               <li>
                 <a
-                  href="https://cloud.syscity.net"
+                  href={cloudUrl(lang)}
                   target="_blank"
                   rel="noreferrer"
                   className="transition hover:text-ink"

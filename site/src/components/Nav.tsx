@@ -1,5 +1,5 @@
 import { Star, Languages } from "lucide-react";
-import { useLanguage } from "../i18n";
+import { cloudUrl, useLanguage } from "../i18n";
 
 const base = import.meta.env.BASE_URL;
 
@@ -52,7 +52,7 @@ export default function Nav() {
             <span className="sm:hidden">{t.nav.starShort}</span>
           </a>
           <a
-            href="https://cloud.syscity.net"
+            href={cloudUrl(lang)}
             target="_blank"
             rel="noreferrer"
             className="hidden rounded-md bg-brand-500 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-brand-600 sm:inline-flex"

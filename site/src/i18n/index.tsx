@@ -369,3 +369,9 @@ export function LangProvider({ children }: { children: ReactNode }) {
 export function useLanguage(): LangContextValue {
   return useContext(LangContext);
 }
+
+/** The Syscity Cloud URL with the current language as a `?lang=` query param,
+ * so the console picks up the same language on navigation. */
+export function cloudUrl(lang: Lang): string {
+  return `https://cloud.syscity.net/?lang=${lang}`;
+}
