@@ -26,14 +26,19 @@ export function getGatewayBase(): string {
     // Tauri: resolved async by initGatewayBase(); fall back to loopback.
     return "http://127.0.0.1:18080";
   }
-  return typeof window !== "undefined"
-    ? window.location.origin
-    : "http://127.0.0.1:18080";
+  if (typeof window !== "undefined") {
+    // Browser: honor a stored remote gateway base; otherwise same-origin
+    // (the page is served by the gateway it talks to).
+    const stored = localStorage.getItem("syscity_gateway_base");
+    return stored ? stored.replace(/\/+$/, "") : window.location.origin;
+  }
+  return "http://127.0.0.1:18080";
 }
 
 /**
  * Resolve the gateway base from the Tauri backend and cache it. In the
- * browser this is a no-op (same-origin already applies). Returns the base.
+ * browser this reads the stored remote base (or same-origin). Returns the
+ * base.
  */
 export async function initGatewayBase(): Promise<string> {
   if (cachedBase) return cachedBase;
@@ -48,7 +53,7 @@ export async function initGatewayBase(): Promise<string> {
       // Fall back to loopback.
     }
   } else if (typeof window !== "undefined") {
-    base = window.location.origin;
+    base = localStorage.getItem("syscity_gateway_base") || window.location.origin;
   }
   setGatewayBase(base);
   return base;

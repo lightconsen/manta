@@ -57,9 +57,9 @@ curl --noproxy "*" http://127.0.0.1:18080/live   # 200
 
 | 客户端 | 状态 |
 |---|---|
-| **Desktop** | 设置页「连接」区可选远程；启动时按配置走 |
-| **Mobile** | 设置页可选远程 |
-| **Web** | 直接打开远程 Gateway 的 Web UI（`http://<远程>:18080`），首次连接输入 token |
+| **Desktop** | 设置页「Connection」可选本地/远程（`~/.syscity/client.toml`）；远程模式连接远程并携带 token |
+| **Mobile** | 与 Desktop 相同（设置页 Connection，配置存应用沙盒）；本地模式用内嵌 gateway + per-install token |
+| **Web（浏览器）** | 两种方式：直接打开远程 Gateway 的 UI（同源），或「Connection」设置里填远程 base URL + token（存 localStorage）作为独立客户端 |
 
 ### 安全建议
 

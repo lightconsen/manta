@@ -13,7 +13,7 @@ import {
   LOCAL_COMMANDS,
 } from "./slash-commands";
 
-import { apiFetch, setGatewayBase } from "./lib/gatewayBase";
+import { apiFetch, getGatewayBase, setGatewayBase } from "./lib/gatewayBase";
 
 export interface WsRequest {
   id: string;
@@ -440,8 +440,9 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     } else if (isTauri) {
       url = "ws://127.0.0.1:18080/ws";
     } else {
-      const proto = location.protocol === "https:" ? "wss:" : "ws:";
-      url = `${proto}//${location.host}/ws`;
+      // Browser: the gateway base is same-origin unless a remote base is
+      // stored (web Connection settings); derive the ws URL from it.
+      url = getGatewayBase().replace(/^http/, "ws") + "/ws";
     }
 
     // Mobile gateways require the shared token at the WS *upgrade* (before

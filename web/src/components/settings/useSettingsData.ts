@@ -567,10 +567,8 @@ export function useSettingsData(transport: SyscityWebSocketTransport, initialTab
     { id: "jobs", label: "Jobs" },
     { id: "devices", label: "Devices" },
     { id: "logs", label: "Logs" },
-    // Tauri (desktop/mobile) only: connect to a remote gateway or run locally.
-    ...(typeof window !== "undefined" && "__TAURI__" in window
-      ? [{ id: "connection", label: "Connection" }]
-      : []),
+    // All clients: connect to a remote gateway (or run locally on Tauri).
+    { id: "connection", label: "Connection" },
   ];
 
   const tabCls = (id: string) =>
