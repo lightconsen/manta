@@ -205,12 +205,12 @@ async fn test_remote_gateway(
     }
 }
 
-/// Tauri command (mobile only): the per-install gateway auth token.
+/// Tauri command: the gateway auth token the WebView presents at the WS
+/// handshake / as an HTTP Bearer credential.
 ///
-/// Loopback is not per-app isolated on Android/iOS, so the embedded gateway
-/// requires this token; the WebView fetches it here and presents it at the
-/// WS handshake / as an HTTP Bearer credential.
-#[cfg(mobile)]
+/// Mobile always requires a per-install token (loopback is shared between
+/// apps). Desktop requires one only in remote mode, where it is the remote
+/// gateway's shared token from the connection config; local mode has none.
 #[tauri::command]
 fn get_gateway_token(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> Option<String> {
     state.blocking_lock().gateway_token.clone()
@@ -367,7 +367,15 @@ pub fn run() {
     #[cfg(mobile)]
     let gateway_token = Some(load_or_create_gateway_token());
     #[cfg(not(mobile))]
-    let gateway_token: Option<String> = None;
+    let gateway_token: Option<String> = {
+        // Remote mode: expose the remote gateway's shared token to the
+        // frontend (WS query / HTTP Bearer). Local mode needs none.
+        let conn = connection::load_connection();
+        match conn.mode {
+            ConnectionMode::Remote => conn.token,
+            ConnectionMode::Local => None,
+        }
+    };
 
     let app_state = Arc::new(Mutex::new(AppState {
         gateway_ready: false,
@@ -404,6 +412,7 @@ pub fn run() {
     #[cfg(not(mobile))]
     let builder = builder.invoke_handler(tauri::generate_handler![
         get_api_url,
+        get_gateway_token,
         reveal_in_folder,
         check_for_updates,
         get_connection,
@@ -483,6 +492,10 @@ pub fn run() {
                             let mut s = state.lock().await;
                             s.gateway_port = conn.port;
                             s.gateway_base = base.clone();
+                            // Remote gateway requires its shared token at the WS
+                            // handshake and as an HTTP Bearer — expose it to the
+                            // frontend (get_gateway_token).
+                            s.gateway_token = conn.token.clone();
                             drop(s);
                             announce_gateway_ready(&handle, &conn.host, conn.port).await;
                             watch_remote_gateway(handle, conn).await;
