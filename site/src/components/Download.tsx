@@ -1,10 +1,9 @@
+import { useEffect, useRef, useState } from "react";
 import { useLanguage } from "../i18n";
 
 const base = import.meta.env.BASE_URL;
 
 const DESKTOP = [
-  { name: "macOS (Apple Silicon)", icon: `${base}assets/platforms/mac.svg`, url: "https://syscity.net/syscity-macos-arm64.dmg" },
-  { name: "macOS (Intel)", icon: `${base}assets/platforms/mac.svg`, url: "https://syscity.net/syscity-macos-x64.dmg" },
   { name: "Windows", icon: `${base}assets/platforms/window.svg`, url: "https://syscity.net/syscity-windows.exe" },
   { name: "Linux", icon: `${base}assets/platforms/linux.svg`, url: "https://syscity.net/syscity-linux.AppImage" },
 ];
@@ -14,11 +13,33 @@ const MOBILE = [
   { name: "Android", icon: `${base}assets/platforms/android.svg`, url: "https://play.google.com/store/apps/details?id=net.syscity" },
 ];
 
+const MAC_VARIANTS = [
+  { name: "Apple Silicon", url: "https://syscity.net/syscity-macos-arm64.dmg" },
+  { name: "Intel", url: "https://syscity.net/syscity-macos-x64.dmg" },
+];
+
 /** Download section: the merged Platforms + Download area — per-platform
  * clients, with desktop builds as direct downloads and mobile linking to the
- * app stores. */
+ * app stores. macOS shows a chooser (Apple Silicon / Intel) on click. */
 export default function Download() {
   const { t } = useLanguage();
+  const [macOpen, setMacOpen] = useState(false);
+  const macRef = useRef<HTMLDivElement>(null);
+
+  // Close the macOS chooser when clicking outside or moving the pointer away.
+  useEffect(() => {
+    if (!macOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (macRef.current && !macRef.current.contains(e.target as Node)) {
+        setMacOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [macOpen]);
+
+  const cardCls =
+    "card inline-flex items-center justify-center rounded-xl p-3 transition hover:border-brand-500/40 hover:shadow-[0_8px_24px_rgba(178,42,194,0.10)]";
 
   return (
     <section id="download" className="border-y border-line bg-alt">
@@ -35,15 +56,36 @@ export default function Download() {
 
         {/* Desktop downloads */}
         <div className="mb-8 flex justify-center gap-3">
-          {DESKTOP.map((p) => (
-            <a
-              key={p.name}
-              href={p.url}
-              target="_blank"
-              rel="noreferrer"
-              title={p.name}
-              className="card inline-flex items-center justify-center rounded-xl p-3 transition hover:border-brand-500/40 hover:shadow-[0_8px_24px_rgba(178,42,194,0.10)]"
+          {/* macOS: single icon, click to pick Apple Silicon / Intel */}
+          <div ref={macRef} className="relative">
+            <button
+              type="button"
+              title="macOS"
+              aria-expanded={macOpen}
+              onClick={() => setMacOpen((v) => !v)}
+              className={cardCls}
             >
+              <img src={`${base}assets/platforms/mac.svg`} alt="macOS" className="h-12 w-12" loading="lazy" />
+            </button>
+            {macOpen && (
+              <div className="absolute left-1/2 top-full z-10 mt-2 -translate-x-1/2 rounded-xl border border-line bg-panel p-2 shadow-lg">
+                {MAC_VARIANTS.map((v) => (
+                  <a
+                    key={v.name}
+                    href={v.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium text-ink transition hover:bg-black/5 dark:hover:bg-white/5"
+                  >
+                    {v.name}
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {DESKTOP.map((p) => (
+            <a key={p.name} href={p.url} target="_blank" rel="noreferrer" title={p.name} className={cardCls}>
               <img src={p.icon} alt={p.name} className="h-12 w-12" loading="lazy" />
             </a>
           ))}
@@ -52,14 +94,7 @@ export default function Download() {
         {/* Mobile app stores */}
         <div className="mb-8 flex justify-center gap-3">
           {MOBILE.map((p) => (
-            <a
-              key={p.name}
-              href={p.url}
-              target="_blank"
-              rel="noreferrer"
-              title={p.name}
-              className="card inline-flex items-center justify-center rounded-xl p-3 transition hover:border-brand-500/40 hover:shadow-[0_8px_24px_rgba(178,42,194,0.10)]"
-            >
+            <a key={p.name} href={p.url} target="_blank" rel="noreferrer" title={p.name} className={cardCls}>
               <img src={p.icon} alt={p.name} className="h-12 w-12" loading="lazy" />
             </a>
           ))}
