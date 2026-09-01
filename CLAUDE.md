@@ -1,5 +1,33 @@
 # CLAUDE.md - Syscity Project
 
+## API Protocol Convention
+
+- **Prefer the WebSocket RPC protocol (`/ws`)** for every client-facing
+  operation. The gateway is WS-native: the built-in UI (web/desktop/mobile)
+  and the CLI talk to the gateway exclusively over WS
+  (`WsRequest`/`WsResponse`, methods dispatched in `src/gateway/ws/core.rs`).
+- **Do not add a new REST endpoint when a WS method can serve the caller.**
+  Add a WS method instead (see "Adding a WS method" below).
+- REST is reserved for cases that genuinely require HTTP:
+  - OpenAI-compatible wire protocol (`/v1/chat/completions`, `/v1/models`) —
+    external tools hardcode these paths.
+  - OAuth browser redirects (`/api/v1/cloud/login`).
+  - Inbound webhooks from external platforms (`/webhooks/*`).
+  - File/static download (`/api/v1/artifacts/*`, `/assets/*`).
+  - Health/liveness/readiness probes (`/health`, `/ready`, `/live`) and
+    Prometheus metrics (`/metrics`) — bare, unversioned paths by convention.
+- **Every REST endpoint MUST be authenticated.** No REST endpoint may be
+  open/unauthenticated. Register it in the authenticated router (admin tier)
+  so the auth middleware applies; keep only what the auth config allows
+  (`shared_token`, device pairing, tailscale, trusted proxy).
+- **Adding a WS method:**
+  1. Implement the handler in `src/gateway/ws/admin_ws.rs` (or the relevant
+     `ws/` submodule).
+  2. Register the dispatch arm in `src/gateway/ws/core.rs`.
+  3. Register the scope in `src/gateway/protocol.rs` `method_scope()`
+     (read → `SCOPE_READ`, write → `SCOPE_WRITE`).
+  4. Add a `#[tokio::test]` covering the new method.
+
 ## Rust Best Practices
 
 ### Code Style & Formatting
