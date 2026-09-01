@@ -1,14 +1,13 @@
 //! Provider management commands for Syscity
 //!
 //! Top-level CLI for listing, enabling, disabling, and switching model
-//! providers.
+//! providers (over WebSocket).
 
 use clap::Subcommand;
+use serde_json::json;
 
-use crate::error::{Result, SyscityError};
-
-/// Default daemon base URL.
-const DAEMON_URL: &str = "http://127.0.0.1:18080";
+use crate::cli::ws;
+use crate::error::Result;
 
 #[derive(Debug, Subcommand)]
 pub enum ProviderCommands {
@@ -69,173 +68,107 @@ pub enum ProviderCommands {
     },
 }
 
-/// Run provider commands
+/// Run provider commands (over WebSocket).
 pub async fn run_provider_command(
     command: &ProviderCommands,
     _config: &crate::config::Config,
 ) -> Result<()> {
-    let client = reqwest::Client::new();
-
     match command {
         ProviderCommands::List => {
-            let url = format!("{}/api/v1/providers", DAEMON_URL);
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    let body: serde_json::Value = resp.json().await.unwrap_or_default();
-                    if let Some(providers) = body.get("providers").and_then(|p| p.as_array()) {
-                        println!("Providers:");
-                        println!("{:<20} {:<10} {:<10} Name", "ID", "Enabled", "Healthy");
-                        println!("{}", "-".repeat(60));
-                        for p in providers {
-                            println!(
-                                "{:<20} {:<10} {:<10} {}",
-                                p.get("id").and_then(|c| c.as_str()).unwrap_or("-"),
-                                if p.get("enabled").and_then(|c| c.as_bool()).unwrap_or(false) {
-                                    "yes"
-                                } else {
-                                    "no"
-                                },
-                                if p.get("healthy").and_then(|c| c.as_bool()).unwrap_or(false) {
-                                    "yes"
-                                } else {
-                                    "no"
-                                },
-                                p.get("name").and_then(|c| c.as_str()).unwrap_or("-"),
-                            );
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+            let payload = ws::call("providers.list", json!({})).await?;
+            if let Some(providers) = payload.get("providers").and_then(|p| p.as_array()) {
+                println!("Providers:");
+                println!("{:<20} {:<10} {:<10} Name", "ID", "Enabled", "Healthy");
+                println!("{}", "-".repeat(60));
+                for p in providers {
+                    println!(
+                        "{:<20} {:<10} {:<10} {}",
+                        p.get("id").and_then(|c| c.as_str()).unwrap_or("-"),
+                        if p.get("enabled").and_then(|c| c.as_bool()).unwrap_or(false) {
+                            "yes"
+                        } else {
+                            "no"
+                        },
+                        if p.get("healthy").and_then(|c| c.as_bool()).unwrap_or(false) {
+                            "yes"
+                        } else {
+                            "no"
+                        },
+                        p.get("name").and_then(|c| c.as_str()).unwrap_or("-"),
+                    );
                 }
             }
             Ok(())
         }
         ProviderCommands::Health { id } => {
-            let url = format!("{}/api/v1/providers/{}/health", DAEMON_URL, id);
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    let body = resp.text().await.unwrap_or_default();
-                    println!("{}", body);
-                }
-                Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
-                }
-            }
+            let payload = ws::call("providers.health", json!({ "id": id })).await?;
+            println!("{}", payload);
             Ok(())
         }
         ProviderCommands::Enable { id } => {
-            let url = format!("{}/api/v1/providers/{}/enable", DAEMON_URL, id);
-            match client.post(&url).send().await {
-                Ok(resp) => {
-                    if resp.status().is_success() {
-                        println!("✅ Enabled provider {}", id);
-                    } else {
-                        let text = resp.text().await.unwrap_or_default();
-                        eprintln!("Failed to enable: {}", text);
-                    }
-                }
+            match ws::call("providers.enable", json!({ "id": id })).await {
+                Ok(_) => println!("✅ Enabled provider {}", id),
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    eprintln!("Failed to enable: {}", e);
+                    return Err(e);
                 }
             }
             Ok(())
         }
         ProviderCommands::Disable { id } => {
-            let url = format!("{}/api/v1/providers/{}/disable", DAEMON_URL, id);
-            match client.post(&url).send().await {
-                Ok(resp) => {
-                    if resp.status().is_success() {
-                        println!("✅ Disabled provider {}", id);
-                    } else {
-                        let text = resp.text().await.unwrap_or_default();
-                        eprintln!("Failed to disable: {}", text);
-                    }
-                }
+            match ws::call("providers.disable", json!({ "id": id })).await {
+                Ok(_) => println!("✅ Disabled provider {}", id),
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    eprintln!("Failed to disable: {}", e);
+                    return Err(e);
                 }
             }
             Ok(())
         }
         ProviderCommands::Switch { model } => {
-            let url = format!("{}/api/v1/providers/switch", DAEMON_URL);
-            let body = serde_json::json!({ "model": model });
-            match client.post(&url).json(&body).send().await {
-                Ok(resp) => {
-                    if resp.status().is_success() {
-                        println!("✅ Switched default model to {}", model);
-                    } else {
-                        let text = resp.text().await.unwrap_or_default();
-                        eprintln!("Failed to switch: {}", text);
-                    }
-                }
+            match ws::call("providers.switch", json!({ "model": model })).await {
+                Ok(_) => println!("✅ Switched default model to {}", model),
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    eprintln!("Failed to switch: {}", e);
+                    return Err(e);
                 }
             }
             Ok(())
         }
         ProviderCommands::Default => {
-            let url = format!("{}/api/v1/models/default", DAEMON_URL);
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    let body = resp.text().await.unwrap_or_default();
-                    println!("{}", body);
-                }
-                Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
-                }
-            }
+            let payload = ws::call("models.default", json!({})).await?;
+            println!("{}", payload);
             Ok(())
         }
         ProviderCommands::Usage { id } => {
-            let url = if let Some(ref provider_id) = id {
-                format!("{}/api/v1/providers/usage/{}", DAEMON_URL, provider_id)
+            let payload = if let Some(ref provider_id) = id {
+                ws::call("providers.usage", json!({ "id": provider_id })).await?
             } else {
-                format!("{}/api/v1/providers/usage", DAEMON_URL)
+                ws::call("providers.usage", json!({})).await?
             };
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    let body: serde_json::Value = resp.json().await.unwrap_or_default();
-                    // Try to parse as formatted usage snapshots
-                    if let Ok(snapshots) = serde_json::from_value::<
-                        Vec<crate::model_router::ProviderUsageSnapshot>,
-                    >(body.clone())
-                    {
-                        let fmt_config =
-                            crate::model_router::usage_formatter::FormatConfig::default();
-                        if id.is_some() {
-                            for snapshot in &snapshots {
-                                println!(
-                                    "{}",
-                                    crate::model_router::format_provider_snapshot(
-                                        snapshot,
-                                        &fmt_config
-                                    )
-                                );
-                            }
-                        } else {
-                            println!(
-                                "{}",
-                                crate::model_router::format_usage_report(&snapshots, &fmt_config)
-                            );
-                        }
-                    } else {
-                        // Fallback to pretty-printed JSON
-                        println!("{}", serde_json::to_string_pretty(&body).unwrap_or_default());
+            // Try to parse as formatted usage snapshots
+            let snapshots_value = payload.get("usage").cloned().unwrap_or(payload);
+            if let Ok(snapshots) = serde_json::from_value::<
+                Vec<crate::model_router::ProviderUsageSnapshot>,
+            >(snapshots_value.clone())
+            {
+                let fmt_config = crate::model_router::usage_formatter::FormatConfig::default();
+                if id.is_some() {
+                    for snapshot in &snapshots {
+                        println!(
+                            "{}",
+                            crate::model_router::format_provider_snapshot(snapshot, &fmt_config)
+                        );
                     }
+                } else {
+                    println!(
+                        "{}",
+                        crate::model_router::format_usage_report(&snapshots, &fmt_config)
+                    );
                 }
-                Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
-                }
+            } else {
+                // Fallback to pretty-printed JSON
+                println!("{}", serde_json::to_string_pretty(&snapshots_value).unwrap_or_default());
             }
             Ok(())
         }

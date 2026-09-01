@@ -572,6 +572,7 @@ async fn dispatch_method(
         "providers.health" => admin_ws::handle_providers_health(req, state).await,
         "providers.check" => admin_ws::handle_providers_check(req, state).await,
         "providers.switch" => admin_ws::handle_providers_switch(req, state).await,
+        "models.default" => admin_ws::handle_models_default(req, state).await,
         "traces.get" => admin_ws::handle_traces_get(req, state).await,
         "status.get" => admin_ws::handle_status_get(req, state).await,
         "cron.get" => admin_ws::handle_cron_get(req, state).await,

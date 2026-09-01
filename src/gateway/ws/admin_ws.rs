@@ -534,6 +534,15 @@ pub(super) async fn handle_providers_switch(
     }
 }
 
+/// `models.default` — the current default model.
+pub(super) async fn handle_models_default(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    let default = state.infra.model_router.get_default_model().await;
+    WsResponse::ok(&req.id, serde_json::json!({ "default_model": default }))
+}
+
 // ── Status ──────────────────────────────────────────────────────────────
 
 /// `status.get` — engine status (agents, channels, version, cloud block).

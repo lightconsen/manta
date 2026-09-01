@@ -250,6 +250,7 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         | "models.fetch_remote"
         | "models.add"
         | "models.remove"
+        | "models.default"
         | "models.set_default"
         | "cron.list"
         | "skills.list"

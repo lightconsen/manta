@@ -3,13 +3,12 @@
 use std::path::PathBuf;
 
 use clap::Subcommand;
+use serde_json::json;
 
+use crate::cli::ws;
 use crate::cli::OutputFormat;
 use crate::error::{Result, SyscityError};
 use crate::skills::{install_all, SkillFile};
-
-/// Default daemon base URL.
-const DAEMON_URL: &str = "http://127.0.0.1:18080";
 
 #[derive(Debug, Subcommand)]
 pub enum SkillCommands {
@@ -86,74 +85,32 @@ pub enum SkillCommands {
     },
 }
 
-/// Run skill commands
+/// Run skill commands (over WebSocket).
 pub async fn run_skill_command(command: &SkillCommands) -> Result<()> {
-    let client = reqwest::Client::new();
-
     match command {
         SkillCommands::List { all, format } => {
-            let mut url = format!("{}/api/v1/skills", DAEMON_URL);
-            let mut params = Vec::new();
-            if *all {
-                params.push("all=true".to_string());
-            }
             let fmt_str = match format {
                 crate::cli::OutputFormat::Table => "table",
                 crate::cli::OutputFormat::Json => "json",
                 crate::cli::OutputFormat::Yaml => "yaml",
                 crate::cli::OutputFormat::Plain => "plain",
             };
-            params.push(format!("format={}", fmt_str));
-            if !params.is_empty() {
-                url.push('?');
-                url.push_str(&params.join("&"));
-            }
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    let body = resp.text().await.unwrap_or_default();
-                    println!("{}", body);
-                }
-                Err(e) => {
-                    eprintln!("Failed to reach daemon at {}: {}", DAEMON_URL, e);
-                    eprintln!("Is the daemon running? Try: syscity start");
-                    return Err(SyscityError::Internal(e.to_string()));
-                }
-            }
+            let payload =
+                ws::call("skills.list", json!({ "all": *all, "format": fmt_str })).await?;
+            println!("{}", payload);
         }
         SkillCommands::Info { name } => {
-            let url = format!("{}/api/v1/skills/{}", DAEMON_URL, name);
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    let body = resp.text().await.unwrap_or_default();
-                    println!("{}", body);
-                }
-                Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
-                }
-            }
+            let payload = ws::call("skills.get", json!({ "name": name })).await?;
+            println!("{}", payload);
         }
         SkillCommands::Install { source, name, registry } => {
             if *registry {
-                // Install from remote registry via daemon API
-                let url = format!("{}/api/v1/skills/install", DAEMON_URL);
-                let body = serde_json::json!({
-                    "name": name.clone().unwrap_or_else(|| source.clone()),
-                    "registry_url": null,
-                });
-                match client.post(&url).json(&body).send().await {
-                    Ok(resp) => {
-                        let status = resp.status();
-                        let text = resp.text().await.unwrap_or_default();
-                        if status.is_success() {
-                            println!("Skill '{}' installed from registry", source);
-                        } else {
-                            eprintln!("Failed to install skill ({}): {}", status, text);
-                        }
-                    }
+                // Install from remote registry via WS
+                match ws::call("skills.install", json!({ "name": name.clone().unwrap_or_else(|| source.clone()), "registry_url": null })).await {
+                    Ok(_) => println!("Skill '{}' installed from registry", source),
                     Err(e) => {
-                        eprintln!("Failed to reach daemon: {}", e);
-                        return Err(SyscityError::Internal(e.to_string()));
+                        eprintln!("Failed to install skill: {}", e);
+                        return Err(e);
                     }
                 }
             } else {
@@ -165,57 +122,29 @@ pub async fn run_skill_command(command: &SkillCommands) -> Result<()> {
                 println!("Uninstall skill '{}'? Use --force to confirm.", name);
                 return Ok(());
             }
-            // Uninstall via daemon API
-            let url = format!("{}/api/v1/skills/{}/uninstall", DAEMON_URL, name);
-            match client.post(&url).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let text = resp.text().await.unwrap_or_default();
-                    if status.is_success() {
-                        println!("Skill '{}' uninstalled", name);
-                    } else {
-                        eprintln!("Failed to uninstall skill ({}): {}", status, text);
-                    }
-                }
+            match ws::call("skills.uninstall", json!({ "name": name })).await {
+                Ok(_) => println!("Skill '{}' uninstalled", name),
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    eprintln!("Failed to uninstall skill: {}", e);
+                    return Err(e);
                 }
             }
         }
         SkillCommands::Enable { name } => {
-            let url = format!("{}/api/v1/skills/{}/enable", DAEMON_URL, name);
-            match client.post(&url).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let text = resp.text().await.unwrap_or_default();
-                    if status.is_success() {
-                        println!("Skill '{}' enabled", name);
-                    } else {
-                        eprintln!("Failed to enable skill ({}): {}", status, text);
-                    }
-                }
+            match ws::call("skills.enable", json!({ "id": name })).await {
+                Ok(_) => println!("Skill '{}' enabled", name),
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    eprintln!("Failed to enable skill: {}", e);
+                    return Err(e);
                 }
             }
         }
         SkillCommands::Disable { name } => {
-            let url = format!("{}/api/v1/skills/{}/disable", DAEMON_URL, name);
-            match client.post(&url).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let text = resp.text().await.unwrap_or_default();
-                    if status.is_success() {
-                        println!("Skill '{}' disabled", name);
-                    } else {
-                        eprintln!("Failed to disable skill ({}): {}", status, text);
-                    }
-                }
+            match ws::call("skills.disable", json!({ "id": name })).await {
+                Ok(_) => println!("Skill '{}' disabled", name),
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    eprintln!("Failed to disable skill: {}", e);
+                    return Err(e);
                 }
             }
         }
@@ -226,30 +155,24 @@ pub async fn run_skill_command(command: &SkillCommands) -> Result<()> {
             init_skill_template(name, path.as_deref(), template).await?;
         }
         SkillCommands::Run { id, input, context } => {
-            let url = format!("{}/api/v1/skills/{}/run", DAEMON_URL, id);
-            let body = serde_json::json!({
+            let body = json!({
+                "id": id,
                 "input": input,
                 "context": context.as_ref().and_then(|c| serde_json::from_str::<serde_json::Value>(c).ok()),
             });
-            match client.post(&url).json(&body).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let body: serde_json::Value = resp.json().await.unwrap_or_default();
-                    if status.is_success() {
-                        println!("Skill '{}' executed successfully", id);
-                        if let Some(result) = body.get("result").and_then(|r| r.as_str()) {
-                            println!("\n{}", result);
-                        }
-                        if let Some(usage) = body.get("usage") {
-                            println!("\nUsage: {}", usage);
-                        }
-                    } else {
-                        eprintln!("Failed to run skill ({}): {}", status, body);
+            match ws::call("skills.run", body).await {
+                Ok(payload) => {
+                    println!("Skill '{}' executed successfully", id);
+                    if let Some(result) = payload.get("result").and_then(|r| r.as_str()) {
+                        println!("\n{}", result);
+                    }
+                    if let Some(usage) = payload.get("usage") {
+                        println!("\nUsage: {}", usage);
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    eprintln!("Failed to run skill: {}", e);
+                    return Err(e);
                 }
             }
         }
