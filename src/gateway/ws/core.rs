@@ -461,6 +461,8 @@ async fn dispatch_method(
         "agents.delete" => admin_ws::handle_agents_delete(req, state).await,
         "agents.get" => agents::handle_agents_get(req, state).await,
         "agents.registry" => agents::handle_agents_registry(req, state).await,
+        "agents.get_config" => agents::handle_agents_get_config(req, state).await,
+        "agents.update" => agents::handle_agents_update(req, state).await,
         "health" => agents::handle_health(req, state).await,
         "system.presence" => agents::handle_system_presence(req).await,
         "commands.list" => {

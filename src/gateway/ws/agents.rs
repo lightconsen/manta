@@ -170,6 +170,72 @@ pub(super) async fn handle_system_presence(req: &WsRequest) -> WsResponse {
     )
 }
 
+/// `agents.get_config` — the full runtime `AgentConfig` for an agent
+/// (`{ agent_id }`). Returns the serializable config for edit round-trips.
+pub(crate) async fn handle_agents_get_config(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct GetParams {
+        agent_id: String,
+    }
+    let params: GetParams = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+    let agent = {
+        let agents = state.agents.agents.read().await;
+        agents.get(&params.agent_id).cloned()
+    };
+    match agent {
+        Some(handle) => {
+            WsResponse::ok(&req.id, serde_json::to_value(&handle.config).unwrap_or_default())
+        }
+        None => {
+            WsResponse::err(&req.id, "NOT_FOUND", format!("agent '{}' not found", params.agent_id))
+        }
+    }
+}
+
+/// `agents.update` — replace an agent's runtime config (`{ agent_id, config }`).
+/// Only edits the running handle's `ConfigCell`; it does not persist to disk.
+pub(crate) async fn handle_agents_update(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct UpdateParams {
+        agent_id: String,
+        config: crate::agent::AgentConfig,
+    }
+    let params: UpdateParams = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+    let agent = {
+        let agents = state.agents.agents.read().await;
+        agents.get(&params.agent_id).cloned()
+    };
+    match agent {
+        Some(handle) => {
+            match handle
+                .tx
+                .send(crate::gateway::AgentCommand::UpdateConfig(params.config))
+                .await
+            {
+                Ok(()) => WsResponse::ok(
+                    &req.id,
+                    serde_json::json!({ "agent_id": params.agent_id, "updated": true }),
+                ),
+                Err(e) => {
+                    WsResponse::err(&req.id, "INTERNAL", format!("Failed to update agent: {}", e))
+                }
+            }
+        }
+        None => {
+            WsResponse::err(&req.id, "NOT_FOUND", format!("agent '{}' not found", params.agent_id))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -293,5 +359,41 @@ mod tests {
         let resp = handle_system_presence(&req("r1", None)).await;
         assert!(resp.ok);
         assert_eq!(resp.payload.as_ref().unwrap()["online"], true);
+    }
+    #[tokio::test]
+    async fn agents_get_config_unknown_not_found() {
+        let state = state().await;
+        let resp = handle_agents_get_config(
+            &req("r1", Some(serde_json::json!({ "agent_id": "nope" }))),
+            &state,
+        )
+        .await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn agents_update_unknown_not_found() {
+        let state = state().await;
+        let mut cfg = crate::agent::AgentConfig::default();
+        cfg.system_prompt = "x".into();
+        let resp = handle_agents_update(
+            &req("r1", Some(serde_json::json!({ "agent_id": "nope", "config": cfg }))),
+            &state,
+        )
+        .await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn agents_update_missing_config_errors() {
+        let state = state().await;
+        let resp = handle_agents_update(
+            &req("r1", Some(serde_json::json!({ "agent_id": "default" }))),
+            &state,
+        )
+        .await;
+        assert!(!resp.ok);
     }
 }

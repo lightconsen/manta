@@ -115,7 +115,7 @@ pub async fn run_agent_command(command: &AgentCommands) -> Result<()> {
             }
         }
         AgentCommands::Edit { name } => {
-            edit_agent_interactive(&client, name).await?;
+            edit_agent_interactive(name).await?;
         }
         AgentCommands::Delete { name, force } => {
             if !force {
@@ -232,16 +232,10 @@ pub async fn run_agent_command(command: &AgentCommands) -> Result<()> {
 }
 
 /// Fetch current agent config, open it in $EDITOR, then PATCH any changes.
-async fn edit_agent_interactive(client: &reqwest::Client, name: &str) -> Result<()> {
-    // 1. Fetch current config
-    let url = format!("{}/api/v1/agents/{}", DAEMON_URL, name);
-    let current_body = match client.get(&url).send().await {
-        Ok(resp) => resp.text().await.unwrap_or_default(),
-        Err(e) => {
-            eprintln!("Failed to reach daemon: {}", e);
-            return Err(SyscityError::Internal(e.to_string()));
-        }
-    };
+async fn edit_agent_interactive(name: &str) -> Result<()> {
+    // 1. Fetch current config over WS
+    let current = ws::call("agents.get_config", json!({ "agent_id": name })).await?;
+    let current_body = serde_json::to_string_pretty(&current).unwrap_or_default();
 
     // 2. Write to a temp file
     let tmp_dir = std::env::temp_dir();
@@ -285,21 +279,10 @@ async fn edit_agent_interactive(client: &reqwest::Client, name: &str) -> Result<
     let patch_value: serde_json::Value = serde_json::from_str(&new_body)
         .map_err(|e| SyscityError::Internal(format!("Edited content is not valid JSON: {}", e)))?;
 
-    // 7. PATCH to daemon
-    match client.patch(&url).json(&patch_value).send().await {
-        Ok(resp) => {
-            let status_code = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            if status_code.is_success() {
-                println!("Agent '{}' updated successfully.", name);
-            } else {
-                eprintln!("Failed to update agent ({}): {}", status_code, text);
-            }
-        }
-        Err(e) => {
-            eprintln!("Failed to reach daemon: {}", e);
-            return Err(SyscityError::Internal(e.to_string()));
-        }
+    // 7. Push the edited config over WS
+    match ws::call("agents.update", json!({ "agent_id": name, "config": patch_value })).await {
+        Ok(_) => println!("Agent '{}' updated successfully.", name),
+        Err(e) => eprintln!("Failed to update agent: {}", e),
     }
 
     Ok(())
