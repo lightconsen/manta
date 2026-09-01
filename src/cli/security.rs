@@ -8,9 +8,6 @@ use serde_json::json;
 use crate::cli::ws;
 use crate::error::{Result, SyscityError};
 
-/// Default daemon base URL.
-const DAEMON_URL: &str = "http://127.0.0.1:18080";
-
 #[derive(Debug, Subcommand)]
 pub enum SecurityCommands {
     /// Run comprehensive security audit
@@ -116,8 +113,6 @@ pub enum PairingCommands {
 
 /// Run security commands
 pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
-    let client = reqwest::Client::new();
-
     match command {
         SecurityCommands::Pairing { command } => match command {
             PairingCommands::List { channel: _channel } => {
@@ -174,24 +169,16 @@ pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
                 Ok(())
             }
             PairingCommands::Allow { channel, user_id, username } => {
-                let url = format!("{}/api/v1/pairing/allow", DAEMON_URL);
-                let body = json!({
-                    "channel": channel,
-                    "user_id": user_id,
-                    "username": username,
-                });
-                match client.post(&url).json(&body).send().await {
-                    Ok(resp) => {
-                        if resp.status().is_success() {
-                            println!("✅ Added {} to allowlist for {}", user_id, channel);
-                        } else {
-                            let text = resp.text().await.unwrap_or_default();
-                            eprintln!("Failed to add to allowlist: {}", text);
-                        }
-                    }
+                match ws::call(
+                    "security.allowlist.add",
+                    json!({ "channel": channel, "user_id": user_id, "username": username }),
+                )
+                .await
+                {
+                    Ok(_) => println!("✅ Added {} to allowlist for {}", user_id, channel),
                     Err(e) => {
-                        eprintln!("Failed to reach daemon: {}", e);
-                        return Err(SyscityError::Internal(e.to_string()));
+                        eprintln!("Failed to add to allowlist: {}", e);
+                        return Err(e);
                     }
                 }
                 Ok(())
@@ -387,18 +374,8 @@ pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
         }
 
         SecurityCommands::Status => {
-            let url = format!("{}/api/v1/security/status", DAEMON_URL);
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    let body = resp.text().await.unwrap_or_default();
-                    println!("{}", body);
-                }
-                Err(e) => {
-                    eprintln!("Failed to reach daemon at {}: {}", DAEMON_URL, e);
-                    eprintln!("Is the daemon running? Try: syscity start");
-                    return Err(SyscityError::Internal(e.to_string()));
-                }
-            }
+            let payload = ws::call("security.status", json!({})).await?;
+            println!("{}", serde_json::to_string_pretty(&payload).unwrap_or_default());
             Ok(())
         }
 
@@ -421,68 +398,39 @@ pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
 
         SecurityCommands::Gate { command } => match command {
             GateCommands::Set { user_id, level } => {
-                let url = format!("{}/api/v1/gate/levels", DAEMON_URL);
-                let body = json!({
-                    "user_id": user_id,
-                    "level": level,
-                });
-                match client.post(&url).json(&body).send().await {
-                    Ok(resp) => {
-                        if resp.status().is_success() {
-                            println!("✅ Set gate level for {} to {}", user_id, level);
-                        } else {
-                            let text = resp.text().await.unwrap_or_default();
-                            eprintln!("Failed to set gate level: {}", text);
-                        }
-                    }
+                match ws::call("security.gate.set", json!({ "user_id": user_id, "level": level }))
+                    .await
+                {
+                    Ok(_) => println!("✅ Set gate level for {} to {}", user_id, level),
                     Err(e) => {
-                        eprintln!("Failed to reach daemon: {}", e);
-                        return Err(SyscityError::Internal(e.to_string()));
+                        eprintln!("Failed to set gate level: {}", e);
+                        return Err(e);
                     }
                 }
                 Ok(())
             }
             GateCommands::List => {
-                let url = format!("{}/api/v1/gate/levels", DAEMON_URL);
-                match client.get(&url).send().await {
-                    Ok(resp) => {
-                        let body: serde_json::Value = resp.json().await.unwrap_or_default();
-                        if let Some(levels) = body.get("levels").and_then(|l| l.as_object()) {
-                            if levels.is_empty() {
-                                println!("No custom gate levels configured.");
-                            } else {
-                                println!("{:<20} Level", "User ID");
-                                println!("{}", "-".repeat(40));
-                                for (user, level) in levels {
-                                    println!("{:<20} {}", user, level.as_str().unwrap_or("?"));
-                                }
-                            }
+                let body = ws::call("security.gate.list", json!({})).await?;
+                if let Some(levels) = body.get("levels").and_then(|l| l.as_object()) {
+                    if levels.is_empty() {
+                        println!("No custom gate levels configured.");
+                    } else {
+                        println!("{:<20} Level", "User ID");
+                        println!("{}", "-".repeat(40));
+                        for (user, level) in levels {
+                            println!("{:<20} {}", user, level.as_str().unwrap_or("?"));
                         }
-                        if let Some(default_level) = body.get("default").and_then(|d| d.as_str()) {
-                            println!("\nDefault level: {}", default_level);
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to reach daemon: {}", e);
-                        return Err(SyscityError::Internal(e.to_string()));
                     }
                 }
+                println!("\nDefault level: user");
                 Ok(())
             }
             GateCommands::Clear { user_id } => {
-                let url = format!("{}/api/v1/gate/levels/{}", DAEMON_URL, user_id);
-                match client.delete(&url).send().await {
-                    Ok(resp) => {
-                        if resp.status().is_success() {
-                            println!("✅ Cleared gate level for {}", user_id);
-                        } else {
-                            let text = resp.text().await.unwrap_or_default();
-                            eprintln!("Failed to clear gate level: {}", text);
-                        }
-                    }
+                match ws::call("security.gate.clear", json!({ "user_id": user_id })).await {
+                    Ok(_) => println!("✅ Cleared gate level for {}", user_id),
                     Err(e) => {
-                        eprintln!("Failed to reach daemon: {}", e);
-                        return Err(SyscityError::Internal(e.to_string()));
+                        eprintln!("Failed to clear gate level: {}", e);
+                        return Err(e);
                     }
                 }
                 Ok(())

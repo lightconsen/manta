@@ -336,3 +336,95 @@ async fn audit_recent_defaults_limit_to_50() {
     let resp = handle_audit_recent(&req("r1", "audit.recent", None), &state).await;
     assert!(resp.ok);
 }
+
+#[tokio::test]
+async fn security_gate_set_and_list() {
+    let state = state().await;
+    let resp = handle_security_gate_set(
+        &req(
+            "r1",
+            "security.gate.set",
+            Some(serde_json::json!({ "user_id": "alice", "level": "admin" })),
+        ),
+        &state,
+    )
+    .await;
+    assert!(resp.ok, "set failed: {:?}", resp.error);
+
+    let resp = handle_security_gate_list(&req("r1", "security.gate.list", None), &state).await;
+    assert!(resp.ok);
+    let levels = resp.payload.as_ref().unwrap()["levels"]
+        .as_object()
+        .unwrap();
+    assert_eq!(levels.get("alice").unwrap(), "admin");
+}
+
+#[tokio::test]
+async fn security_gate_set_invalid_level_errors() {
+    let state = state().await;
+    let resp = handle_security_gate_set(
+        &req(
+            "r1",
+            "security.gate.set",
+            Some(serde_json::json!({ "user_id": "bob", "level": "superadmin" })),
+        ),
+        &state,
+    )
+    .await;
+    assert!(!resp.ok);
+    assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_PARAMS");
+}
+
+#[tokio::test]
+async fn security_gate_clear() {
+    let state = state().await;
+    handle_security_gate_set(
+        &req(
+            "r1",
+            "security.gate.set",
+            Some(serde_json::json!({ "user_id": "carol", "level": "user" })),
+        ),
+        &state,
+    )
+    .await;
+    let resp = handle_security_gate_clear(
+        &req("r1", "security.gate.clear", Some(serde_json::json!({ "user_id": "carol" }))),
+        &state,
+    )
+    .await;
+    assert!(resp.ok);
+    let resp = handle_security_gate_list(&req("r1", "security.gate.list", None), &state).await;
+    let levels = resp.payload.as_ref().unwrap()["levels"]
+        .as_object()
+        .unwrap();
+    assert!(!levels.contains_key("carol"));
+}
+
+#[tokio::test]
+async fn security_allowlist_add_and_list() {
+    let state = state().await;
+    let resp = handle_security_allowlist_add(
+        &req(
+            "r1",
+            "security.allowlist.add",
+            Some(serde_json::json!({ "channel": "telegram", "user_id": "u1" })),
+        ),
+        &state,
+    )
+    .await;
+    assert!(resp.ok, "add failed: {:?}", resp.error);
+    let resp =
+        handle_security_allowlist_list(&req("r1", "security.allowlist.list", None), &state).await;
+    assert!(resp.ok);
+    assert!(resp.payload.as_ref().unwrap()["count"].as_u64().unwrap() >= 1);
+}
+
+#[tokio::test]
+async fn security_status_returns_summary() {
+    let state = state().await;
+    let resp = handle_security_status(&req("r1", "security.status", None), &state).await;
+    assert!(resp.ok, "status failed: {:?}", resp.error);
+    let payload = resp.payload.as_ref().unwrap();
+    assert!(payload["auth_mode"].is_string());
+    assert!(payload["gate_levels"].is_number());
+}
