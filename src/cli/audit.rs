@@ -4,10 +4,9 @@
 
 use clap::Subcommand;
 
+use crate::cli::ws;
 use crate::error::{Result, SyscityError};
-
-/// Default daemon base URL.
-const DAEMON_URL: &str = "http://127.0.0.1:18080";
+use serde_json::json;
 
 #[derive(Debug, Subcommand)]
 pub enum AuditCommands {
@@ -32,49 +31,39 @@ pub enum AuditCommands {
 pub async fn run_audit_command(command: &AuditCommands) -> Result<()> {
     match command {
         AuditCommands::Log { limit, event_type } => {
-            let client = reqwest::Client::new();
-            let mut url = format!("{}/api/v1/audit/log?limit={}", DAEMON_URL, limit);
-            if let Some(et) = event_type {
-                url.push_str(&format!("&event_type={}", et));
-            }
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    let body: serde_json::Value = resp.json().await.unwrap_or_default();
-                    if let Some(entries) = body.get("entries").and_then(|e| e.as_array()) {
-                        if entries.is_empty() {
-                            println!("No audit log entries.");
-                        } else {
-                            println!("Audit Log:");
-                            println!("{:<20} {:<15} {:<20} Details", "Timestamp", "Event", "User");
-                            println!("{}", "-".repeat(90));
-                            for entry in entries {
-                                println!(
-                                    "{:<20} {:<15} {:<20} {}",
-                                    entry
-                                        .get("timestamp")
-                                        .and_then(|c| c.as_str())
-                                        .unwrap_or("-"),
-                                    entry
-                                        .get("event_type")
-                                        .and_then(|c| c.as_str())
-                                        .unwrap_or("-"),
-                                    entry.get("user_id").and_then(|c| c.as_str()).unwrap_or("-"),
-                                    entry
-                                        .get("details")
-                                        .and_then(|c| c.as_str())
-                                        .unwrap_or("-")
-                                        .chars()
-                                        .take(40)
-                                        .collect::<String>(),
-                                );
-                            }
-                        }
+            let body =
+                ws::call("audit.recent", json!({ "limit": limit, "event_type": event_type }))
+                    .await?;
+            let entries = body.get("entries").and_then(|e| e.as_array());
+            match entries {
+                Some(entries) if entries.is_empty() => println!("No audit log entries."),
+                Some(entries) => {
+                    println!("Audit Log:");
+                    println!("{:<20} {:<15} {:<20} Details", "Timestamp", "Event", "User");
+                    println!("{}", "-".repeat(90));
+                    for entry in entries {
+                        println!(
+                            "{:<20} {:<15} {:<20} {}",
+                            entry
+                                .get("timestamp")
+                                .and_then(|c| c.as_str())
+                                .unwrap_or("-"),
+                            entry
+                                .get("event_type")
+                                .and_then(|c| c.as_str())
+                                .unwrap_or("-"),
+                            entry.get("user_id").and_then(|c| c.as_str()).unwrap_or("-"),
+                            entry
+                                .get("details")
+                                .and_then(|c| c.as_str())
+                                .unwrap_or("-")
+                                .chars()
+                                .take(40)
+                                .collect::<String>(),
+                        );
                     }
                 }
-                Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
-                }
+                None => println!("No audit log entries."),
             }
             Ok(())
         }

@@ -302,6 +302,8 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         | "channels.list"
         | "approvals.list"
         | "approvals.get"
+        | "audit.recent"
+        | "audit.all"
         | "memory.search"
         | "memory.collections"
         | "mention.policy"

@@ -10,6 +10,7 @@ use crate::gateway::GatewayState;
 
 mod agents;
 mod approvals;
+mod audit;
 mod auth_profiles;
 mod cloud;
 mod cron;
@@ -29,6 +30,7 @@ mod update;
 
 pub(crate) use agents::*;
 pub(crate) use approvals::*;
+pub(crate) use audit::*;
 pub(crate) use auth_profiles::*;
 pub(crate) use cloud::*;
 pub(crate) use cron::*;

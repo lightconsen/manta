@@ -593,6 +593,8 @@ async fn dispatch_method(
         "models.default" => admin_ws::handle_models_default(req, state).await,
         "traces.get" => admin_ws::handle_traces_get(req, state).await,
         "status.get" => admin_ws::handle_status_get(req, state).await,
+        "audit.recent" => admin_ws::handle_audit_recent(req, state).await,
+        "audit.all" => admin_ws::handle_audit_all(req, state).await,
         "approvals.list" => admin_ws::handle_approvals_list(req, state).await,
         "approvals.get" => admin_ws::handle_approvals_get(req, state).await,
         "approvals.approve" => admin_ws::handle_approvals_approve(req, state).await,
