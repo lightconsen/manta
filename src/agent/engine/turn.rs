@@ -4,11 +4,13 @@
 
 use std::sync::Arc;
 
-use tracing::{debug, error, info, warn};
-use crate::channels::{IncomingMessage, OutgoingMessage};
-use crate::observe::{ChannelObservation, ErrorSource, TurnContext, TurnMetricsCollector, TurnMetricsSink};
-use crate::providers::Message;
 use super::super::agent_cache::{are_tools_cacheable, should_use_cache_llm};
+use crate::channels::{IncomingMessage, OutgoingMessage};
+use crate::observe::{
+    ChannelObservation, ErrorSource, TurnContext, TurnMetricsCollector, TurnMetricsSink,
+};
+use crate::providers::Message;
+use tracing::{debug, error, info, warn};
 
 use super::super::*;
 
@@ -92,20 +94,8 @@ impl Agent {
             let _reaped = manager.reap().await;
         }
 
-        // Check cache for identical prompt (only for non-follow-up, non-time-sensitive
-        // messages) Skip cache if this looks like a follow-up (short message
-        // referring to previous context)
-        let is_follow_up = content.len() < 50
-            && (content.contains("it")
-                || content.contains("that")
-                || content.contains("this")
-                || content.contains("上面的")
-                || content.contains("这个")
-                || content.contains("那个"));
-
-        // Use LLM to determine if query should be cached
-        let should_cache = !is_follow_up
-            && should_use_cache_llm(&self.provider, &content, self.model.clone()).await;
+        // Decide whether to attempt a response-cache lookup (follow-ups bypass it).
+        let should_cache = self.should_attempt_cache(&content).await;
 
         if should_cache {
             if let Some(cached) = self
@@ -142,69 +132,9 @@ impl Agent {
             }
         }
 
-        // Store user message in chat history and index for search
-        let message_id = uuid::Uuid::new_v4().to_string();
-
-        // Persist user message via MemoryManager (episodic memory)
-        if let Some(ref mm) = self.memory_manager {
-            if let Err(e) = mm
-                .remember_message(&user_id, &conversation_id, "user", &content)
-                .await
-            {
-                warn!("MemoryManager: failed to store user message: {}", e);
-            }
-        }
-
-        if let Some(ref store) = self.chat_history {
-            use crate::memory::ChatMessage;
-            let chat_msg = ChatMessage::new(&conversation_id, &user_id, "user", &content);
-            // Clone message_id before moving chat_msg
-            let msg_id = chat_msg.id.clone();
-            if let Err(e) = store.store_message(chat_msg).await {
-                error!("Failed to store user message: {}", e);
-            }
-            // Index for session search
-            if let Some(ref search) = self.session_search {
-                if let Err(e) = search
-                    .index_message(&msg_id, &conversation_id, &user_id, &content, "user")
-                    .await
-                {
-                    error!("Failed to index user message for search: {}", e);
-                }
-            }
-        } else if let Some(ref search) = self.session_search {
-            // Even if chat history is not enabled, index for search
-            if let Err(e) = search
-                .index_message(&message_id, &conversation_id, &user_id, &content, "user")
-                .await
-            {
-                error!("Failed to index user message for search: {}", e);
-            }
-        }
-
-        // Record user message in transcript
-        if let Some(ref transcript_store) = self.transcript_store {
-            transcript_store.append(
-                &conversation_id,
-                "agent",
-                &user_id,
-                &conversation_id,
-                TranscriptMessage::new("user", &content),
-            );
-            // Track transcript size in disk budget
-            if let Some(ref budget) = self.disk_budget {
-                let transcript_size = content.len();
-                if let Err(e) = budget.track_item(
-                    &conversation_id,
-                    format!("transcript-user-{}", message_id),
-                    BudgetCategory::Transcript,
-                    transcript_size,
-                ) {
-                    warn!("Failed to track user transcript in disk budget: {}", e);
-                }
-            }
-        }
-
+        // Store the user message across memory/history/search/transcript
+        self.persist_user_message(&conversation_id, &user_id, &content)
+            .await;
         // Check if we need task planning
         let needs_planning = self.task_planner.needs_planning(&content).await;
 
@@ -411,90 +341,9 @@ impl Agent {
             mm.apply_effectiveness_adjustments().await;
         }
 
-        // Store assistant response in chat history and index for search
-        let assistant_message_id = uuid::Uuid::new_v4().to_string();
-
-        // Record assistant message in transcript
-        if let Some(ref transcript_store) = self.transcript_store {
-            transcript_store.append(
-                &conversation_id,
-                "agent",
-                &user_id,
-                &conversation_id,
-                TranscriptMessage::new("assistant", &response.message.content),
-            );
-            // Track transcript size in disk budget
-            if let Some(ref budget) = self.disk_budget {
-                let transcript_size = response.message.content.len();
-                if let Err(e) = budget.track_item(
-                    &conversation_id,
-                    format!("transcript-assistant-{}", assistant_message_id),
-                    BudgetCategory::Transcript,
-                    transcript_size,
-                ) {
-                    warn!("Failed to track assistant transcript in disk budget: {}", e);
-                }
-            }
-        }
-
-        // Persist assistant response via MemoryManager (episodic memory)
-        if let Some(ref mm) = self.memory_manager {
-            if let Err(e) = mm
-                .remember_message(
-                    &user_id,
-                    &conversation_id,
-                    "assistant",
-                    &response.message.content,
-                )
-                .await
-            {
-                warn!("MemoryManager: failed to store assistant message: {}", e);
-            }
-        }
-
-        if let Some(ref store) = self.chat_history {
-            use crate::memory::ChatMessage;
-            let chat_msg = ChatMessage::new(
-                &conversation_id,
-                &user_id,
-                "assistant",
-                &response.message.content,
-            );
-            let msg_id = chat_msg.id.clone();
-            if let Err(e) = store.store_message(chat_msg).await {
-                error!("Failed to store assistant message: {}", e);
-            }
-            // Index for session search
-            if let Some(ref search) = self.session_search {
-                if let Err(e) = search
-                    .index_message(
-                        &msg_id,
-                        &conversation_id,
-                        &user_id,
-                        &response.message.content,
-                        "assistant",
-                    )
-                    .await
-                {
-                    error!("Failed to index assistant message for search: {}", e);
-                }
-            }
-        } else if let Some(ref search) = self.session_search {
-            // Even if chat history is not enabled, index for search
-            if let Err(e) = search
-                .index_message(
-                    &assistant_message_id,
-                    &conversation_id,
-                    &user_id,
-                    &response.message.content,
-                    "assistant",
-                )
-                .await
-            {
-                error!("Failed to index assistant message for search: {}", e);
-            }
-        }
-
+        // Store the assistant response across transcript/memory/history/search
+        self.persist_assistant_message(&conversation_id, &user_id, &response.message.content)
+            .await;
         // Only cache the response if it should be cached
         if should_cache {
             // Check if tools used are cacheable (skip cache for time-sensitive tools)
@@ -599,19 +448,8 @@ impl Agent {
         // A new user turn clears the previous turn's active plan/todo list.
         self.begin_user_turn_reset(&conversation_id).await;
 
-        // Check cache for identical prompt (only for non-follow-up, non-time-sensitive
-        // messages)
-        let is_follow_up = content.len() < 50
-            && (content.contains("it")
-                || content.contains("that")
-                || content.contains("this")
-                || content.contains("上面的")
-                || content.contains("这个")
-                || content.contains("那个"));
-
-        // Use LLM to determine if query should be cached
-        let should_cache = !is_follow_up
-            && should_use_cache_llm(&self.provider, &content, self.model.clone()).await;
+        // Decide whether to attempt a response-cache lookup (follow-ups bypass it).
+        let should_cache = self.should_attempt_cache(&content).await;
 
         if should_cache {
             if let Some(cached) = self
@@ -696,63 +534,9 @@ impl Agent {
             }
         }
 
-        // Persist user message via MemoryManager (episodic memory)
-        if let Some(ref mm) = self.memory_manager {
-            if let Err(e) = mm
-                .remember_message(&user_id, &conversation_id, "user", &content)
-                .await
-            {
-                warn!("MemoryManager: failed to store user message: {}", e);
-            }
-        }
-
-        // Store user message in chat history and index for search
-        let message_id = uuid::Uuid::new_v4().to_string();
-        if let Some(ref store) = self.chat_history {
-            use crate::memory::ChatMessage;
-            let chat_msg = ChatMessage::new(&conversation_id, &user_id, "user", &content);
-            let msg_id = chat_msg.id.clone();
-            if let Err(e) = store.store_message(chat_msg).await {
-                error!("Failed to store user message: {}", e);
-            }
-            if let Some(ref search) = self.session_search {
-                if let Err(e) = search
-                    .index_message(&msg_id, &conversation_id, &user_id, &content, "user")
-                    .await
-                {
-                    error!("Failed to index user message for search: {}", e);
-                }
-            }
-        } else if let Some(ref search) = self.session_search {
-            if let Err(e) = search
-                .index_message(&message_id, &conversation_id, &user_id, &content, "user")
-                .await
-            {
-                error!("Failed to index user message for search: {}", e);
-            }
-        }
-
-        // Record user message in transcript
-        if let Some(ref transcript_store) = self.transcript_store {
-            transcript_store.append(
-                &conversation_id,
-                "agent",
-                &user_id,
-                &conversation_id,
-                TranscriptMessage::new("user", &content),
-            );
-            if let Some(ref budget) = self.disk_budget {
-                if let Err(e) = budget.track_item(
-                    &conversation_id,
-                    format!("transcript-user-{}", message_id),
-                    BudgetCategory::Transcript,
-                    content.len(),
-                ) {
-                    warn!("Failed to track user transcript in disk budget: {}", e);
-                }
-            }
-        }
-
+        // Store the user message across memory/history/search/transcript
+        self.persist_user_message(&conversation_id, &user_id, &content)
+            .await;
         // ── Per-conversation concurrency guard ──────────────────────────────
         let sem = {
             let mut guards = self.concurrency_guards.lock().await;
@@ -989,85 +773,9 @@ impl Agent {
 
         let response = llm_result?;
 
-        // Store assistant response
-        let assistant_message_id = uuid::Uuid::new_v4().to_string();
-
-        // Record assistant message in transcript
-        if let Some(ref transcript_store) = self.transcript_store {
-            transcript_store.append(
-                &conversation_id,
-                "agent",
-                &user_id,
-                &conversation_id,
-                TranscriptMessage::new("assistant", &response.message.content),
-            );
-            if let Some(ref budget) = self.disk_budget {
-                if let Err(e) = budget.track_item(
-                    &conversation_id,
-                    format!("transcript-assistant-{}", assistant_message_id),
-                    BudgetCategory::Transcript,
-                    response.message.content.len(),
-                ) {
-                    warn!("Failed to track assistant transcript in disk budget: {}", e);
-                }
-            }
-        }
-
-        // Persist assistant response via MemoryManager (episodic memory)
-        if let Some(ref mm) = self.memory_manager {
-            if let Err(e) = mm
-                .remember_message(
-                    &user_id,
-                    &conversation_id,
-                    "assistant",
-                    &response.message.content,
-                )
-                .await
-            {
-                warn!("MemoryManager: failed to store assistant message: {}", e);
-            }
-        }
-
-        if let Some(ref store) = self.chat_history {
-            use crate::memory::ChatMessage;
-            let chat_msg = ChatMessage::new(
-                &conversation_id,
-                &user_id,
-                "assistant",
-                &response.message.content,
-            );
-            let msg_id = chat_msg.id.clone();
-            if let Err(e) = store.store_message(chat_msg).await {
-                error!("Failed to store assistant message: {}", e);
-            }
-            if let Some(ref search) = self.session_search {
-                if let Err(e) = search
-                    .index_message(
-                        &msg_id,
-                        &conversation_id,
-                        &user_id,
-                        &response.message.content,
-                        "assistant",
-                    )
-                    .await
-                {
-                    error!("Failed to index assistant message for search: {}", e);
-                }
-            }
-        } else if let Some(ref search) = self.session_search {
-            if let Err(e) = search
-                .index_message(
-                    &assistant_message_id,
-                    &conversation_id,
-                    &user_id,
-                    &response.message.content,
-                    "assistant",
-                )
-                .await
-            {
-                error!("Failed to index assistant message for search: {}", e);
-            }
-        }
+        // Store the assistant response across transcript/memory/history/search
+        self.persist_assistant_message(&conversation_id, &user_id, &response.message.content)
+            .await;
 
         // Only cache the response if it should be cached
         let tool_call_count = tools_used_this_turn.len();
@@ -1207,6 +915,159 @@ impl Agent {
     }
 
     /// Attach the 在线质量监控（§八）config to this agent.
+    /// Persist the user message across all side channels (episodic memory,
+    /// chat history, session-search index, transcript/disk budget) best-effort.
+    /// Shared by `process_message` and `process_message_with_progress`.
+    async fn persist_user_message(&self, conversation_id: &str, user_id: &str, content: &str) {
+        // Persist user message via MemoryManager (episodic memory)
+        if let Some(ref mm) = self.memory_manager {
+            if let Err(e) = mm
+                .remember_message(user_id, conversation_id, "user", content)
+                .await
+            {
+                warn!("MemoryManager: failed to store user message: {}", e);
+            }
+        }
+
+        // Store user message in chat history and index for search
+        let message_id = uuid::Uuid::new_v4().to_string();
+        if let Some(ref store) = self.chat_history {
+            use crate::memory::ChatMessage;
+            let chat_msg = ChatMessage::new(conversation_id, user_id, "user", content);
+            // Clone message_id before moving chat_msg
+            let msg_id = chat_msg.id.clone();
+            if let Err(e) = store.store_message(chat_msg).await {
+                error!("Failed to store user message: {}", e);
+            }
+            if let Some(ref search) = self.session_search {
+                if let Err(e) = search
+                    .index_message(&msg_id, conversation_id, user_id, content, "user")
+                    .await
+                {
+                    error!("Failed to index user message for search: {}", e);
+                }
+            }
+        } else if let Some(ref search) = self.session_search {
+            if let Err(e) = search
+                .index_message(&message_id, conversation_id, user_id, content, "user")
+                .await
+            {
+                error!("Failed to index user message for search: {}", e);
+            }
+        }
+
+        // Record user message in transcript
+        if let Some(ref transcript_store) = self.transcript_store {
+            transcript_store.append(
+                conversation_id,
+                "agent",
+                user_id,
+                conversation_id,
+                TranscriptMessage::new("user", content),
+            );
+            // Track transcript size in disk budget
+            if let Some(ref budget) = self.disk_budget {
+                if let Err(e) = budget.track_item(
+                    conversation_id,
+                    format!("transcript-user-{}", message_id),
+                    BudgetCategory::Transcript,
+                    content.len(),
+                ) {
+                    warn!("Failed to track user transcript in disk budget: {}", e);
+                }
+            }
+        }
+    }
+
+    /// Persist the assistant response across all side channels (transcript,
+    /// episodic memory, chat history, session-search index) best-effort.
+    /// Shared by `process_message` and `process_message_with_progress`.
+    async fn persist_assistant_message(&self, conversation_id: &str, user_id: &str, content: &str) {
+        let assistant_message_id = uuid::Uuid::new_v4().to_string();
+
+        // Record assistant message in transcript
+        if let Some(ref transcript_store) = self.transcript_store {
+            transcript_store.append(
+                conversation_id,
+                "agent",
+                user_id,
+                conversation_id,
+                TranscriptMessage::new("assistant", content),
+            );
+            // Track transcript size in disk budget
+            if let Some(ref budget) = self.disk_budget {
+                if let Err(e) = budget.track_item(
+                    conversation_id,
+                    format!("transcript-assistant-{}", assistant_message_id),
+                    BudgetCategory::Transcript,
+                    content.len(),
+                ) {
+                    warn!("Failed to track assistant transcript in disk budget: {}", e);
+                }
+            }
+        }
+
+        // Persist assistant response via MemoryManager (episodic memory)
+        if let Some(ref mm) = self.memory_manager {
+            if let Err(e) = mm
+                .remember_message(user_id, conversation_id, "assistant", content)
+                .await
+            {
+                warn!("MemoryManager: failed to store assistant message: {}", e);
+            }
+        }
+
+        if let Some(ref store) = self.chat_history {
+            use crate::memory::ChatMessage;
+            let chat_msg = ChatMessage::new(conversation_id, user_id, "assistant", content);
+            let msg_id = chat_msg.id.clone();
+            if let Err(e) = store.store_message(chat_msg).await {
+                error!("Failed to store assistant message: {}", e);
+            }
+            // Index for session search
+            if let Some(ref search) = self.session_search {
+                if let Err(e) = search
+                    .index_message(&msg_id, conversation_id, user_id, content, "assistant")
+                    .await
+                {
+                    error!("Failed to index assistant message for search: {}", e);
+                }
+            }
+        } else if let Some(ref search) = self.session_search {
+            // Even if chat history is not enabled, index for search
+            if let Err(e) = search
+                .index_message(
+                    &assistant_message_id,
+                    conversation_id,
+                    user_id,
+                    content,
+                    "assistant",
+                )
+                .await
+            {
+                error!("Failed to index assistant message for search: {}", e);
+            }
+        }
+    }
+
+    /// Whether this user message is a short follow-up that should bypass the
+    /// response cache (references prior context).
+    fn is_follow_up(content: &str) -> bool {
+        content.len() < 50
+            && (content.contains("it")
+                || content.contains("that")
+                || content.contains("this")
+                || content.contains("上面的")
+                || content.contains("这个")
+                || content.contains("那个"))
+    }
+
+    /// Decide whether to attempt a response-cache lookup for this turn.
+    async fn should_attempt_cache(&self, content: &str) -> bool {
+        !Self::is_follow_up(content)
+            && should_use_cache_llm(&self.provider, content, self.model.clone()).await
+    }
+
     ///
     /// Snapshot from `GatewayConfig.eval.online_monitoring` at spawn time; the
     /// judge trigger in [`scan_turn_for_badcase`] reads it without holding any

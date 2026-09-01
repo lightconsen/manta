@@ -56,9 +56,9 @@ pub type ProgressCallback = Arc<
 mod agent_builder;
 mod agent_cache;
 mod agent_config;
-mod engine;
 mod agent_lifecycle;
 mod agent_setup;
+mod engine;
 
 pub use agent_builder::AgentBuilder;
 pub use agent_cache::{CachedResponse, ResponseCache};

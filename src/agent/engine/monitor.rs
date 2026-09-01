@@ -3,14 +3,13 @@
 
 use std::sync::Arc;
 
-use tracing::{info, warn};
 use crate::agent::reflection::critic::Critic;
 use crate::agent::reflection::types::{Critique, QualityCriteria};
+use tracing::{info, warn};
 
 use super::super::*;
 
 impl Agent {
-
     /// Post-turn online risk scan: when a completed turn trips a risk signal,
     /// insert it into the pending-badcase pool (source `online:risk`). Runs
     /// fire-and-forget, mirroring the retrospect hook above.
@@ -125,6 +124,7 @@ impl Agent {
             }
         });
     }
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn sample_turn(
         &self,
         input: &str,
@@ -217,7 +217,6 @@ impl Agent {
 pub(crate) fn should_deep_judge(risk_count: usize, enabled: bool, threshold: usize) -> bool {
     enabled && risk_count >= threshold.max(1)
 }
-
 
 /// Compact single-line summary of an LLM judge critique, used to surface the
 /// deep-evaluation verdict in the pending badcase row and the log.

@@ -3,14 +3,13 @@
 
 use tokio_stream::StreamExt;
 
-use tracing::{debug, info, warn};
 use crate::observe::TurnMetricsCollector;
 use crate::providers::{CompletionRequest, Message, Role, ToolCall};
+use tracing::{debug, info, warn};
 
 use super::super::*;
 
 impl Agent {
-
     /// Resolve the effective model id for a conversation, using the same
     /// precedence as the send path: per-session binding > temporary override >
     /// agent default > provider default.

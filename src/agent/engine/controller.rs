@@ -3,15 +3,14 @@
 
 use std::sync::Arc;
 
-use tracing::{error, info};
 use crate::channels::{IncomingMessage, OutgoingMessage};
 use crate::providers::{ToolCall, ToolResult};
 use crate::tools::{ToolContext, ToolExecutionChunk};
+use tracing::{error, info};
 
 use super::super::*;
 
 impl Agent {
-
     /// Process a message in persistent session mode with an execution
     /// controller.
     ///

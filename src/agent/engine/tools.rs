@@ -1,15 +1,14 @@
 //! Tool-call dispatch loops (plain and progress-reporting).
 //! (Split out of the former single-file `agent_engine.rs`; same `impl Agent`.)
 
-use tracing::{debug, error, info, warn};
 use crate::agent::turns::ToolCallRecord;
 use crate::observe::TurnMetricsCollector;
 use crate::providers::{Message, Role, ToolCall, ToolResult};
+use tracing::{debug, error, info, warn};
 
 use super::super::*;
 
 impl Agent {
-
     /// Handle tool calls from the LLM
     pub(crate) async fn handle_tool_calls(
         &self,
