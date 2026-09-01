@@ -108,62 +108,47 @@ pub async fn run_start_daemon(
 }
 
 /// Reload plugins, configuration, providers, MCP servers, and skills
-/// without restarting the daemon.
+/// without restarting the daemon (WS `system.reload`).
 pub async fn run_reload_daemon() -> Result<()> {
-    const DAEMON_URL: &str = "http://127.0.0.1:18080";
-    let client = reqwest::Client::new();
-    let url = format!("{}/api/v1/reload", DAEMON_URL);
-
-    let body = serde_json::json!({ "scope": "all" });
-
-    match client.post(&url).json(&body).send().await {
-        Ok(resp) => {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            if status.is_success() {
-                println!("Daemon reloaded successfully.");
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                    if let Some(plugins) = json.get("plugins") {
-                        let unloaded = plugins["unloaded"].as_u64().unwrap_or(0);
-                        let loaded = plugins["loaded"].as_u64().unwrap_or(0);
-                        println!("  Plugins:  unloaded={}, loaded={}", unloaded, loaded);
-                    }
-                    if let Some(cfg) = json.get("config") {
-                        if cfg["updated"].as_bool().unwrap_or(false) {
-                            println!("  Config:   updated");
-                        } else {
-                            println!("  Config:   no change");
-                        }
-                    }
-                    if let Some(providers) = json.get("providers") {
-                        let added = providers["added"].as_u64().unwrap_or(0);
-                        let removed = providers["removed"].as_u64().unwrap_or(0);
-                        println!("  Providers: added={}, removed={}", added, removed);
-                    }
-                    if let Some(mcp) = json.get("mcp") {
-                        let connected = mcp["connected"].as_u64().unwrap_or(0);
-                        let failed = mcp["failed"].as_u64().unwrap_or(0);
-                        println!("  MCP:      connected={}, failed={}", connected, failed);
-                    }
-                    if let Some(skills) = json.get("skills") {
-                        if skills["reinitialized"].as_bool().unwrap_or(false) {
-                            let count = skills["count"].as_u64().unwrap_or(0);
-                            println!("  Skills:   reinitialized ({} skills)", count);
-                        } else {
-                            println!("  Skills:   reinitialization failed");
-                        }
-                    }
-                }
-                Ok(())
-            } else {
-                eprintln!("Reload failed ({}): {}", status, text);
-                Err(crate::error::SyscityError::Internal(format!("Reload failed: {}", text)))
+    match crate::cli::ws::call("system.reload", serde_json::json!({ "scope": "all" })).await {
+        Ok(json) => {
+            println!("Daemon reloaded successfully.");
+            if let Some(plugins) = json.get("plugins") {
+                let unloaded = plugins["unloaded"].as_u64().unwrap_or(0);
+                let loaded = plugins["loaded"].as_u64().unwrap_or(0);
+                println!("  Plugins:  unloaded={}, loaded={}", unloaded, loaded);
             }
+            if let Some(cfg) = json.get("config") {
+                if cfg["updated"].as_bool().unwrap_or(false) {
+                    println!("  Config:   updated");
+                } else {
+                    println!("  Config:   no change");
+                }
+            }
+            if let Some(providers) = json.get("providers") {
+                let added = providers["added"].as_u64().unwrap_or(0);
+                let removed = providers["removed"].as_u64().unwrap_or(0);
+                println!("  Providers: added={}, removed={}", added, removed);
+            }
+            if let Some(mcp) = json.get("mcp") {
+                let connected = mcp["connected"].as_u64().unwrap_or(0);
+                let failed = mcp["failed"].as_u64().unwrap_or(0);
+                println!("  MCP:      connected={}, failed={}", connected, failed);
+            }
+            if let Some(skills) = json.get("skills") {
+                if skills["reinitialized"].as_bool().unwrap_or(false) {
+                    let count = skills["count"].as_u64().unwrap_or(0);
+                    println!("  Skills:   reinitialized ({} skills)", count);
+                } else {
+                    println!("  Skills:   reinitialization failed");
+                }
+            }
+            Ok(())
         }
         Err(e) => {
-            eprintln!("Failed to reach daemon at {}: {}", DAEMON_URL, e);
+            eprintln!("Reload failed: {}", e);
             eprintln!("Is the daemon running? Try: syscity start");
-            Err(crate::error::SyscityError::Internal(e.to_string()))
+            Err(e)
         }
     }
 }

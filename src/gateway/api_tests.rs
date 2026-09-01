@@ -12,57 +12,6 @@ use tower::ServiceExt;
 
 use super::*;
 
-// ── GET /api/v1/channels ──
-
-#[tokio::test]
-async fn list_channels_returns_empty_array() {
-    // channel_list_handler reads from config.channels, not running channels.
-    // make_test_state's default config has no channels.
-    let state =
-        Arc::new(crate::gateway::state_tests::make_test_state(GatewayConfig::default()).await);
-    let app = Router::new()
-        .route("/api/v1/channels", get(super::channel_list_handler))
-        .with_state(state);
-
-    let req = Request::builder()
-        .uri("/api/v1/channels")
-        .body(Body::empty())
-        .unwrap();
-    let response = app.oneshot(req).await.unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(json["channels"].is_array());
-    assert_eq!(json["channels"].as_array().unwrap().len(), 0);
-}
-
-// ── GET /api/v1/models ──
-
-#[tokio::test]
-async fn list_models_returns_array() {
-    let state =
-        Arc::new(crate::gateway::state_tests::make_test_state(GatewayConfig::default()).await);
-    let app = Router::new()
-        .route("/api/v1/models", get(super::list_models_handler))
-        .with_state(state);
-
-    let req = Request::builder()
-        .uri("/api/v1/models")
-        .body(Body::empty())
-        .unwrap();
-    let response = app.oneshot(req).await.unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(json["models"].is_array());
-}
-
 // ── GET /api/v1/config ──
 
 #[tokio::test]

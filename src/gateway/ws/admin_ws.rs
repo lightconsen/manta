@@ -1,8 +1,9 @@
-//! WebSocket RPC handlers for admin-style operations that previously had only
-//! REST equivalents: plugins, providers, updates, cloud, onboarding, catalog
-//! and config reload. These let the built-in UI drive everything over WS
-//! (single transport, no CORS) while the REST surface stays for external
-//! tools / CLI / OpenAI compatibility.
+//! WebSocket RPC handlers for admin-style operations (plugins, providers,
+//! updates, cloud, onboarding, connectors catalog, device pairing, channels,
+//! system reload, status). These let the built-in UI and CLI drive everything
+//! over WS (single transport, no CORS). The remaining REST surface is only
+//! where HTTP is required: OpenAI compatibility, OAuth login, webhooks,
+//! artifact/file downloads, and health/metrics probes.
 
 use std::sync::Arc;
 
@@ -49,6 +50,127 @@ pub(super) async fn handle_onboarding_apply(
         Ok(()) => WsResponse::ok(&req.id, serde_json::json!({ "ok": true })),
         Err(e) => WsResponse::err(&req.id, "INTERNAL", e.to_string()),
     }
+}
+
+// ── System reload / channels ────────────────────────────────────────────
+
+/// `system.reload` — reload plugins/config/providers/MCP/skills without a
+/// restart. `{ scope }` is "all" by default (also "plugins" | "config" |
+/// "providers" | "mcp" | "skills" | "channels"). Mirrors the former
+/// `POST /api/v1/reload`.
+pub(super) async fn handle_system_reload(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    #[derive(Deserialize)]
+    struct Params {
+        #[serde(default = "default_reload_scope")]
+        scope: String,
+    }
+    fn default_reload_scope() -> String {
+        "all".to_string()
+    }
+    let p: Params = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+    let result = crate::gateway::handlers::admin::run_reload(state, &p.scope).await;
+    WsResponse::ok(&req.id, result)
+}
+
+/// `channels.list` — all configured channels and their enabled state.
+pub(super) async fn handle_channels_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    let config = state.config.read().await;
+    let channels: Vec<serde_json::Value> = config
+        .channels
+        .iter()
+        .map(|(name, cfg)| {
+            serde_json::json!({
+                "name": name,
+                "type": cfg.channel_type,
+                "enabled": cfg.enabled,
+                "agent_id": cfg.agent_id,
+            })
+        })
+        .collect();
+    WsResponse::ok(&req.id, serde_json::json!({ "channels": channels }))
+}
+
+/// `channels.enable` — enable a channel (`{ name }`), persisting to config.
+pub(super) async fn handle_channels_enable(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    let name = match parse_params::<serde_json::Value>(req) {
+        Ok(v) => v["name"].as_str().unwrap_or("").to_string(),
+        Err(res) => return res,
+    };
+    if name.is_empty() {
+        return WsResponse::err(&req.id, "INVALID_PARAMS", "missing channel name");
+    }
+    {
+        let mut config_guard = state.config.write().await;
+        let config = Arc::make_mut(&mut config_guard);
+        let Some(channel_config) = config.channels.get_mut(&name) else {
+            return WsResponse::err(&req.id, "NOT_FOUND", &format!("Channel '{}' not found", name));
+        };
+        if channel_config.enabled {
+            return WsResponse::ok(
+                &req.id,
+                serde_json::json!({
+                    "name": name,
+                    "enabled": true,
+                    "message": "Channel is already enabled",
+                }),
+            );
+        }
+        channel_config.enabled = true;
+    }
+    if let Err(res) = super::persist_config(state).await {
+        return res;
+    }
+    tracing::info!("Enabled channel '{}' via WS", name);
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({ "name": name, "enabled": true, "message": "Channel enabled" }),
+    )
+}
+
+/// `channels.disable` — disable a channel (`{ name }`), persisting to config.
+pub(super) async fn handle_channels_disable(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    let name = match parse_params::<serde_json::Value>(req) {
+        Ok(v) => v["name"].as_str().unwrap_or("").to_string(),
+        Err(res) => return res,
+    };
+    if name.is_empty() {
+        return WsResponse::err(&req.id, "INVALID_PARAMS", "missing channel name");
+    }
+    {
+        let mut config_guard = state.config.write().await;
+        let config = Arc::make_mut(&mut config_guard);
+        let Some(channel_config) = config.channels.get_mut(&name) else {
+            return WsResponse::err(&req.id, "NOT_FOUND", &format!("Channel '{}' not found", name));
+        };
+        if !channel_config.enabled {
+            return WsResponse::ok(
+                &req.id,
+                serde_json::json!({
+                    "name": name,
+                    "enabled": false,
+                    "message": "Channel is already disabled",
+                }),
+            );
+        }
+        channel_config.enabled = false;
+    }
+    if let Err(res) = super::persist_config(state).await {
+        return res;
+    }
+    tracing::info!("Disabled channel '{}' via WS", name);
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({ "name": name, "enabled": false, "message": "Channel disabled" }),
+    )
 }
 
 // ── Connectors catalog (marketplace) ────────────────────────────────────
@@ -866,6 +988,62 @@ pub(super) async fn handle_device_pairing_revoke(
     }
 }
 
+/// `device.pairing.qr` — the pairing QR SVG for a pending code
+/// (`{ code }`, returns `{ svg }`). SVG is text/XML so it fits in a WS
+/// payload; formerly `GET /api/v1/device/pairing/qr/:code`.
+pub(super) async fn handle_device_pairing_qr(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    let code = match parse_params::<serde_json::Value>(req) {
+        Ok(v) => v["code"].as_str().unwrap_or("").to_string(),
+        Err(res) => return res,
+    };
+    let pending = state.auth.device_pairing_store.list_pending().await;
+    if !pending.iter().any(|r| r.code == code) {
+        return WsResponse::err(&req.id, "NOT_FOUND", "pairing code not found or expired");
+    }
+    let uri = crate::security::device_pairing::DevicePairingStore::pairing_uri(&code);
+    match crate::security::device_pairing::DevicePairingStore::generate_qr_svg(&uri) {
+        Ok(svg) => WsResponse::ok(&req.id, serde_json::json!({ "code": code, "svg": svg })),
+        Err(e) => WsResponse::err(&req.id, "INTERNAL", &e),
+    }
+}
+
+/// `device.pairing.setup` — decode a base64url setup token and return the
+/// pending request details (`{ setup_code }`). Formerly
+/// `GET /api/v1/device/pairing/setup/:setup_code`.
+pub(super) async fn handle_device_pairing_setup(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    use std::time::SystemTime;
+    let setup_code = match parse_params::<serde_json::Value>(req) {
+        Ok(v) => v["setup_code"].as_str().unwrap_or("").to_string(),
+        Err(res) => return res,
+    };
+    let code =
+        match crate::security::device_pairing::DevicePairingStore::decode_setup_code(&setup_code) {
+            Some(code) => code,
+            None => return WsResponse::err(&req.id, "INVALID_PARAMS", "invalid setup code"),
+        };
+    let pending = state.auth.device_pairing_store.list_pending().await;
+    match pending.into_iter().find(|r| r.code == code) {
+        Some(req_) => WsResponse::ok(
+            &req.id,
+            serde_json::json!({
+                "code": req_.code,
+                "device_id": req_.device_id,
+                "display_name": req_.display_name,
+                "expires_at": req_.expires_at.duration_since(SystemTime::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0),
+            }),
+        ),
+        None => WsResponse::err(&req.id, "NOT_FOUND", "pairing code not found or expired"),
+    }
+}
+
 // ── Cloud ───────────────────────────────────────────────────────────────
 
 /// Build the cloud status block (mirrors `status_handler`'s cloud JSON).
@@ -1310,4 +1488,165 @@ pub(super) async fn handle_providers_usage(
 ) -> WsResponse {
     let snapshots = state.infra.model_router.all_snapshots_with_quota().await;
     WsResponse::ok(&req.id, serde_json::json!({ "usage": snapshots }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::make_test_state;
+    use crate::gateway::GatewayConfig;
+
+    fn req(id: &str, method: &str, params: Option<serde_json::Value>) -> WsRequest {
+        WsRequest {
+            frame_type: "req".into(),
+            id: id.into(),
+            method: method.into(),
+            params,
+        }
+    }
+
+    async fn state() -> Arc<GatewayState> {
+        Arc::new(make_test_state(GatewayConfig::default()).await)
+    }
+
+    #[tokio::test]
+    async fn system_reload_defaults_to_all() {
+        let state = state().await;
+        let resp =
+            handle_system_reload(&req("r1", "system.reload", Some(serde_json::json!({}))), &state)
+                .await;
+        assert!(resp.ok, "reload failed: {:?}", resp.error);
+        let payload = resp.payload.as_ref().unwrap();
+        assert_eq!(payload["scope"], "all");
+        assert_eq!(payload["success"], true);
+    }
+
+    #[tokio::test]
+    async fn system_reload_scope_skills() {
+        let state = state().await;
+        let resp = handle_system_reload(
+            &req("r1", "system.reload", Some(serde_json::json!({ "scope": "skills" }))),
+            &state,
+        )
+        .await;
+        assert!(resp.ok);
+        assert!(resp.payload.as_ref().unwrap()["skills"].is_object());
+    }
+
+    #[tokio::test]
+    async fn channels_list_empty() {
+        let state = state().await;
+        let resp = handle_channels_list(&req("r1", "channels.list", None), &state).await;
+        assert!(resp.ok);
+        assert_eq!(
+            resp.payload.as_ref().unwrap()["channels"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn channels_enable_unknown_not_found() {
+        let state = state().await;
+        let resp = handle_channels_enable(
+            &req("r1", "channels.enable", Some(serde_json::json!({ "name": "telegram" }))),
+            &state,
+        )
+        .await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn channels_disable_missing_name_errors() {
+        let state = state().await;
+        let resp = handle_channels_disable(
+            &req("r1", "channels.disable", Some(serde_json::json!({}))),
+            &state,
+        )
+        .await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_PARAMS");
+    }
+
+    #[tokio::test]
+    async fn device_pairing_qr_unknown_not_found() {
+        let state = state().await;
+        let resp = handle_device_pairing_qr(
+            &req("r1", "device.pairing.qr", Some(serde_json::json!({ "code": "NOPE" }))),
+            &state,
+        )
+        .await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn device_pairing_qr_seeded_returns_svg() {
+        let state = state().await;
+        let code = match state
+            .auth
+            .device_pairing_store
+            .request_access("dev-1", Some("Phone"), None)
+            .await
+        {
+            crate::security::device_pairing::DeviceAccessResult::PairingRequired { code } => code,
+            _ => panic!("expected a new pending request"),
+        };
+        let resp = handle_device_pairing_qr(
+            &req("r1", "device.pairing.qr", Some(serde_json::json!({ "code": code }))),
+            &state,
+        )
+        .await;
+        assert!(resp.ok, "qr failed: {:?}", resp.error);
+        let svg = resp.payload.as_ref().unwrap()["svg"].as_str().unwrap();
+        assert!(svg.contains("<svg"));
+    }
+
+    #[tokio::test]
+    async fn device_pairing_setup_roundtrip() {
+        let state = state().await;
+        let code = match state
+            .auth
+            .device_pairing_store
+            .request_access("dev-2", Some("Tablet"), None)
+            .await
+        {
+            crate::security::device_pairing::DeviceAccessResult::PairingRequired { code } => code,
+            _ => panic!("expected a new pending request"),
+        };
+        let setup_code =
+            crate::security::device_pairing::DevicePairingStore::encode_setup_code(&code);
+        let resp = handle_device_pairing_setup(
+            &req(
+                "r1",
+                "device.pairing.setup",
+                Some(serde_json::json!({ "setup_code": setup_code })),
+            ),
+            &state,
+        )
+        .await;
+        assert!(resp.ok, "setup failed: {:?}", resp.error);
+        let payload = resp.payload.as_ref().unwrap();
+        assert_eq!(payload["device_id"], "dev-2");
+        assert_eq!(payload["display_name"], "Tablet");
+    }
+
+    #[tokio::test]
+    async fn device_pairing_setup_invalid_code_errors() {
+        let state = state().await;
+        let resp = handle_device_pairing_setup(
+            &req(
+                "r1",
+                "device.pairing.setup",
+                Some(serde_json::json!({ "setup_code": "!!not-base64!!" })),
+            ),
+            &state,
+        )
+        .await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_PARAMS");
+    }
 }

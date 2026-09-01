@@ -6,7 +6,6 @@ pub mod chat;
 #[cfg(feature = "cloud")]
 pub mod cloud;
 pub mod config;
-pub mod device_pairing;
 pub mod discovery;
 pub mod health;
 pub mod memory;
@@ -21,7 +20,6 @@ pub use artifacts::*;
 pub use auth_profiles::*;
 pub use chat::*;
 pub use config::*;
-pub use device_pairing::*;
 pub use discovery::*;
 pub use health::*;
 pub use memory::*;

@@ -305,15 +305,6 @@ impl DevicePairingStore {
             .ok()?;
         String::from_utf8(bytes).ok()
     }
-
-    /// Build a setup URL for a pairing code.
-    ///
-    /// The URL path contains the base64url-encoded pairing code. The caller
-    /// is responsible for ensuring `base_url` has no trailing slash.
-    pub fn setup_url(base_url: &str, code: &str) -> String {
-        let base = base_url.trim_end_matches('/');
-        format!("{}/api/v1/device/pairing/setup/{}", base, Self::encode_setup_code(code))
-    }
 }
 
 #[cfg(test)]
@@ -412,18 +403,6 @@ mod tests {
 
         let decoded = DevicePairingStore::decode_setup_code(&encoded).unwrap();
         assert_eq!(decoded, code);
-    }
-
-    #[test]
-    fn test_setup_url_format() {
-        let code = "A3F7K2X9";
-        let url = DevicePairingStore::setup_url("http://127.0.0.1:18080", code);
-        assert!(url.starts_with("http://127.0.0.1:18080/api/v1/device/pairing/setup/"));
-        assert!(!url.contains(code), "setup URL should not expose raw code");
-
-        // Trailing slash on base URL should be normalized.
-        let url2 = DevicePairingStore::setup_url("http://127.0.0.1:18080/", code);
-        assert_eq!(url, url2);
     }
 
     #[test]

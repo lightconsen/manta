@@ -502,6 +502,8 @@ async fn dispatch_method(
         "device.pairing.approve" => admin_ws::handle_device_pairing_approve(req, state).await,
         "device.pairing.reject" => admin_ws::handle_device_pairing_reject(req, state).await,
         "device.pairing.revoke" => admin_ws::handle_device_pairing_revoke(req, state).await,
+        "device.pairing.qr" => admin_ws::handle_device_pairing_qr(req, state).await,
+        "device.pairing.setup" => admin_ws::handle_device_pairing_setup(req, state).await,
         "device.permission.request" => {
             device_ws::handle_device_permission_request(req, state).await
         }
@@ -575,6 +577,10 @@ async fn dispatch_method(
         "plugins.unload" => admin_ws::handle_plugins_unload(req, state).await,
         "plugins.reload" => admin_ws::handle_plugins_reload(req, state).await,
         "plugins.reload_all" => admin_ws::handle_plugins_reload_all(req, state).await,
+        "system.reload" => admin_ws::handle_system_reload(req, state).await,
+        "channels.list" => admin_ws::handle_channels_list(req, state).await,
+        "channels.enable" => admin_ws::handle_channels_enable(req, state).await,
+        "channels.disable" => admin_ws::handle_channels_disable(req, state).await,
         "plugins.uninstall" => admin_ws::handle_plugins_uninstall(req, state).await,
         "providers.list" => admin_ws::handle_providers_list(req, state).await,
         "providers.enable" => admin_ws::handle_providers_set_enabled(req, state, true).await,

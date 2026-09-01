@@ -986,20 +986,9 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
     let essential_auth_router = Router::new()
         .route("/v1/chat/completions", post(super::openai_chat_completions_handler))
         .route("/v1/models", get(super::openai_list_models_handler))
-        .route("/api/v1/models", get(super::list_models_handler))
-        .route("/api/v1/reload", post(super::reload_all_handler))
-        .route("/api/v1/channels", get(super::channel_list_handler))
-        .route("/api/v1/channels/:name/enable", post(super::enable_channel_handler))
-        .route("/api/v1/channels/:name/disable", post(super::disable_channel_handler))
-        .route("/api/v1/device/pairing/pending", get(super::list_device_pending_handler))
-        .route("/api/v1/device/pairing/authorized", get(super::list_device_authorized_handler))
-        .route("/api/v1/device/pairing/approve", post(super::approve_device_handler))
-        .route("/api/v1/device/pairing/reject", post(super::reject_device_handler))
-        .route("/api/v1/device/pairing/revoke", post(super::revoke_device_handler))
-        .route("/api/v1/device/pairing/qr/:code", get(super::device_qr_handler))
-        .route("/api/v1/device/pairing/setup/:setup_code", get(super::setup_device_handler))
-        // (Providers are WS-only now — syscity provider ... drives them via
-        // the admin WS methods in ws/admin_ws.rs.)
+        // (Everything else in the former admin tier — models, reload, channels,
+        // device pairing, providers, plugins, cron, skills — is WS-only now,
+        // driven by the admin WS methods in ws/admin_ws.rs.)
         .layer(from_fn_with_state(state.clone(), super::middleware::auth_middleware));
 
     let essential_router = essential_public_router.merge(essential_auth_router);

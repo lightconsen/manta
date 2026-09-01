@@ -1,11 +1,9 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
-    http::StatusCode,
+    extract::State,
     response::{IntoResponse, Json},
 };
-use serde::Deserialize;
 use tracing::{error, info, warn};
 
 use crate::gateway::GatewayState;
@@ -13,36 +11,6 @@ use crate::mcp::McpToolWrapper;
 
 // ── Comprehensive reload
 // ──────────────────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-pub struct ReloadRequest {
-    #[serde(default = "default_reload_scope")]
-    pub scope: String,
-}
-
-fn default_reload_scope() -> String {
-    "all".to_string()
-}
-
-/// Comprehensive reload handler — reloads plugins, config, providers,
-/// MCP servers, and skills without requiring a daemon restart.
-/// `GET /api/v1/models` — list available concrete model IDs.
-pub async fn list_models_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
-    let entries = state.infra.model_router.model_catalog.list().await;
-    Json(serde_json::json!({
-        "models": entries,
-    }))
-}
-
-/// `GET /api/v1/models/default` — the current default model.
-pub async fn get_default_model_handler(
-    State(state): State<Arc<GatewayState>>,
-) -> impl IntoResponse {
-    let default = state.infra.model_router.get_default_model().await;
-    Json(serde_json::json!({
-        "default_model": default,
-    }))
-}
 
 /// `GET /v1/models` — available model IDs in OpenAI wire format.
 pub async fn openai_list_models_handler(
@@ -63,11 +31,11 @@ pub async fn openai_list_models_handler(
     Json(serde_json::json!({ "object": "list", "data": data }))
 }
 
-pub async fn reload_all_handler(
-    State(state): State<Arc<GatewayState>>,
-    Json(req): Json<ReloadRequest>,
-) -> impl IntoResponse {
-    let scope = req.scope.to_lowercase();
+/// Run a comprehensive reload (plugins/config/providers/MCP/skills) for the
+/// given scope without restarting the daemon. The only consumer is the WS
+/// `system.reload` method now that the REST endpoint was removed.
+pub(crate) async fn run_reload(state: &Arc<GatewayState>, scope_in: &str) -> serde_json::Value {
+    let scope = scope_in.to_lowercase();
     let mut result = serde_json::json!({ "scope": &scope });
 
     // Take one consistent config snapshot for the entire reload operation.
@@ -360,207 +328,28 @@ pub async fn reload_all_handler(
     // ── 7. Channels (document only — rely on file watcher for live reload) ─
     if scope == "all" || scope == "channels" {
         result["channels"] = serde_json::json!({
-            "note": "Channels are hot-reloaded automatically when config.toml or channel config files change. Use the file watcher or restart individual channels via API.",
+            "note": "Channels are hot-reloaded automatically when config.toml or channel config files change. Use the file watcher or toggle individual channels via WS `channels.enable`/`channels.disable`.",
         });
     }
 
     result["success"] = serde_json::json!(true);
-    (StatusCode::OK, Json(result)).into_response()
-}
-
-// ── Channel management
-// ─────────────────────────────────────────────────────────
-
-/// GET /api/v1/channels — List all channels and their enabled status.
-pub async fn channel_list_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
-    let config = state.config.read().await;
-    let channels: Vec<serde_json::Value> = config
-        .channels
-        .iter()
-        .map(|(name, cfg)| {
-            serde_json::json!({
-                "name": name,
-                "type": cfg.channel_type,
-                "enabled": cfg.enabled,
-                "agent_id": cfg.agent_id,
-            })
-        })
-        .collect();
-    Json(serde_json::json!({ "channels": channels }))
-}
-
-/// POST /api/v1/channels/{name}/enable — Enable a channel.
-pub async fn enable_channel_handler(
-    Path(name): Path<String>,
-    State(state): State<Arc<GatewayState>>,
-) -> impl IntoResponse {
-    let mut config_guard = state.config.write().await;
-    let channel_config = match Arc::make_mut(&mut config_guard).channels.get_mut(&name) {
-        Some(cfg) => cfg,
-        None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": format!("Channel '{}' not found", name) })),
-            )
-                .into_response();
-        }
-    };
-
-    if channel_config.enabled {
-        return (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "name": name,
-                "enabled": true,
-                "message": "Channel is already enabled",
-            })),
-        )
-            .into_response();
-    }
-
-    channel_config.enabled = true;
-    drop(config_guard);
-
-    // Persist config to disk
-    if let Err(e) = persist_config(&state).await {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": format!("Failed to persist config: {}", e) })),
-        )
-            .into_response();
-    }
-
-    info!("Enabled channel '{}' via REST API", name);
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({
-            "name": name,
-            "enabled": true,
-            "message": "Channel enabled",
-        })),
-    )
-        .into_response()
-}
-
-/// POST /api/v1/channels/{name}/disable — Disable a channel.
-pub async fn disable_channel_handler(
-    Path(name): Path<String>,
-    State(state): State<Arc<GatewayState>>,
-) -> impl IntoResponse {
-    let mut config_guard = state.config.write().await;
-    let channel_config = match Arc::make_mut(&mut config_guard).channels.get_mut(&name) {
-        Some(cfg) => cfg,
-        None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": format!("Channel '{}' not found", name) })),
-            )
-                .into_response();
-        }
-    };
-
-    if !channel_config.enabled {
-        return (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "name": name,
-                "enabled": false,
-                "message": "Channel is already disabled",
-            })),
-        )
-            .into_response();
-    }
-
-    channel_config.enabled = false;
-    drop(config_guard);
-
-    // Persist config to disk
-    if let Err(e) = persist_config(&state).await {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": format!("Failed to persist config: {}", e) })),
-        )
-            .into_response();
-    }
-
-    info!("Disabled channel '{}' via REST API", name);
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({
-            "name": name,
-            "enabled": false,
-            "message": "Channel disabled",
-        })),
-    )
-        .into_response()
-}
-
-/// Persist the current gateway config to disk atomically.
-async fn persist_config(state: &Arc<GatewayState>) -> Result<(), String> {
-    let config_path = match state.config_path.clone() {
-        Some(p) => p,
-        None => return Err("No config file path configured".to_string()),
-    };
-
-    let config = state.config.read().await;
-    let toml_str = toml::to_string_pretty(&*config)
-        .map_err(|e| format!("TOML serialization failed: {}", e))?;
-    drop(config);
-
-    let tmp_path = config_path.with_extension("toml.tmp");
-    tokio::fs::write(&tmp_path, toml_str)
-        .await
-        .map_err(|e| format!("Failed to write temporary config file: {}", e))?;
-    tokio::fs::rename(&tmp_path, &config_path)
-        .await
-        .map_err(|e| format!("Failed to atomically replace config file: {}", e))?;
-
-    info!("Persisted config to {:?}", config_path);
-    Ok(())
+    result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::channels::ChannelType;
-    use crate::gateway::config::ChannelConfig;
     use crate::gateway::state_tests::make_test_state;
     use crate::gateway::GatewayConfig;
-
-    async fn body_json(resp: axum::response::Response) -> (StatusCode, serde_json::Value) {
-        let status = resp.status();
-        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
-            .await
-            .unwrap();
-        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
-        (status, json)
-    }
 
     async fn state() -> Arc<GatewayState> {
         Arc::new(make_test_state(GatewayConfig::default()).await)
     }
 
-    /// Test state whose config contains a single telegram channel with the
-    /// given `enabled` state.
-    async fn state_with_channel(enabled: bool) -> Arc<GatewayState> {
-        let state = state().await;
-        {
-            let mut config_guard = state.config.write().await;
-            let config = Arc::make_mut(&mut config_guard);
-            let mut ch = ChannelConfig::new(ChannelType::Telegram);
-            ch.enabled = enabled;
-            config.channels.insert("telegram".to_string(), ch);
-        }
-        state
-    }
-
     #[tokio::test]
     async fn reload_channels_scope_ok() {
         let state = state().await;
-        let body = Json(ReloadRequest { scope: "channels".into() });
-        let (status, json) =
-            body_json(reload_all_handler(State(state), body).await.into_response()).await;
-        assert_eq!(status, StatusCode::OK);
+        let json = run_reload(&state, "channels").await;
         assert_eq!(json["success"], true);
         assert!(json["channels"]["note"].is_string());
     }
@@ -568,119 +357,16 @@ mod tests {
     #[tokio::test]
     async fn reload_skills_scope_ok() {
         let state = state().await;
-        let body = Json(ReloadRequest { scope: "skills".into() });
-        let (status, json) =
-            body_json(reload_all_handler(State(state), body).await.into_response()).await;
-        assert_eq!(status, StatusCode::OK);
+        let json = run_reload(&state, "skills").await;
         assert_eq!(json["success"], true);
         assert!(json["skills"].is_object());
     }
 
     #[tokio::test]
-    async fn channel_list_empty_ok() {
+    async fn reload_unknown_scope_is_noop() {
         let state = state().await;
-        let (status, json) =
-            body_json(channel_list_handler(State(state)).await.into_response()).await;
-        assert_eq!(status, StatusCode::OK);
-        assert!(json["channels"].is_array());
-        assert!(json["channels"].as_array().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn channel_list_with_entry_reports_fields() {
-        let state = state_with_channel(true).await;
-        let (status, json) =
-            body_json(channel_list_handler(State(state)).await.into_response()).await;
-        assert_eq!(status, StatusCode::OK);
-        let channels = json["channels"].as_array().unwrap();
-        assert_eq!(channels.len(), 1);
-        assert_eq!(channels[0]["name"], "telegram");
-        assert_eq!(channels[0]["enabled"], true);
-    }
-
-    #[tokio::test]
-    async fn enable_channel_unknown_404() {
-        let state = state().await;
-        let (status, json) = body_json(
-            enable_channel_handler(Path("telegram".into()), State(state))
-                .await
-                .into_response(),
-        )
-        .await;
-        assert_eq!(status, StatusCode::NOT_FOUND);
-        assert!(json["error"].as_str().unwrap().contains("telegram"));
-    }
-
-    #[tokio::test]
-    async fn disable_channel_unknown_404() {
-        let state = state().await;
-        let (status, json) = body_json(
-            disable_channel_handler(Path("telegram".into()), State(state))
-                .await
-                .into_response(),
-        )
-        .await;
-        assert_eq!(status, StatusCode::NOT_FOUND);
-        assert!(json["error"].as_str().unwrap().contains("telegram"));
-    }
-
-    #[tokio::test]
-    async fn enable_already_enabled_ok() {
-        let state = state_with_channel(true).await;
-        let (status, json) = body_json(
-            enable_channel_handler(Path("telegram".into()), State(state))
-                .await
-                .into_response(),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(json["message"], "Channel is already enabled");
-    }
-
-    #[tokio::test]
-    async fn disable_already_disabled_ok() {
-        let state = state_with_channel(false).await;
-        let (status, json) = body_json(
-            disable_channel_handler(Path("telegram".into()), State(state))
-                .await
-                .into_response(),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(json["message"], "Channel is already disabled");
-    }
-
-    #[tokio::test]
-    async fn enable_channel_persist_fails_500() {
-        // Test state has no config_path, so flipping the enabled flag trips the
-        // persist step, which errors out.
-        let state = state_with_channel(false).await;
-        let (status, json) = body_json(
-            enable_channel_handler(Path("telegram".into()), State(state))
-                .await
-                .into_response(),
-        )
-        .await;
-        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-        assert!(json["error"]
-            .as_str()
-            .unwrap()
-            .contains("Failed to persist config"));
-    }
-
-    #[tokio::test]
-    async fn disable_channel_persist_fails_500() {
-        let state = state_with_channel(true).await;
-        let (status, json) = body_json(
-            disable_channel_handler(Path("telegram".into()), State(state))
-                .await
-                .into_response(),
-        )
-        .await;
-        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-        assert!(json["error"]
-            .as_str()
-            .unwrap()
-            .contains("Failed to persist config"));
+        let json = run_reload(&state, "bogus").await;
+        assert_eq!(json["success"], true);
+        assert_eq!(json["scope"], "bogus");
     }
 }

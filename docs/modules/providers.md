@@ -173,7 +173,7 @@ pub struct ProviderInstanceConfig {
 - OAuth 2.0 + PKCE initial authorization flow (`pkce.rs`, `oauth_flow.rs`, `oauth_callback.rs`) + CLI `syscity provider auth` command
 - Differentiated cooldown — `FailureClass::default_backoff_secs()` used per failure type (RateLimit=60s, AuthTemporary=5s, etc.), never below config minimum
 - Usage tracking (`ProviderUsageTracker`) — per-provider token consumption, cost estimation, time windows (today/this_hour/this_month), budget enforcement
-- Model catalog (`ModelCatalog`) — dynamic registry with `ModelCatalogEntry`, suppression list, `/v1/models` and `/api/v1/models` endpoints
+- Model catalog (`ModelCatalog`) — dynamic registry with `ModelCatalogEntry`, suppression list; exposed via OpenAI-compatible `/v1/models` and WS `models.list`
 - Doctor diagnostic system (`syscity doctor`) — provider health, auth status, circuit state, deprecation warnings, migration hints, plugin extension point
 - Credential state machine (`AuthProfile`) — Active→Cooldown→Disabled lifecycle with key rotation, SQLite persistence
 - OAuth token auto-refresh (`refresh_if_needed()`) — called at the start of every `complete()` and `stream()` in both `openai.rs` and `anthropic.rs` providers
