@@ -485,6 +485,10 @@ async fn dispatch_method(
         "models.remove" => models::handle_models_remove(req, state).await,
         "models.set_default" => models::handle_models_set_default(req, state).await,
         "mcp.list" => mcp_ws::handle_mcp_list(req, state).await,
+        "mcp.tools" => admin_ws::handle_mcp_tools(req, state).await,
+        "mcp.call_tool" => admin_ws::handle_mcp_call_tool(req, state).await,
+        "mcp.resources" => admin_ws::handle_mcp_resources(req, state).await,
+        "mcp.auth_status" => admin_ws::handle_mcp_auth_status(req, state).await,
         "mcp.presets" => mcp_ws::handle_mcp_presets(req, state).await,
         "mcp.add" => mcp_ws::handle_mcp_add(req, state).await,
         "mcp.remove" => mcp_ws::handle_mcp_remove(req, state).await,
@@ -493,6 +497,11 @@ async fn dispatch_method(
         "mcp.auth_cancel" => mcp_ws::handle_mcp_auth_cancel(req, state).await,
         "device.capabilities" => device_ws::handle_device_capabilities(req, state).await,
         "device.permission.status" => device_ws::handle_device_permission_status(req, state).await,
+        "device.pairing.pending" => admin_ws::handle_device_pairing_pending(req, state).await,
+        "device.pairing.authorized" => admin_ws::handle_device_pairing_authorized(req, state).await,
+        "device.pairing.approve" => admin_ws::handle_device_pairing_approve(req, state).await,
+        "device.pairing.reject" => admin_ws::handle_device_pairing_reject(req, state).await,
+        "device.pairing.revoke" => admin_ws::handle_device_pairing_revoke(req, state).await,
         "device.permission.request" => {
             device_ws::handle_device_permission_request(req, state).await
         }
