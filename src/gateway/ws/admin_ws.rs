@@ -1490,6 +1490,343 @@ pub(super) async fn handle_providers_usage(
     WsResponse::ok(&req.id, serde_json::json!({ "usage": snapshots }))
 }
 
+// ── Approvals (human-in-the-loop tool approval) ─────────────────────────
+
+/// `approvals.list` — pending tool-call approval requests.
+pub(super) async fn handle_approvals_list(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    let approvals = state
+        .tools
+        .approval_queue
+        .list_pending(crate::tools::approval::ApprovalFilter::default())
+        .await;
+    WsResponse::ok(&req.id, serde_json::json!({ "approvals": approvals, "count": approvals.len() }))
+}
+
+/// `approvals.get` — a single pending approval (`{ id }`).
+pub(super) async fn handle_approvals_get(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    let id = match parse_params::<serde_json::Value>(req) {
+        Ok(v) => v["id"].as_str().unwrap_or("").to_string(),
+        Err(res) => return res,
+    };
+    match state.tools.approval_queue.get(&id).await {
+        Some(approval) => {
+            WsResponse::ok(&req.id, serde_json::to_value(&approval).unwrap_or_default())
+        }
+        None => WsResponse::err(&req.id, "NOT_FOUND", &format!("Approval '{}' not found", id)),
+    }
+}
+
+/// `approvals.approve` — approve a pending tool call (`{ id }`).
+pub(super) async fn handle_approvals_approve(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    let id = match parse_params::<serde_json::Value>(req) {
+        Ok(v) => v["id"].as_str().unwrap_or("").to_string(),
+        Err(res) => return res,
+    };
+    if state
+        .tools
+        .approval_queue
+        .resolve(&id, crate::tools::approval::ApprovalDecision::Approve)
+        .await
+    {
+        WsResponse::ok(&req.id, serde_json::json!({ "id": id, "status": "approved" }))
+    } else {
+        WsResponse::err(&req.id, "NOT_FOUND", &format!("Approval '{}' not found", id))
+    }
+}
+
+/// `approvals.deny` — deny a pending tool call (`{ id, reason? }`).
+pub(super) async fn handle_approvals_deny(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    #[derive(Deserialize)]
+    struct Params {
+        id: String,
+        #[serde(default)]
+        reason: Option<String>,
+    }
+    let p: Params = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+    let reason = p.reason.unwrap_or_else(|| "Denied by operator".to_string());
+    if state
+        .tools
+        .approval_queue
+        .resolve(&p.id, crate::tools::approval::ApprovalDecision::Deny { reason: reason.clone() })
+        .await
+    {
+        WsResponse::ok(
+            &req.id,
+            serde_json::json!({ "id": p.id, "status": "denied", "reason": reason }),
+        )
+    } else {
+        WsResponse::err(&req.id, "NOT_FOUND", &format!("Approval '{}' not found", p.id))
+    }
+}
+
+// ── Memory search / add (vector memory admin) ───────────────────────────
+
+/// `memory.search` — `{ query, limit?, collection?, threshold? }`.
+pub(super) async fn handle_memory_search(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    let body: crate::gateway::types::MemorySearchRequest = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+    match state.memory.vector.read().await.clone() {
+        Some(vm) => match vm
+            .search_collection(&body.query, body.limit, &body.collection, body.threshold)
+            .await
+        {
+            Ok(results) => WsResponse::ok(
+                &req.id,
+                serde_json::json!({ "query": body.query, "results": results, "count": results.len() }),
+            ),
+            Err(e) => WsResponse::err(&req.id, "INTERNAL", &format!("Search failed: {}", e)),
+        },
+        None => WsResponse::err(&req.id, "UNAVAILABLE", "Vector memory service not enabled"),
+    }
+}
+
+/// `memory.add` — `{ content, metadata?, collection? }`.
+pub(super) async fn handle_memory_add(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    let body: crate::gateway::types::MemoryAddRequest = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+    match state.memory.vector.read().await.clone() {
+        Some(vm) => match vm
+            .add_to_collection(&body.content, body.metadata, &body.collection)
+            .await
+        {
+            Ok(doc_id) => WsResponse::ok(
+                &req.id,
+                serde_json::json!({ "document_id": doc_id, "status": "added" }),
+            ),
+            Err(e) => {
+                WsResponse::err(&req.id, "INTERNAL", &format!("Failed to add document: {}", e))
+            }
+        },
+        None => WsResponse::err(&req.id, "UNAVAILABLE", "Vector memory service not enabled"),
+    }
+}
+
+/// `memory.collections` — list vector memory collections.
+pub(super) async fn handle_memory_collections(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    match state.memory.vector.read().await.clone() {
+        Some(vm) => {
+            let collections = vm.list_collections().await;
+            WsResponse::ok(
+                &req.id,
+                serde_json::json!({ "collections": collections, "count": collections.len() }),
+            )
+        }
+        None => WsResponse::err(&req.id, "UNAVAILABLE", "Vector memory service not enabled"),
+    }
+}
+
+// ── Mention gate policy / allowlist / blocklist ─────────────────────────
+
+/// `mention.policy` — current mention gate policy.
+pub(super) async fn handle_mention_policy_get(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    let policy = state.auth.mention_gate.policy().await;
+    WsResponse::ok(&req.id, serde_json::json!({ "policy": policy.to_string() }))
+}
+
+/// `mention.policy.set` — `{ policy }`.
+pub(super) async fn handle_mention_policy_set(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    let body: crate::gateway::types::SetMentionPolicyRequest = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+    state.auth.mention_gate.set_policy(body.policy).await;
+    let policy = state.auth.mention_gate.policy().await;
+    WsResponse::ok(&req.id, serde_json::json!({ "status": "ok", "policy": policy.to_string() }))
+}
+
+/// `mention.allowlist` — `{ channel? }` (default "*") list allowlist entries.
+pub(super) async fn handle_mention_allowlist_list(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    let channel = match parse_params::<serde_json::Value>(req) {
+        Ok(v) => v["channel"].as_str().unwrap_or("*").to_string(),
+        Err(res) => return res,
+    };
+    let entries = state.auth.mention_gate.list_allowlist(&channel).await;
+    WsResponse::ok(&req.id, serde_json::json!({ "channel": channel, "allowlist": entries }))
+}
+
+/// `mention.allowlist.add` — `{ channel, pattern }`.
+pub(super) async fn handle_mention_allowlist_add(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    let body: crate::gateway::types::AddMentionPatternRequest = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+    state
+        .auth
+        .mention_gate
+        .add_allowlist(&body.channel, &body.pattern)
+        .await;
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({ "status": "added", "channel": body.channel, "pattern": body.pattern }),
+    )
+}
+
+/// `mention.allowlist.remove` — `{ channel, pattern }`.
+pub(super) async fn handle_mention_allowlist_remove(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    let body: crate::gateway::types::AddMentionPatternRequest = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+    let removed = state
+        .auth
+        .mention_gate
+        .remove_allowlist(&body.channel, &body.pattern)
+        .await;
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "status": if removed { "removed" } else { "not_found" },
+            "channel": body.channel,
+            "pattern": body.pattern,
+        }),
+    )
+}
+
+/// `mention.blocklist` — `{ channel? }` (default "*") list blocklist entries.
+pub(super) async fn handle_mention_blocklist_list(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    let channel = match parse_params::<serde_json::Value>(req) {
+        Ok(v) => v["channel"].as_str().unwrap_or("*").to_string(),
+        Err(res) => return res,
+    };
+    let entries = state.auth.mention_gate.list_blocklist(&channel).await;
+    WsResponse::ok(&req.id, serde_json::json!({ "channel": channel, "blocklist": entries }))
+}
+
+/// `mention.blocklist.add` — `{ channel, pattern }`.
+pub(super) async fn handle_mention_blocklist_add(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    let body: crate::gateway::types::AddMentionPatternRequest = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+    state
+        .auth
+        .mention_gate
+        .add_blocklist(&body.channel, &body.pattern)
+        .await;
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({ "status": "added", "channel": body.channel, "pattern": body.pattern }),
+    )
+}
+
+/// `mention.blocklist.remove` — `{ channel, pattern }`.
+pub(super) async fn handle_mention_blocklist_remove(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    let body: crate::gateway::types::AddMentionPatternRequest = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+    let removed = state
+        .auth
+        .mention_gate
+        .remove_blocklist(&body.channel, &body.pattern)
+        .await;
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "status": if removed { "removed" } else { "not_found" },
+            "channel": body.channel,
+            "pattern": body.pattern,
+        }),
+    )
+}
+
+// ── Auth profiles (provider API-key state) ──────────────────────────────
+
+/// `auth_profiles.list` — all auth profiles across providers.
+pub(super) async fn handle_auth_profiles_list(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    let profiles = state.infra.model_router.list_auth_profiles().await;
+    WsResponse::ok(&req.id, serde_json::json!({ "profiles": profiles, "count": profiles.len() }))
+}
+
+/// `auth_profiles.get` — auth profile status for a provider (`{ id }`).
+pub(super) async fn handle_auth_profiles_get(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    let id = match parse_params::<serde_json::Value>(req) {
+        Ok(v) => v["id"].as_str().unwrap_or("").to_string(),
+        Err(res) => return res,
+    };
+    match state.infra.model_router.get_auth_profile_status(&id).await {
+        Some(status) => WsResponse::ok(&req.id, serde_json::to_value(status).unwrap_or_default()),
+        None => WsResponse::err(
+            &req.id,
+            "NOT_FOUND",
+            &format!("No auth profile found for provider '{}'", id),
+        ),
+    }
+}
+
+/// `auth_profiles.rotate` — rotate a provider's API key (`{ id }`).
+pub(super) async fn handle_auth_profiles_rotate(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    let id = match parse_params::<serde_json::Value>(req) {
+        Ok(v) => v["id"].as_str().unwrap_or("").to_string(),
+        Err(res) => return res,
+    };
+    match state.infra.model_router.rotate_auth_key(&id).await {
+        Ok(_new_key) => WsResponse::ok(
+            &req.id,
+            serde_json::json!({
+                "success": true,
+                "provider": id,
+                "message": format!("Auth key rotated for provider '{}'", id),
+            }),
+        ),
+        Err(e) => {
+            WsResponse::err(&req.id, "BAD_REQUEST", &format!("Failed to rotate auth key: {}", e))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1648,5 +1985,150 @@ mod tests {
         .await;
         assert!(!resp.ok);
         assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_PARAMS");
+    }
+
+    #[tokio::test]
+    async fn approvals_list_empty() {
+        let state = state().await;
+        let resp = handle_approvals_list(&req("r1", "approvals.list", None), &state).await;
+        assert!(resp.ok);
+        assert_eq!(resp.payload.as_ref().unwrap()["count"], 0);
+    }
+
+    #[tokio::test]
+    async fn approvals_approve_unknown_not_found() {
+        let state = state().await;
+        let resp = handle_approvals_approve(
+            &req("r1", "approvals.approve", Some(serde_json::json!({ "id": "missing" }))),
+            &state,
+        )
+        .await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn approvals_submit_then_deny_with_reason() {
+        let state = state().await;
+        // Submit a pending approval with a live response channel.
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        let pa = crate::tools::approval::PendingApproval::new(
+            "app-1",
+            "bash",
+            serde_json::json!({ "command": "ls" }),
+            "alice",
+        )
+        .with_risk_level(crate::tools::approval::RiskLevel::High)
+        .with_approval_level(crate::tools::approval::ApprovalLevel::Ask)
+        .with_message("Run bash")
+        .with_response_tx(tx);
+        state.tools.approval_queue.submit(pa).await;
+
+        let resp = handle_approvals_list(&req("r1", "approvals.list", None), &state).await;
+        assert!(resp.ok);
+        assert_eq!(resp.payload.as_ref().unwrap()["count"], 1);
+
+        let resp = handle_approvals_deny(
+            &req(
+                "r1",
+                "approvals.deny",
+                Some(serde_json::json!({ "id": "app-1", "reason": "Not authorized" })),
+            ),
+            &state,
+        )
+        .await;
+        assert!(resp.ok, "deny failed: {:?}", resp.error);
+        let payload = resp.payload.as_ref().unwrap();
+        assert_eq!(payload["status"], "denied");
+        assert_eq!(payload["reason"], "Not authorized");
+    }
+
+    #[tokio::test]
+    async fn memory_search_unavailable_without_vector() {
+        let state = state().await;
+        let resp = handle_memory_search(
+            &req("r1", "memory.search", Some(serde_json::json!({ "query": "foo" }))),
+            &state,
+        )
+        .await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "UNAVAILABLE");
+    }
+
+    #[tokio::test]
+    async fn memory_collections_unavailable_without_vector() {
+        let state = state().await;
+        let resp = handle_memory_collections(&req("r1", "memory.collections", None), &state).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "UNAVAILABLE");
+    }
+
+    #[tokio::test]
+    async fn mention_policy_get_and_set_roundtrip() {
+        let state = state().await;
+        let resp = handle_mention_policy_get(&req("r1", "mention.policy", None), &state).await;
+        assert!(resp.ok);
+        assert!(resp.payload.as_ref().unwrap()["policy"].is_string());
+
+        let resp = handle_mention_policy_set(
+            &req("r1", "mention.policy.set", Some(serde_json::json!({ "policy": "block" }))),
+            &state,
+        )
+        .await;
+        assert!(resp.ok, "set failed: {:?}", resp.error);
+        assert_eq!(resp.payload.as_ref().unwrap()["policy"], "block");
+    }
+
+    #[tokio::test]
+    async fn mention_allowlist_add_and_list() {
+        let state = state().await;
+        let resp = handle_mention_allowlist_add(
+            &req(
+                "r1",
+                "mention.allowlist.add",
+                Some(serde_json::json!({ "channel": "telegram", "pattern": "@boss" })),
+            ),
+            &state,
+        )
+        .await;
+        assert!(resp.ok);
+        let resp = handle_mention_allowlist_list(
+            &req("r1", "mention.allowlist", Some(serde_json::json!({ "channel": "telegram" }))),
+            &state,
+        )
+        .await;
+        assert!(resp.ok);
+        let entries = resp.payload.as_ref().unwrap()["allowlist"]
+            .as_array()
+            .unwrap();
+        assert!(entries.iter().any(|e| e == "@boss"));
+    }
+
+    #[tokio::test]
+    async fn auth_profiles_list_empty_and_get_unknown() {
+        let state = state().await;
+        let resp = handle_auth_profiles_list(&req("r1", "auth_profiles.list", None), &state).await;
+        assert!(resp.ok);
+        assert_eq!(resp.payload.as_ref().unwrap()["count"], 0);
+
+        let resp = handle_auth_profiles_get(
+            &req("r1", "auth_profiles.get", Some(serde_json::json!({ "id": "openai" }))),
+            &state,
+        )
+        .await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn auth_profiles_rotate_unknown_errors() {
+        let state = state().await;
+        let resp = handle_auth_profiles_rotate(
+            &req("r1", "auth_profiles.rotate", Some(serde_json::json!({ "id": "openai" }))),
+            &state,
+        )
+        .await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "BAD_REQUEST");
     }
 }

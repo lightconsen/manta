@@ -36,30 +36,6 @@ async fn get_config_returns_json() {
     assert!(json.is_object());
 }
 
-// ── GET /api/v1/mentions/policy ──
-
-#[tokio::test]
-async fn get_mention_policy_returns_policy() {
-    let state =
-        Arc::new(crate::gateway::state_tests::make_test_state(GatewayConfig::default()).await);
-    let app = Router::new()
-        .route("/api/v1/mentions/policy", get(super::get_mention_policy_handler))
-        .with_state(state);
-
-    let req = Request::builder()
-        .uri("/api/v1/mentions/policy")
-        .body(Body::empty())
-        .unwrap();
-    let response = app.oneshot(req).await.unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(json["policy"].is_string());
-}
-
 // ── GET /ready (not ready by default) ──
 
 #[tokio::test]
@@ -82,42 +58,6 @@ async fn ready_handler_returns_503_when_not_ready() {
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["ready"], false);
-}
-
-// ── POST /api/v1/mentions/policy ──
-
-#[tokio::test]
-async fn set_mention_policy_updates_policy() {
-    let state =
-        Arc::new(crate::gateway::state_tests::make_test_state(GatewayConfig::default()).await);
-    let app = Router::new()
-        .route(
-            "/api/v1/mentions/policy",
-            get(super::get_mention_policy_handler).post(super::set_mention_policy_handler),
-        )
-        .with_state(state.clone());
-
-    // Set policy to block (snake_case deserialization)
-    let req = Request::builder()
-        .method("POST")
-        .uri("/api/v1/mentions/policy")
-        .header("content-type", "application/json")
-        .body(Body::from(r#"{"policy":"block"}"#))
-        .unwrap();
-    let response = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-
-    // Verify policy changed
-    let req = Request::builder()
-        .uri("/api/v1/mentions/policy")
-        .body(Body::empty())
-        .unwrap();
-    let response = app.oneshot(req).await.unwrap();
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["policy"], "block");
 }
 
 // ── Auth mode ambiguity detection ──

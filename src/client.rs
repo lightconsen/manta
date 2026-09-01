@@ -5,7 +5,7 @@
 //! protocol via [`DaemonClient::ws_call`]; the only HTTP the client uses is the
 //! `/health` liveness probe.
 
-use futures::{SinkExt, StreamExt};
+use futures::StreamExt;
 use reqwest::Client;
 use serde::Deserialize;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
