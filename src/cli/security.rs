@@ -5,6 +5,7 @@
 use clap::Subcommand;
 use serde_json::json;
 
+use crate::cli::ws;
 use crate::error::{Result, SyscityError};
 
 /// Default daemon base URL.
@@ -119,94 +120,45 @@ pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
 
     match command {
         SecurityCommands::Pairing { command } => match command {
-            PairingCommands::List { channel } => {
-                let mut url = format!("{}/api/v1/pairing/pending", DAEMON_URL);
-                if let Some(ch) = channel {
-                    url.push_str(&format!("?channel={}", ch));
-                }
-                match client.get(&url).send().await {
-                    Ok(resp) => {
-                        let body: serde_json::Value = resp.json().await.unwrap_or_default();
-                        if let Some(requests) = body.get("requests").and_then(|r| r.as_array()) {
-                            if requests.is_empty() {
-                                println!("No pending pairing requests.");
-                            } else {
-                                println!("Pending Pairing Requests:");
-                                println!(
-                                    "{:<12} {:<15} {:<20} Created",
-                                    "Code", "Channel", "User ID"
-                                );
-                                println!("{}", "-".repeat(70));
-                                for req in requests {
-                                    println!(
-                                        "{:<12} {:<15} {:<20} {}",
-                                        req.get("code").and_then(|c| c.as_str()).unwrap_or("-"),
-                                        req.get("channel").and_then(|c| c.as_str()).unwrap_or("-"),
-                                        req.get("user_id").and_then(|u| u.as_str()).unwrap_or("-"),
-                                        req.get("created_at")
-                                            .and_then(|c| c.as_str())
-                                            .unwrap_or("-"),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to reach daemon: {}", e);
-                        return Err(SyscityError::Internal(e.to_string()));
-                    }
-                }
-                Ok(())
-            }
-            PairingCommands::Approve { channel, code, as_admin } => {
-                let url = format!("{}/api/v1/pairing/approve", DAEMON_URL);
-                let body = json!({
-                    "channel": channel,
-                    "code": code,
-                    "approved_by": as_admin,
-                });
-                match client.post(&url).json(&body).send().await {
-                    Ok(resp) => {
-                        if resp.status().is_success() {
-                            let body: serde_json::Value = resp.json().await.unwrap_or_default();
-                            let user_id = body
-                                .get("user_id")
-                                .and_then(|u| u.as_str())
-                                .unwrap_or("unknown");
+            PairingCommands::List { channel: _channel } => {
+                let payload = ws::call("device.pairing.pending", json!({})).await?;
+                let requests = payload.get("pending").and_then(|r| r.as_array());
+                match requests {
+                    Some(requests) if requests.is_empty() => println!("No pending pairing requests."),
+                    Some(requests) => {
+                        println!("Pending Pairing Requests:");
+                        println!("{:<12} {:<20} {:<20} Created", "Code", "Device ID", "Name");
+                        println!("{}", "-".repeat(70));
+                        for req in requests {
                             println!(
-                                "✅ Approved pairing request {} for user {} on {}",
-                                code, user_id, channel
+                                "{:<12} {:<20} {:<20} {}",
+                                req.get("code").and_then(|c| c.as_str()).unwrap_or("-"),
+                                req.get("device_id").and_then(|c| c.as_str()).unwrap_or("-"),
+                                req.get("display_name").and_then(|c| c.as_str()).unwrap_or("-"),
+                                req.get("created_at").and_then(|c| c.as_str()).unwrap_or("-"),
                             );
-                        } else {
-                            let text = resp.text().await.unwrap_or_default();
-                            eprintln!("Failed to approve: {}", text);
                         }
                     }
+                    None => println!("No pending pairing requests."),
+                }
+                Ok(())
+            }
+            PairingCommands::Approve { channel: _channel, code, as_admin: _as_admin } => {
+                match ws::call("device.pairing.approve", json!({ "code": code })).await {
+                    Ok(_) => println!("✅ Approved pairing request {}", code),
                     Err(e) => {
-                        eprintln!("Failed to reach daemon: {}", e);
-                        return Err(SyscityError::Internal(e.to_string()));
+                        eprintln!("Failed to approve: {}", e);
+                        return Err(e);
                     }
                 }
                 Ok(())
             }
-            PairingCommands::Reject { channel, code } => {
-                let url = format!("{}/api/v1/pairing/reject", DAEMON_URL);
-                let body = json!({
-                    "channel": channel,
-                    "code": code,
-                });
-                match client.post(&url).json(&body).send().await {
-                    Ok(resp) => {
-                        if resp.status().is_success() {
-                            println!("❌ Rejected pairing request {} on {}", code, channel);
-                        } else {
-                            let text = resp.text().await.unwrap_or_default();
-                            eprintln!("Failed to reject: {}", text);
-                        }
-                    }
+            PairingCommands::Reject { channel: _channel, code } => {
+                match ws::call("device.pairing.reject", json!({ "code": code })).await {
+                    Ok(_) => println!("❌ Rejected pairing request {}", code),
                     Err(e) => {
-                        eprintln!("Failed to reach daemon: {}", e);
-                        return Err(SyscityError::Internal(e.to_string()));
+                        eprintln!("Failed to reject: {}", e);
+                        return Err(e);
                     }
                 }
                 Ok(())
@@ -440,43 +392,18 @@ pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
             Ok(())
         }
 
-        SecurityCommands::List { channel } => {
-            let mut url = format!("{}/api/v1/security/authorized", DAEMON_URL);
-            if let Some(ch) = channel {
-                url.push_str(&format!("?channel={}", ch));
-            }
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    let body = resp.text().await.unwrap_or_default();
-                    println!("{}", body);
-                }
-                Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
-                }
-            }
+        SecurityCommands::List { channel: _channel } => {
+            let payload = ws::call("device.pairing.authorized", json!({})).await?;
+            println!("{}", serde_json::to_string_pretty(&payload).unwrap_or_default());
             Ok(())
         }
 
-        SecurityCommands::Revoke { channel, user_id } => {
-            let url = format!("{}/api/v1/security/revoke", DAEMON_URL);
-            let body = json!({
-                "channel": channel,
-                "user_id": user_id,
-            });
-            match client.post(&url).json(&body).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let text = resp.text().await.unwrap_or_default();
-                    if status.is_success() {
-                        println!("✅ Revoked access for {} on {}", user_id, channel);
-                    } else {
-                        eprintln!("Failed to revoke ({}): {}", status, text);
-                    }
-                }
+        SecurityCommands::Revoke { channel: _channel, user_id } => {
+            match ws::call("device.pairing.revoke", json!({ "device_id": user_id })).await {
+                Ok(_) => println!("✅ Revoked access for {}", user_id),
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    eprintln!("Failed to revoke: {}", e);
+                    return Err(e);
                 }
             }
             Ok(())

@@ -6,10 +6,6 @@ use serde_json::json;
 use crate::cli::ws;
 use crate::error::Result;
 
-/// Default daemon base URL (only for the `send` command, which has no WS
-/// equivalent).
-const DAEMON_URL: &str = "http://127.0.0.1:18080";
-
 #[derive(Debug, Subcommand)]
 pub enum AdminCommands {
     /// Show Gateway status
@@ -126,31 +122,20 @@ pub async fn run_admin_command(command: &AdminCommands) -> Result<()> {
         AdminCommands::Send {
             session_id,
             message,
-            provider,
-            model,
+            provider: _provider,
+            model: _model,
         } => {
-            // No WS method for sending a message to an existing session; keep
-            // the REST call.
-            let client = reqwest::Client::new();
-            let url = format!("{}/api/v1/sessions/{}/messages", DAEMON_URL, session_id);
-            let body = serde_json::json!({
-                "content": message,
-                "provider": provider,
-                "model": model,
-            });
-            match client.post(&url).json(&body).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let text = resp.text().await.unwrap_or_default();
-                    if status.is_success() {
-                        println!("{}", text);
-                    } else {
-                        eprintln!("Failed to send message ({}): {}", status, text);
-                    }
+            // Send to an existing session over WS `chat.send`. The provider /
+            // model overrides are not part of the WS surface, so they are
+            // accepted for CLI compatibility but not forwarded.
+            match ws::call("chat.send", json!({ "message": message, "session_id": session_id })).await
+            {
+                Ok(payload) => {
+                    println!("{}", serde_json::to_string_pretty(&payload).unwrap_or_default());
                 }
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(crate::error::SyscityError::Internal(e.to_string()));
+                    eprintln!("Failed to send message: {}", e);
+                    return Err(e);
                 }
             }
         }
