@@ -510,7 +510,7 @@ impl std::fmt::Display for CompressionStats {
 /// The `min_retention_ratio` threshold is taken from
 /// [`DEFAULT_MIN_RETENTION_RATIO`](crate::observe::record::DEFAULT_MIN_RETENTION_RATIO)
 /// because the gateway `CompressionQualityConfig` is not threaded into the
-/// compression call sites (which live in `agent_engine` / the observe
+/// compression call sites (which live in `agent::engine` / the observe
 /// collector).
 pub fn build_compression_observation(
     triggered_at_ms: u64,

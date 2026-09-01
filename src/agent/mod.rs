@@ -56,7 +56,7 @@ pub type ProgressCallback = Arc<
 mod agent_builder;
 mod agent_cache;
 mod agent_config;
-mod agent_engine;
+mod engine;
 mod agent_lifecycle;
 mod agent_setup;
 

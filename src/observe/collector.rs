@@ -1,6 +1,6 @@
 //! Per-turn metrics collector.
 //!
-//! Owned by a single turn in `agent_engine`. Explicitly closed via
+//! Owned by a single turn in `agent::engine`. Explicitly closed via
 //! [`TurnMetricsCollector::finish`] / [`fail`] / [`abort`]; if the turn
 //! future is dropped without a terminal call (true abort), `Drop` persists an
 //! `aborted` record best-effort.
