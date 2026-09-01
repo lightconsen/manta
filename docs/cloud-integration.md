@@ -32,7 +32,7 @@
 
 ```
 引擎 Sign in（sidebar 顶部按钮，popup 打开新 tab）
-  → GET /api/v1/cloud/login              （引擎 login_handler，校验 cloud.enabled）
+  → GET /api/v1/login              （引擎 login_handler，校验 cloud.enabled）
   → 302 → {console_url}/login?redirect=<engine 回调>
   → console 登录页列出 GitHub/Google/微信   （console 读取 ?redirect= 并透传）
   → 用户选 provider → /auth/{provider}?redirect=<engine 回调>

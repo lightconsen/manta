@@ -58,7 +58,7 @@ export async function cloudUsage(days = 30): Promise<CloudUsage> {
 
 /** The cloud OAuth login URL (engine route that 302s to the cloud). */
 export function cloudLoginUrl(provider = "github"): string {
-  return `${getGatewayBase()}/api/v1/cloud/login?provider=${provider}`;
+  return `${getGatewayBase()}/api/v1/login?provider=${provider}`;
 }
 
 /** Redirect the current tab to the cloud OAuth login (welcome-page flow). */

@@ -1075,7 +1075,7 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
     // the web SPA logs into Syscity Cloud and persists the session token.
     #[cfg(feature = "cloud")]
     let cloud_router = Router::new()
-        .route("/api/v1/cloud/login", get(super::handlers::cloud::login_handler))
+        .route("/api/v1/login", get(super::handlers::cloud::login_handler))
         .with_state(state.clone());
 
     // Public engine status is now exposed via the WS `status.get` method

@@ -21,7 +21,7 @@ pub struct ProviderQuery {
     pub provider: Option<String>,
 }
 
-/// GET /api/v1/cloud/login?provider=github|google|wechat → 302 to cloud OAuth.
+/// GET /api/v1/login?provider=github|google|wechat → 302 to cloud OAuth.
 pub async fn login_handler(
     State(state): State<Arc<GatewayState>>,
     Query(q): Query<ProviderQuery>,
