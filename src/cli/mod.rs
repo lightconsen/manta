@@ -23,7 +23,6 @@ mod cron;
 mod daemon;
 mod device;
 mod doctor;
-mod entity;
 mod eval;
 mod export;
 mod kb;
@@ -51,7 +50,6 @@ pub use cron::CronCommands;
 pub use device::DeviceCommands;
 pub use doctor::DoctorCommands;
 pub use doctor::{DiagnosticHint, HintSeverity};
-pub use entity::EntityCommands;
 pub use eval::EvalCommands;
 pub use export::ExportCommands;
 pub use kb::KbCommands;
@@ -87,12 +85,6 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
-    /// Entity management commands
-    Entity {
-        /// Entity subcommand
-        #[command(subcommand)]
-        command: EntityCommands,
-    },
     /// Evaluation commands (list suites, validate YAML, run evals)
     Eval {
         /// Eval subcommand
@@ -424,7 +416,6 @@ impl Cli {
     /// Execute the CLI command
     pub async fn execute(&self, config: &Config) -> Result<()> {
         match &self.command {
-            Commands::Entity { command } => entity::run_entity_command(command).await,
             Commands::Eval { command } => command.run(config).await,
             Commands::Export { command } => export::run_export_command(command).await,
             Commands::Config { command } => match command {
