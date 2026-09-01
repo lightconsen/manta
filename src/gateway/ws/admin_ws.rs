@@ -177,6 +177,210 @@ pub(super) async fn handle_traces_get(req: &WsRequest, _state: &Arc<GatewayState
     )
 }
 
+// ── Cron ────────────────────────────────────────────────────────────────
+
+/// Access the cron scheduler, if it is running.
+async fn cron_scheduler(
+    state: &Arc<GatewayState>,
+) -> Result<std::sync::Arc<tokio::sync::Mutex<crate::cron::cron::CronScheduler>>, WsResponse> {
+    match state.scheduler.cron_scheduler.read().await.clone() {
+        Some(s) => Ok(s),
+        None => {
+            Err(WsResponse::err(&"req".to_string(), "UNAVAILABLE", "Cron scheduler not running"))
+        }
+    }
+}
+
+/// `cron.get` — one job (`{ id }`).
+pub(super) async fn handle_cron_get(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    let id = match parse_params::<serde_json::Value>(req) {
+        Ok(v) => v["id"].as_str().unwrap_or("").to_string(),
+        Err(res) => return res,
+    };
+    let sched = match cron_scheduler(state).await {
+        Ok(s) => s,
+        Err(res) => return res,
+    };
+    let guard = sched.lock().await;
+    match guard.get_job(&id).await {
+        Some(job) => WsResponse::ok(&req.id, serde_json::to_value(&job).unwrap_or_default()),
+        None => WsResponse::err(&req.id, "NOT_FOUND", "cron job not found"),
+    }
+}
+
+/// `cron.enable` / `cron.disable` — `{ id, enabled }`.
+pub(super) async fn handle_cron_set_enabled(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+    enabled: bool,
+) -> WsResponse {
+    let id = match parse_params::<serde_json::Value>(req) {
+        Ok(v) => v["id"].as_str().unwrap_or("").to_string(),
+        Err(res) => return res,
+    };
+    let sched = match cron_scheduler(state).await {
+        Ok(s) => s,
+        Err(res) => return res,
+    };
+    let guard = sched.lock().await;
+    match guard.set_job_enabled(&id, enabled).await {
+        Ok(()) => WsResponse::ok(
+            &req.id,
+            serde_json::json!({ "success": true, "id": id, "enabled": enabled }),
+        ),
+        Err(e) => WsResponse::err(&req.id, "NOT_FOUND", &e.to_string()),
+    }
+}
+
+/// `cron.run` — trigger a job immediately (`{ id }`).
+pub(super) async fn handle_cron_run(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    let id = match parse_params::<serde_json::Value>(req) {
+        Ok(v) => v["id"].as_str().unwrap_or("").to_string(),
+        Err(res) => return res,
+    };
+    let sched = match cron_scheduler(state).await {
+        Ok(s) => s,
+        Err(res) => return res,
+    };
+    let guard = sched.lock().await;
+    match guard.trigger_job(&id).await {
+        Ok(()) => WsResponse::ok(
+            &req.id,
+            serde_json::json!({ "success": true, "id": id, "triggered": true }),
+        ),
+        Err(e) => WsResponse::err(&req.id, "NOT_FOUND", &e.to_string()),
+    }
+}
+
+/// `cron.logs` — job state / last-run info (`{ id }`).
+pub(super) async fn handle_cron_logs(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    handle_cron_get(req, state).await
+}
+
+// ── Skills ──────────────────────────────────────────────────────────────
+
+/// `skills.get` — one skill (`{ name }`).
+pub(super) async fn handle_skills_get(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    let name = match parse_params::<serde_json::Value>(req) {
+        Ok(v) => v["name"].as_str().unwrap_or("").to_string(),
+        Err(res) => return res,
+    };
+    let sm = state.tools.skills_manager.read().await;
+    match sm.get_skill(&name).await {
+        Some(skill) => WsResponse::ok(&req.id, serde_json::to_value(&skill).unwrap_or_default()),
+        None => WsResponse::err(&req.id, "NOT_FOUND", "skill not found"),
+    }
+}
+
+/// `skills.enable` / `skills.disable` — `{ id, enabled }`.
+pub(super) async fn handle_skills_set_enabled(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+    enabled: bool,
+) -> WsResponse {
+    let id = match parse_params::<serde_json::Value>(req) {
+        Ok(v) => v["id"].as_str().unwrap_or("").to_string(),
+        Err(res) => return res,
+    };
+    let mut sm = state.tools.skills_manager.write().await;
+    match sm.set_skill_enabled(&id, enabled).await {
+        Ok(()) => WsResponse::ok(&req.id, serde_json::json!({ "success": true, "id": id })),
+        Err(e) => WsResponse::err(&req.id, "NOT_FOUND", &e.to_string()),
+    }
+}
+
+/// `skills.uninstall` — remove a skill (`{ name }`).
+pub(super) async fn handle_skills_uninstall(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    let name = match parse_params::<serde_json::Value>(req) {
+        Ok(v) => v["name"].as_str().unwrap_or("").to_string(),
+        Err(res) => return res,
+    };
+    let sm = state.tools.skills_manager.read().await;
+    match sm.uninstall_skill(&name).await {
+        Ok(_) => WsResponse::ok(&req.id, serde_json::json!({ "success": true })),
+        Err(e) => WsResponse::err(&req.id, "INTERNAL", &e.to_string()),
+    }
+}
+
+/// `skills.run` — activate a skill (`{ id }`).
+pub(super) async fn handle_skills_run(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    let id = match parse_params::<serde_json::Value>(req) {
+        Ok(v) => v["id"].as_str().unwrap_or("").to_string(),
+        Err(res) => return res,
+    };
+    let sm = state.tools.skills_manager.read().await;
+    match sm.activate_skill(&id).await {
+        Ok(_) => WsResponse::ok(&req.id, serde_json::json!({ "success": true, "id": id })),
+        Err(e) => WsResponse::err(&req.id, "NOT_FOUND", &e.to_string()),
+    }
+}
+
+// ── Providers ───────────────────────────────────────────────────────────
+
+/// `providers.health` — one provider's health (`{ id }`).
+pub(super) async fn handle_providers_health(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    let id = match parse_params::<serde_json::Value>(req) {
+        Ok(v) => v["id"].as_str().unwrap_or("").to_string(),
+        Err(res) => return res,
+    };
+    match state.infra.model_router.get_provider_health(&id).await {
+        Some(health) => WsResponse::ok(&req.id, serde_json::json!({ "id": id, "health": health })),
+        None => WsResponse::err(&req.id, "NOT_FOUND", "provider not found"),
+    }
+}
+
+/// `providers.check` — force a health check (`{ id }`).
+pub(super) async fn handle_providers_check(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    let id = match parse_params::<serde_json::Value>(req) {
+        Ok(v) => v["id"].as_str().unwrap_or("").to_string(),
+        Err(res) => return res,
+    };
+    match state.infra.model_router.check_provider_health(&id).await {
+        Ok(r) => WsResponse::ok(&req.id, serde_json::json!({ "id": id, "healthy": r })),
+        Err(e) => WsResponse::err(&req.id, "INTERNAL", &e.to_string()),
+    }
+}
+
+/// `providers.switch` — set the default model (`{ model }`).
+pub(super) async fn handle_providers_switch(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    let model = match parse_params::<serde_json::Value>(req) {
+        Ok(v) => v["model"].as_str().unwrap_or("").to_string(),
+        Err(res) => return res,
+    };
+    match state.infra.model_router.switch_default_model(&model).await {
+        Ok(()) => WsResponse::ok(&req.id, serde_json::json!({ "success": true, "model": model })),
+        Err(e) => WsResponse::err(&req.id, "INTERNAL", &e.to_string()),
+    }
+}
+
+// ── Status ──────────────────────────────────────────────────────────────
+
+/// `status.get` — engine status (agents, channels, version, cloud block).
+pub(super) async fn handle_status_get(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    let agents = state.agents.agents.read().await;
+    let channels = state.channels.channels.read().await;
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "agents": { "total": agents.len(), "busy": agents.values().filter(|a| a.busy.load(std::sync::atomic::Ordering::Acquire)).count() },
+            "channels": channels.len(),
+            "version": crate::VERSION,
+        }),
+    )
+}
+
 // ── Cloud ───────────────────────────────────────────────────────────────
 
 /// Build the cloud status block (mirrors `status_handler`'s cloud JSON).

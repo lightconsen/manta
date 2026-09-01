@@ -284,7 +284,12 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         | "plugins.search"
         | "providers.list"
         | "providers.usage"
-        | "traces.get" => Some(SCOPE_READ),
+        | "providers.health"
+        | "traces.get"
+        | "cron.get"
+        | "cron.logs"
+        | "skills.get"
+        | "status.get" => Some(SCOPE_READ),
         "sessions.create"
         | "sessions.delete"
         | "sessions.rename"
@@ -327,7 +332,16 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         | "plugins.reload"
         | "plugins.uninstall"
         | "providers.enable"
-        | "providers.disable" => Some(SCOPE_WRITE),
+        | "providers.disable"
+        | "providers.check"
+        | "providers.switch"
+        | "cron.enable"
+        | "cron.disable"
+        | "cron.run"
+        | "skills.enable"
+        | "skills.disable"
+        | "skills.uninstall"
+        | "skills.run" => Some(SCOPE_WRITE),
         "acp.spawn"
         | "acp.terminate"
         | "acp.message"
