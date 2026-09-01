@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from "react";
-import { apiFetch } from "@/lib/gatewayBase";
 import { getActiveTransport } from "@/SyscityWebSocketTransport";
 
 /** Latest release info (WS `update.status` / GET /api/v1/update/status). */
@@ -34,22 +33,14 @@ export function isTauri(): boolean {
 
 async function fetchStatus(): Promise<UpdateStatus> {
   const transport = getActiveTransport();
-  if (transport) {
-    return (await transport.getUpdateStatus()) as UpdateStatus;
-  }
-  const res = await apiFetch("/api/v1/update/status");
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return (await res.json()) as UpdateStatus;
+  if (!transport) throw new Error("gateway transport not ready");
+  return (await transport.getUpdateStatus()) as UpdateStatus;
 }
 
 async function fetchProgress(): Promise<UpdateProgress> {
   const transport = getActiveTransport();
-  if (transport) {
-    return (await transport.getUpdateProgress()) as UpdateProgress;
-  }
-  const res = await apiFetch("/api/v1/update/progress");
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return (await res.json()) as UpdateProgress;
+  if (!transport) throw new Error("gateway transport not ready");
+  return (await transport.getUpdateProgress()) as UpdateProgress;
 }
 
 /**
@@ -136,16 +127,8 @@ export function useUpdate() {
 
     try {
       const transport = getActiveTransport();
-      if (transport) {
-        await transport.triggerUpdate();
-      } else {
-        const res = await apiFetch("/api/v1/update", { method: "POST" });
-        if (!res.ok) {
-          const body = (await res.json().catch(() => null)) as { message?: string } | null;
-          setError(body?.message || `Update request failed (HTTP ${res.status}).`);
-          return;
-        }
-      }
+      if (!transport) throw new Error("gateway transport not ready");
+      await transport.triggerUpdate();
       setMessage("Downloading update…");
       setBusy(true);
       refreshProgress();

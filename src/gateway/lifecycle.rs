@@ -1066,10 +1066,6 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
             get(super::provider_usage_by_id_handler),
         )
         .route("/api/v1/models/default", get(super::get_default_model_handler))
-        // Online self-update (status / trigger / progress).
-        .route("/api/v1/update/status", get(super::update_status_handler))
-        .route("/api/v1/update", post(super::trigger_update_handler))
-        .route("/api/v1/update/progress", get(super::update_progress_handler))
         .route("/api/traces/:turn_id", get(super::trace_replay_handler))
         .layer(from_fn_with_state(state.clone(), super::middleware::auth_middleware));
 
