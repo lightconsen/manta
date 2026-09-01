@@ -23,7 +23,7 @@ Each record is tagged with the stable `agent_id` set at agent spawn (`TurnContex
 
 ### Failure Telemetry
 
-Record write failures increment `WRITE_FAILURES`, surfaced as the `syscity_observe_write_failures_total` counter at `/api/v1/metrics`. Observability is best-effort: a write failure never fails the turn.
+Record write failures increment `WRITE_FAILURES`, surfaced as the `syscity_observe_write_failures_total` counter at `/metrics`. Observability is best-effort: a write failure never fails the turn.
 
 ## CLI
 
@@ -87,4 +87,4 @@ pub trait TurnMetricsSink: Send + Sync {
 - 4096-byte truncation of free-text fields at persistence time
 - `syscity observe {stats,list,show,export,prune}` CLI with `--agent` filtering
 - Daemon-startup retention sweep (`observe.retention_days`) plus manual prune
-- `syscity_observe_write_failures_total` counter at `/api/v1/metrics`
+- `syscity_observe_write_failures_total` counter at `/metrics`
