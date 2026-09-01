@@ -22,7 +22,7 @@ pub(crate) async fn handle_memory_search(req: &WsRequest, state: &Arc<GatewaySta
                 &req.id,
                 serde_json::json!({ "query": body.query, "results": results, "count": results.len() }),
             ),
-            Err(e) => WsResponse::err(&req.id, "INTERNAL", &format!("Search failed: {}", e)),
+            Err(e) => WsResponse::err(&req.id, "INTERNAL", format!("Search failed: {}", e)),
         },
         None => WsResponse::err(&req.id, "UNAVAILABLE", "Vector memory service not enabled"),
     }
@@ -44,7 +44,7 @@ pub(crate) async fn handle_memory_add(req: &WsRequest, state: &Arc<GatewayState>
                 serde_json::json!({ "document_id": doc_id, "status": "added" }),
             ),
             Err(e) => {
-                WsResponse::err(&req.id, "INTERNAL", &format!("Failed to add document: {}", e))
+                WsResponse::err(&req.id, "INTERNAL", format!("Failed to add document: {}", e))
             }
         },
         None => WsResponse::err(&req.id, "UNAVAILABLE", "Vector memory service not enabled"),

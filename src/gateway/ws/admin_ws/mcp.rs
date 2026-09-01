@@ -42,11 +42,11 @@ pub(crate) async fn handle_mcp_call_tool(req: &WsRequest, state: &Arc<GatewaySta
                 .await
             {
                 Ok(result) => WsResponse::ok(&req.id, serde_json::json!({ "result": result })),
-                Err(e) => WsResponse::err(&req.id, "INTERNAL", &e.to_string()),
+                Err(e) => WsResponse::err(&req.id, "INTERNAL", e.to_string()),
             }
         }
         None => {
-            WsResponse::err(&req.id, "NOT_FOUND", &format!("MCP server '{}' not found", server_id))
+            WsResponse::err(&req.id, "NOT_FOUND", format!("MCP server '{}' not found", server_id))
         }
     }
 }
@@ -64,7 +64,7 @@ pub(crate) async fn handle_mcp_resources(req: &WsRequest, state: &Arc<GatewaySta
                 Ok(resources) => {
                     WsResponse::ok(&req.id, serde_json::json!({ "resources": resources }))
                 }
-                Err(e) => WsResponse::err(&req.id, "INTERNAL", &e.to_string()),
+                Err(e) => WsResponse::err(&req.id, "INTERNAL", e.to_string()),
             }
         }
         None => WsResponse::err(&req.id, "NOT_FOUND", "MCP server not connected"),

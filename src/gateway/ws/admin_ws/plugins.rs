@@ -14,7 +14,7 @@ pub(crate) async fn handle_plugins_reload_all(
 ) -> WsResponse {
     match state.infra.plugin_manager.initialize().await {
         Ok(_) => WsResponse::ok(&req.id, serde_json::json!({ "success": true })),
-        Err(e) => WsResponse::err(&req.id, "INTERNAL", &e.to_string()),
+        Err(e) => WsResponse::err(&req.id, "INTERNAL", e.to_string()),
     }
 }
 
@@ -40,7 +40,7 @@ pub(crate) async fn handle_plugins_sign(req: &WsRequest, _state: &Arc<GatewaySta
                 return WsResponse::err(
                     &req.id,
                     "BAD_REQUEST",
-                    &format!(
+                    format!(
                         "No signing key for plugin '{}'; submit secret_key in the request body",
                         p.name
                     ),
@@ -71,7 +71,7 @@ pub(crate) async fn handle_plugins_sign(req: &WsRequest, _state: &Arc<GatewaySta
             return WsResponse::err(
                 &req.id,
                 "NOT_FOUND",
-                &format!("Plugin '{}' not found at {:?}: {}", p.name, manifest_path, e),
+                format!("Plugin '{}' not found at {:?}: {}", p.name, manifest_path, e),
             );
         }
     };
@@ -79,15 +79,11 @@ pub(crate) async fn handle_plugins_sign(req: &WsRequest, _state: &Arc<GatewaySta
         match serde_json::from_str(&manifest_text) {
             Ok(m) => m,
             Err(e) => {
-                return WsResponse::err(
-                    &req.id,
-                    "BAD_REQUEST",
-                    &format!("Invalid manifest: {}", e),
-                );
+                return WsResponse::err(&req.id, "BAD_REQUEST", format!("Invalid manifest: {}", e));
             }
         };
     if let Err(e) = crate::plugins::verification::sign_manifest(&mut manifest, &signing_key) {
-        return WsResponse::err(&req.id, "INTERNAL", &format!("Failed to sign manifest: {}", e));
+        return WsResponse::err(&req.id, "INTERNAL", format!("Failed to sign manifest: {}", e));
     }
     if let Err(e) = tokio::fs::write(
         &manifest_path,
@@ -98,7 +94,7 @@ pub(crate) async fn handle_plugins_sign(req: &WsRequest, _state: &Arc<GatewaySta
         return WsResponse::err(
             &req.id,
             "INTERNAL",
-            &format!("Failed to write signed manifest: {}", e),
+            format!("Failed to write signed manifest: {}", e),
         );
     }
     WsResponse::ok(

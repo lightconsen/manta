@@ -35,7 +35,7 @@ pub(crate) async fn handle_providers_check(
     };
     match state.infra.model_router.check_provider_health(&id).await {
         Ok(r) => WsResponse::ok(&req.id, serde_json::json!({ "id": id, "healthy": r })),
-        Err(e) => WsResponse::err(&req.id, "INTERNAL", &e.to_string()),
+        Err(e) => WsResponse::err(&req.id, "INTERNAL", e.to_string()),
     }
 }
 
@@ -50,7 +50,7 @@ pub(crate) async fn handle_providers_switch(
     };
     match state.infra.model_router.switch_default_model(&model).await {
         Ok(()) => WsResponse::ok(&req.id, serde_json::json!({ "success": true, "model": model })),
-        Err(e) => WsResponse::err(&req.id, "INTERNAL", &e.to_string()),
+        Err(e) => WsResponse::err(&req.id, "INTERNAL", e.to_string()),
     }
 }
 

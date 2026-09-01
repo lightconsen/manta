@@ -14,7 +14,7 @@ async fn cron_scheduler(
     match state.scheduler.cron_scheduler.read().await.clone() {
         Some(s) => Ok(s),
         None => {
-            Err(WsResponse::err(&"req".to_string(), "UNAVAILABLE", "Cron scheduler not running"))
+            Err(WsResponse::err("req".to_string(), "UNAVAILABLE", "Cron scheduler not running"))
         }
     }
 }
@@ -56,7 +56,7 @@ pub(crate) async fn handle_cron_set_enabled(
             &req.id,
             serde_json::json!({ "success": true, "id": id, "enabled": enabled }),
         ),
-        Err(e) => WsResponse::err(&req.id, "NOT_FOUND", &e.to_string()),
+        Err(e) => WsResponse::err(&req.id, "NOT_FOUND", e.to_string()),
     }
 }
 
@@ -76,7 +76,7 @@ pub(crate) async fn handle_cron_run(req: &WsRequest, state: &Arc<GatewayState>) 
             &req.id,
             serde_json::json!({ "success": true, "id": id, "triggered": true }),
         ),
-        Err(e) => WsResponse::err(&req.id, "NOT_FOUND", &e.to_string()),
+        Err(e) => WsResponse::err(&req.id, "NOT_FOUND", e.to_string()),
     }
 }
 
@@ -108,7 +108,7 @@ pub(crate) async fn handle_cron_add(req: &WsRequest, state: &Arc<GatewayState>) 
             return WsResponse::err(
                 &req.id,
                 "INVALID_PARAMS",
-                &format!("Invalid cron expression: {}", e),
+                format!("Invalid cron expression: {}", e),
             );
         }
     };
@@ -129,7 +129,7 @@ pub(crate) async fn handle_cron_add(req: &WsRequest, state: &Arc<GatewayState>) 
             &req.id,
             serde_json::json!({ "success": true, "id": job_id, "name": p.name }),
         ),
-        Err(e) => WsResponse::err(&req.id, "INTERNAL", &format!("Failed to add job: {}", e)),
+        Err(e) => WsResponse::err(&req.id, "INTERNAL", format!("Failed to add job: {}", e)),
     }
 }
 
@@ -146,6 +146,6 @@ pub(crate) async fn handle_cron_remove(req: &WsRequest, state: &Arc<GatewayState
     let guard = sched.lock().await;
     match guard.remove_job(&id).await {
         Ok(()) => WsResponse::ok(&req.id, serde_json::json!({ "success": true, "id": id })),
-        Err(e) => WsResponse::err(&req.id, "NOT_FOUND", &e.to_string()),
+        Err(e) => WsResponse::err(&req.id, "NOT_FOUND", e.to_string()),
     }
 }

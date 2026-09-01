@@ -32,7 +32,7 @@ pub(crate) async fn handle_approvals_get(req: &WsRequest, state: &Arc<GatewaySta
         Some(approval) => {
             WsResponse::ok(&req.id, serde_json::to_value(&approval).unwrap_or_default())
         }
-        None => WsResponse::err(&req.id, "NOT_FOUND", &format!("Approval '{}' not found", id)),
+        None => WsResponse::err(&req.id, "NOT_FOUND", format!("Approval '{}' not found", id)),
     }
 }
 
@@ -53,7 +53,7 @@ pub(crate) async fn handle_approvals_approve(
     {
         WsResponse::ok(&req.id, serde_json::json!({ "id": id, "status": "approved" }))
     } else {
-        WsResponse::err(&req.id, "NOT_FOUND", &format!("Approval '{}' not found", id))
+        WsResponse::err(&req.id, "NOT_FOUND", format!("Approval '{}' not found", id))
     }
 }
 
@@ -84,6 +84,6 @@ pub(crate) async fn handle_approvals_deny(
             serde_json::json!({ "id": p.id, "status": "denied", "reason": reason }),
         )
     } else {
-        WsResponse::err(&req.id, "NOT_FOUND", &format!("Approval '{}' not found", p.id))
+        WsResponse::err(&req.id, "NOT_FOUND", format!("Approval '{}' not found", p.id))
     }
 }

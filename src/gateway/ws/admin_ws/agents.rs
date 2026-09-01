@@ -34,7 +34,7 @@ pub(crate) async fn handle_agents_create(req: &WsRequest, state: &Arc<GatewaySta
                 },
             }),
         ),
-        Err(e) => WsResponse::err(&req.id, "INTERNAL", &format!("Failed to create agent: {}", e)),
+        Err(e) => WsResponse::err(&req.id, "INTERNAL", format!("Failed to create agent: {}", e)),
     }
 }
 

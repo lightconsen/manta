@@ -242,10 +242,9 @@ async fn run_diagnostics(filter_provider: Option<&str>, verbose: bool) -> Result
 
         // Health check endpoint
         let health_body: Option<JsonValue> =
-            match ws::call("providers.health", serde_json::json!({ "id": id })).await {
-                Ok(payload) => Some(payload),
-                Err(_) => None,
-            };
+            ws::call("providers.health", serde_json::json!({ "id": id }))
+                .await
+                .ok();
 
         let circuit_state = health_body
             .as_ref()
@@ -262,10 +261,9 @@ async fn run_diagnostics(filter_provider: Option<&str>, verbose: bool) -> Result
 
         // Usage status
         let usage_body: Option<JsonValue> =
-            match ws::call("providers.usage", serde_json::json!({ "id": id })).await {
-                Ok(payload) => Some(payload),
-                Err(_) => None,
-            };
+            ws::call("providers.usage", serde_json::json!({ "id": id }))
+                .await
+                .ok();
 
         let usage_status = usage_body
             .as_ref()

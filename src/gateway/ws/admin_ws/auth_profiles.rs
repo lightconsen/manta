@@ -30,7 +30,7 @@ pub(crate) async fn handle_auth_profiles_get(
         None => WsResponse::err(
             &req.id,
             "NOT_FOUND",
-            &format!("No auth profile found for provider '{}'", id),
+            format!("No auth profile found for provider '{}'", id),
         ),
     }
 }
@@ -54,7 +54,7 @@ pub(crate) async fn handle_auth_profiles_rotate(
             }),
         ),
         Err(e) => {
-            WsResponse::err(&req.id, "BAD_REQUEST", &format!("Failed to rotate auth key: {}", e))
+            WsResponse::err(&req.id, "BAD_REQUEST", format!("Failed to rotate auth key: {}", e))
         }
     }
 }

@@ -33,7 +33,7 @@ pub(crate) async fn handle_skills_set_enabled(
     let mut sm = state.tools.skills_manager.write().await;
     match sm.set_skill_enabled(&id, enabled).await {
         Ok(()) => WsResponse::ok(&req.id, serde_json::json!({ "success": true, "id": id })),
-        Err(e) => WsResponse::err(&req.id, "NOT_FOUND", &e.to_string()),
+        Err(e) => WsResponse::err(&req.id, "NOT_FOUND", e.to_string()),
     }
 }
 
@@ -49,7 +49,7 @@ pub(crate) async fn handle_skills_uninstall(
     let sm = state.tools.skills_manager.read().await;
     match sm.uninstall_skill(&name).await {
         Ok(_) => WsResponse::ok(&req.id, serde_json::json!({ "success": true })),
-        Err(e) => WsResponse::err(&req.id, "INTERNAL", &e.to_string()),
+        Err(e) => WsResponse::err(&req.id, "INTERNAL", e.to_string()),
     }
 }
 
@@ -62,6 +62,6 @@ pub(crate) async fn handle_skills_run(req: &WsRequest, state: &Arc<GatewayState>
     let sm = state.tools.skills_manager.read().await;
     match sm.activate_skill(&id).await {
         Ok(_) => WsResponse::ok(&req.id, serde_json::json!({ "success": true, "id": id })),
-        Err(e) => WsResponse::err(&req.id, "NOT_FOUND", &e.to_string()),
+        Err(e) => WsResponse::err(&req.id, "NOT_FOUND", e.to_string()),
     }
 }

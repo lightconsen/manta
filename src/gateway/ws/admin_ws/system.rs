@@ -64,7 +64,7 @@ pub(crate) async fn handle_channels_enable(
         let mut config_guard = state.config.write().await;
         let config = Arc::make_mut(&mut config_guard);
         let Some(channel_config) = config.channels.get_mut(&name) else {
-            return WsResponse::err(&req.id, "NOT_FOUND", &format!("Channel '{}' not found", name));
+            return WsResponse::err(&req.id, "NOT_FOUND", format!("Channel '{}' not found", name));
         };
         if channel_config.enabled {
             return WsResponse::ok(
@@ -104,7 +104,7 @@ pub(crate) async fn handle_channels_disable(
         let mut config_guard = state.config.write().await;
         let config = Arc::make_mut(&mut config_guard);
         let Some(channel_config) = config.channels.get_mut(&name) else {
-            return WsResponse::err(&req.id, "NOT_FOUND", &format!("Channel '{}' not found", name));
+            return WsResponse::err(&req.id, "NOT_FOUND", format!("Channel '{}' not found", name));
         };
         if !channel_config.enabled {
             return WsResponse::ok(
