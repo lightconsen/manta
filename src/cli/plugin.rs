@@ -3,11 +3,10 @@
 use std::path::PathBuf;
 
 use clap::Subcommand;
+use serde_json::json;
 
+use crate::cli::ws;
 use crate::error::{Result, SyscityError};
-
-/// Default daemon base URL.
-const DAEMON_URL: &str = "http://127.0.0.1:18080";
 
 #[derive(Debug, Subcommand)]
 pub enum PluginCommands {
@@ -80,37 +79,23 @@ pub enum PluginCommands {
     },
 }
 
-/// Run plugin commands
+/// Run plugin commands (over WebSocket).
 pub async fn run_plugin_command(command: &PluginCommands) -> Result<()> {
-    let client = reqwest::Client::new();
-
     match command {
         PluginCommands::List { loaded: _, verbose } => {
-            let url = format!("{}/api/v1/plugins", DAEMON_URL);
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    let body = resp.text().await.unwrap_or_default();
-                    if *verbose {
-                        println!("{}", body);
-                    } else if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
-                        let empty = vec![];
-                        let plugins = json["plugins"].as_array().unwrap_or(&empty);
-                        println!("Plugins ({}):", plugins.len());
-                        for p in plugins {
-                            let id = p["id"].as_str().unwrap_or("?");
-                            let name = p["name"].as_str().unwrap_or("?");
-                            let enabled = p["enabled"].as_bool().unwrap_or(false);
-                            let status = if enabled { "enabled" } else { "disabled" };
-                            println!("  {} ({}) [{}]", name, id, status);
-                        }
-                    } else {
-                        println!("{}", body);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Failed to reach daemon at {}: {}", DAEMON_URL, e);
-                    eprintln!("Is the daemon running? Try: syscity start");
-                    return Err(SyscityError::Internal(e.to_string()));
+            let payload = ws::call("plugins.list", json!({})).await?;
+            if *verbose {
+                println!("{}", payload);
+            } else {
+                let empty = vec![];
+                let plugins = payload["plugins"].as_array().unwrap_or(&empty);
+                println!("Plugins ({}):", plugins.len());
+                for p in plugins {
+                    let id = p["id"].as_str().unwrap_or("?");
+                    let name = p["name"].as_str().unwrap_or("?");
+                    let enabled = p["enabled"].as_bool().unwrap_or(false);
+                    let status = if enabled { "enabled" } else { "disabled" };
+                    println!("  {} ({}) [{}]", name, id, status);
                 }
             }
         }
@@ -151,184 +136,105 @@ pub async fn run_plugin_command(command: &PluginCommands) -> Result<()> {
                 println!("Uninstall plugin '{}'? Use --force to confirm.", name);
                 return Ok(());
             }
-            let url = format!("{}/api/v1/plugins/{}/unload", DAEMON_URL, name);
-            match client.delete(&url).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    if status.is_success() {
-                        println!("Plugin '{}' unloaded from daemon.", name);
-                        println!(
-                            "To remove files, delete {:?}",
-                            crate::dirs::config_dir().join("plugins").join(name)
-                        );
-                    } else {
-                        let text = resp.text().await.unwrap_or_default();
-                        eprintln!("Failed to unload plugin ({}): {}", status, text);
-                    }
+            match ws::call("plugins.unload", json!({ "id": name })).await {
+                Ok(_) => {
+                    println!("Plugin '{}' unloaded from daemon.", name);
+                    println!(
+                        "To remove files, delete {:?}",
+                        crate::dirs::config_dir().join("plugins").join(name)
+                    );
                 }
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    eprintln!("Failed to unload plugin: {}", e);
+                    return Err(e);
                 }
             }
         }
 
         PluginCommands::Enable { name } => {
-            let url = format!("{}/api/v1/plugins/{}/enable", DAEMON_URL, name);
-            match client.post(&url).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let text = resp.text().await.unwrap_or_default();
-                    if status.is_success() {
-                        println!("Plugin '{}' enabled.", name);
-                    } else {
-                        eprintln!("Failed to enable plugin ({}): {}", status, text);
-                    }
-                }
+            match ws::call("plugins.enable", json!({ "id": name })).await {
+                Ok(_) => println!("Plugin '{}' enabled.", name),
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    eprintln!("Failed to enable plugin: {}", e);
+                    return Err(e);
                 }
             }
         }
 
         PluginCommands::Disable { name } => {
-            let url = format!("{}/api/v1/plugins/{}/disable", DAEMON_URL, name);
-            match client.post(&url).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let text = resp.text().await.unwrap_or_default();
-                    if status.is_success() {
-                        println!("Plugin '{}' disabled.", name);
-                    } else {
-                        eprintln!("Failed to disable plugin ({}): {}", status, text);
-                    }
-                }
+            match ws::call("plugins.disable", json!({ "id": name })).await {
+                Ok(_) => println!("Plugin '{}' disabled.", name),
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    eprintln!("Failed to disable plugin: {}", e);
+                    return Err(e);
                 }
             }
         }
 
         PluginCommands::Info { name } => {
-            // Retrieve full list and filter by id/name.
-            let url = format!("{}/api/v1/plugins", DAEMON_URL);
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    let body = resp.text().await.unwrap_or_default();
-                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
-                        let empty = vec![];
-                        let plugins = json["plugins"].as_array().unwrap_or(&empty);
-                        let found = plugins.iter().find(|p| {
-                            p["id"].as_str() == Some(name.as_str())
-                                || p["name"].as_str() == Some(name.as_str())
-                        });
-                        match found {
-                            Some(p) => {
-                                println!("{}", serde_json::to_string_pretty(p).unwrap_or_default())
-                            }
-                            None => {
-                                eprintln!("Plugin '{}' not found", name);
-                            }
-                        }
-                    } else {
-                        println!("{}", body);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
-                }
+            let payload = ws::call("plugins.list", json!({})).await?;
+            let empty = vec![];
+            let plugins = payload["plugins"].as_array().unwrap_or(&empty);
+            let found = plugins.iter().find(|p| {
+                p["id"].as_str() == Some(name.as_str()) || p["name"].as_str() == Some(name.as_str())
+            });
+            match found {
+                Some(p) => println!("{}", serde_json::to_string_pretty(p).unwrap_or_default()),
+                None => eprintln!("Plugin '{}' not found", name),
             }
         }
 
-        PluginCommands::Reload => {
-            let url = format!("{}/api/v1/plugins/reload", DAEMON_URL);
-            match client.post(&url).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let text = resp.text().await.unwrap_or_default();
-                    if status.is_success() {
-                        println!("Plugins reloaded successfully.");
-                        if !text.is_empty() {
-                            println!("{}", text);
-                        }
-                    } else {
-                        eprintln!("Reload failed ({}): {}", status, text);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+        PluginCommands::Reload => match ws::call("plugins.reload_all", json!({})).await {
+            Ok(payload) => {
+                println!("Plugins reloaded successfully.");
+                if payload.is_object() && !payload["message"].is_null() {
+                    println!("{}", payload["message"].as_str().unwrap_or(""));
                 }
             }
-        }
+            Err(e) => {
+                eprintln!("Reload failed: {}", e);
+                return Err(e);
+            }
+        },
 
         PluginCommands::RegistryInstall { name, registry } => {
-            let url = format!("{}/api/v1/plugins/install", DAEMON_URL);
-            let body = serde_json::json!({
-                "name": name,
-                "registry": registry,
-            });
-            match client.post(&url).json(&body).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let text = resp.text().await.unwrap_or_default();
-                    if status.is_success() {
-                        println!("Plugin '{}' installed successfully.", name);
-                        if !text.is_empty() && text != "null" {
-                            println!("{}", text);
-                        }
-                    } else {
-                        eprintln!("Failed to install plugin ({}): {}", status, text);
+            let body = json!({ "name": name, "registry": registry });
+            match ws::call("plugins.install", body).await {
+                Ok(payload) => {
+                    println!("Plugin '{}' installed successfully.", name);
+                    if !payload.is_null() && !payload["message"].is_null() {
+                        println!("{}", payload["message"].as_str().unwrap_or(""));
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    eprintln!("Failed to install plugin: {}", e);
+                    return Err(e);
                 }
             }
         }
 
         PluginCommands::Search { query, registry } => {
-            let registry_param = registry
-                .as_ref()
-                .map(|r| format!("&registry={}", r))
-                .unwrap_or_default();
-            let url = format!("{}/api/v1/plugins/search?q={}{}", DAEMON_URL, query, registry_param);
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let text = resp.text().await.unwrap_or_default();
-                    if status.is_success() {
-                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                            let empty = vec![];
-                            let plugins = json["results"].as_array().unwrap_or(&empty);
-                            println!("Search results for '{}' ({}):", query, plugins.len());
-                            for p in plugins {
-                                let id = p["id"].as_str().unwrap_or("?");
-                                let name = p["name"].as_str().unwrap_or("?");
-                                let version = p["version"].as_str().unwrap_or("?");
-                                let desc = p["description"].as_str().unwrap_or("");
-                                println!("  {} ({}) v{} - {}", name, id, version, desc);
-                            }
-                        } else {
-                            println!("{}", text);
-                        }
-                    } else {
-                        eprintln!("Search failed ({}): {}", status, text);
+            match ws::call("plugins.search", json!({ "q": query, "registry": registry })).await {
+                Ok(payload) => {
+                    let empty = vec![];
+                    let plugins = payload["results"].as_array().unwrap_or(&empty);
+                    println!("Search results for '{}' ({}):", query, plugins.len());
+                    for p in plugins {
+                        let id = p["id"].as_str().unwrap_or("?");
+                        let name = p["name"].as_str().unwrap_or("?");
+                        let version = p["version"].as_str().unwrap_or("?");
+                        let desc = p["description"].as_str().unwrap_or("");
+                        println!("  {} ({}) v{} - {}", name, id, version, desc);
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    eprintln!("Search failed: {}", e);
+                    return Err(e);
                 }
             }
         }
 
         PluginCommands::Sign { name, key_file } => {
-            let url = format!("{}/api/v1/plugins/sign", DAEMON_URL);
             let key_content = match tokio::fs::read_to_string(key_file).await {
                 Ok(c) => c.trim().to_string(),
                 Err(e) => {
@@ -339,26 +245,17 @@ pub async fn run_plugin_command(command: &PluginCommands) -> Result<()> {
                     )));
                 }
             };
-            let body = serde_json::json!({
-                "name": name,
-                "secret_key": key_content,
-            });
-            match client.post(&url).json(&body).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let text = resp.text().await.unwrap_or_default();
-                    if status.is_success() {
-                        println!("Plugin '{}' signed successfully.", name);
-                        if !text.is_empty() && text != "null" {
-                            println!("{}", text);
-                        }
-                    } else {
-                        eprintln!("Failed to sign plugin ({}): {}", status, text);
+            let body = json!({ "name": name, "secret_key": key_content });
+            match ws::call("plugins.sign", body).await {
+                Ok(payload) => {
+                    println!("Plugin '{}' signed successfully.", name);
+                    if !payload.is_null() && !payload["message"].is_null() {
+                        println!("{}", payload["message"].as_str().unwrap_or(""));
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    eprintln!("Failed to sign plugin: {}", e);
+                    return Err(e);
                 }
             }
         }

@@ -38,6 +38,7 @@ mod session;
 mod setup;
 mod skill;
 mod update;
+mod ws;
 
 pub use admin::AdminCommands;
 pub use agent::AgentCommands;

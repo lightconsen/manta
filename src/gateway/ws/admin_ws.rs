@@ -318,6 +318,110 @@ pub(super) async fn handle_skills_run(req: &WsRequest, state: &Arc<GatewayState>
     }
 }
 
+/// `plugins.reload_all` — re-initialize the plugin manager (reload all).
+pub(super) async fn handle_plugins_reload_all(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    match state.infra.plugin_manager.initialize().await {
+        Ok(_) => WsResponse::ok(&req.id, serde_json::json!({ "success": true })),
+        Err(e) => WsResponse::err(&req.id, "INTERNAL", &e.to_string()),
+    }
+}
+
+/// `plugins.sign` — sign a plugin manifest with an ed25519 key.
+pub(super) async fn handle_plugins_sign(req: &WsRequest, _state: &Arc<GatewayState>) -> WsResponse {
+    #[derive(Deserialize)]
+    struct Params {
+        name: String,
+        secret_key: String,
+    }
+    let p: Params = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+
+    let signing_key = if p.secret_key.is_empty() {
+        match crate::secrets::route_store("plugin")
+            .get(&crate::secrets::SecretId::new("plugin", &p.name, "secret_key"))
+            .await
+        {
+            Ok(Some(key)) => key,
+            _ => {
+                return WsResponse::err(
+                    &req.id,
+                    "BAD_REQUEST",
+                    &format!(
+                        "No signing key for plugin '{}'; submit secret_key in the request body",
+                        p.name
+                    ),
+                );
+            }
+        }
+    } else {
+        if let Err(e) = crate::secrets::route_store("plugin")
+            .set(
+                &crate::secrets::SecretId::new("plugin", &p.name, "secret_key"),
+                &p.secret_key,
+                crate::secrets::SecretOrigin::UserEntered,
+            )
+            .await
+        {
+            eprintln!("Failed to store plugin secret_key for '{}' ({:?})", p.name, e);
+        }
+        p.secret_key.clone()
+    };
+
+    let manifest_path = crate::dirs::config_dir()
+        .join("plugins")
+        .join(&p.name)
+        .join("plugin.json");
+    let manifest_text = match tokio::fs::read_to_string(&manifest_path).await {
+        Ok(t) => t,
+        Err(e) => {
+            return WsResponse::err(
+                &req.id,
+                "NOT_FOUND",
+                &format!("Plugin '{}' not found at {:?}: {}", p.name, manifest_path, e),
+            );
+        }
+    };
+    let mut manifest: crate::plugins::manifest::PluginManifest =
+        match serde_json::from_str(&manifest_text) {
+            Ok(m) => m,
+            Err(e) => {
+                return WsResponse::err(
+                    &req.id,
+                    "BAD_REQUEST",
+                    &format!("Invalid manifest: {}", e),
+                );
+            }
+        };
+    if let Err(e) = crate::plugins::verification::sign_manifest(&mut manifest, &signing_key) {
+        return WsResponse::err(&req.id, "INTERNAL", &format!("Failed to sign manifest: {}", e));
+    }
+    if let Err(e) = tokio::fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&manifest).unwrap_or_default(),
+    )
+    .await
+    {
+        return WsResponse::err(
+            &req.id,
+            "INTERNAL",
+            &format!("Failed to write signed manifest: {}", e),
+        );
+    }
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "success": true,
+            "message": format!("Plugin '{}' signed successfully", p.name),
+            "signer_public_key": manifest.signer_public_key,
+        }),
+    )
+}
+
 // ── Providers ───────────────────────────────────────────────────────────
 
 /// `providers.health` — one provider's health (`{ id }`).
