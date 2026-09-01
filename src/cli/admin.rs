@@ -128,7 +128,8 @@ pub async fn run_admin_command(command: &AdminCommands) -> Result<()> {
             // Send to an existing session over WS `chat.send`. The provider /
             // model overrides are not part of the WS surface, so they are
             // accepted for CLI compatibility but not forwarded.
-            match ws::call("chat.send", json!({ "message": message, "session_id": session_id })).await
+            match ws::call("chat.send", json!({ "message": message, "session_id": session_id }))
+                .await
             {
                 Ok(payload) => {
                     println!("{}", serde_json::to_string_pretty(&payload).unwrap_or_default());

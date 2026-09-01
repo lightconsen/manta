@@ -124,7 +124,9 @@ pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
                 let payload = ws::call("device.pairing.pending", json!({})).await?;
                 let requests = payload.get("pending").and_then(|r| r.as_array());
                 match requests {
-                    Some(requests) if requests.is_empty() => println!("No pending pairing requests."),
+                    Some(requests) if requests.is_empty() => {
+                        println!("No pending pairing requests.")
+                    }
                     Some(requests) => {
                         println!("Pending Pairing Requests:");
                         println!("{:<12} {:<20} {:<20} Created", "Code", "Device ID", "Name");
@@ -134,8 +136,12 @@ pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
                                 "{:<12} {:<20} {:<20} {}",
                                 req.get("code").and_then(|c| c.as_str()).unwrap_or("-"),
                                 req.get("device_id").and_then(|c| c.as_str()).unwrap_or("-"),
-                                req.get("display_name").and_then(|c| c.as_str()).unwrap_or("-"),
-                                req.get("created_at").and_then(|c| c.as_str()).unwrap_or("-"),
+                                req.get("display_name")
+                                    .and_then(|c| c.as_str())
+                                    .unwrap_or("-"),
+                                req.get("created_at")
+                                    .and_then(|c| c.as_str())
+                                    .unwrap_or("-"),
                             );
                         }
                     }
@@ -143,7 +149,11 @@ pub async fn run_security_command(command: &SecurityCommands) -> Result<()> {
                 }
                 Ok(())
             }
-            PairingCommands::Approve { channel: _channel, code, as_admin: _as_admin } => {
+            PairingCommands::Approve {
+                channel: _channel,
+                code,
+                as_admin: _as_admin,
+            } => {
                 match ws::call("device.pairing.approve", json!({ "code": code })).await {
                     Ok(_) => println!("✅ Approved pairing request {}", code),
                     Err(e) => {
