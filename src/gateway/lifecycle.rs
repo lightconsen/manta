@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use axum::{
     middleware::{from_fn, from_fn_with_state},
-    routing::{delete, get, post},
+    routing::{get, post},
     Router,
 };
 use tokio::net::TcpListener;
@@ -1011,25 +1011,6 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
         .route("/api/v1/device/pairing/revoke", post(super::revoke_device_handler))
         .route("/api/v1/device/pairing/qr/:code", get(super::device_qr_handler))
         .route("/api/v1/device/pairing/setup/:setup_code", get(super::setup_device_handler))
-        .route("/api/v1/mcp/servers", get(super::list_mcp_servers_handler))
-        .route(
-            "/api/v1/mcp/servers/:server_id/connect",
-            post(super::connect_mcp_server_handler),
-        )
-        .route(
-            "/api/v1/mcp/servers/:server_id/auth/status",
-            get(super::mcp_auth_status_handler),
-        )
-        .route("/api/v1/mcp/servers/:server_id", delete(super::disconnect_mcp_server_handler))
-        .route("/api/v1/mcp/servers/:server_id/tools", get(super::list_mcp_tools_handler))
-        .route(
-            "/api/v1/mcp/servers/:server_id/tools/:tool_name/call",
-            post(super::call_mcp_tool_handler),
-        )
-        .route(
-            "/api/v1/mcp/servers/:server_id/resources",
-            get(super::list_mcp_resources_handler).post(super::read_mcp_resource_handler),
-        )
         // (Providers are WS-only now — syscity provider ... drives them via
         // the admin WS methods in ws/admin_ws.rs.)
         .layer(from_fn_with_state(state.clone(), super::middleware::auth_middleware));
@@ -1125,20 +1106,14 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
         .route("/api/v1/cloud/usage", get(super::handlers::cloud::usage_handler))
         .with_state(state.clone());
 
-    // Public engine status — always present in both builds and deliberately
-    // NOT behind the trusted-proxy / auth layers (like the webhook router),
-    // so a health-style check stays reachable from direct localhost.
-    let status_router = Router::new()
-        .route("/api/v1/status", get(super::status_handler))
-        .with_state(state.clone());
+    // Public engine status is now exposed via the WS `status.get` method
+    // (ws/admin_ws.rs) — the REST endpoint was removed.
 
     // Merge all routers and apply global CORS
     let app = frontend_router
         .merge(public_router)
         .merge(admin_router)
         .merge(ws_router);
-
-    let app = app.merge(status_router);
 
     #[cfg(feature = "cloud")]
     let app = app.merge(cloud_router);

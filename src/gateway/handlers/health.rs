@@ -542,49 +542,6 @@ pub async fn build_health_report(state: &Arc<GatewayState>) -> HealthReport {
     }
 }
 
-pub async fn status_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
-    let agents = state.agents.agents.read().await;
-    let channels = state.channels.channels.read().await;
-
-    // The cloud block is always present so the web can ask "is there a cloud
-    // login?" with a single request: null in default (non-cloud) builds, and
-    // `{ enabled, logged_in, user }` in cloud builds (enabled reflects the
-    // runtime config, which the operator may set to false).
-    #[cfg(feature = "cloud")]
-    let cloud = {
-        let cfg = { state.config.read().await.cloud.clone() };
-        if !cfg.enabled {
-            serde_json::json!({ "enabled": false, "logged_in": false, "user": null })
-        } else {
-            let logged_in = crate::cloud::session::logged_in().await;
-            let mut user = None;
-            if logged_in {
-                if let Some(token) = crate::cloud::session::get_token().await {
-                    if let Ok(Some(u)) = crate::cloud::client::CloudClient::new(&cfg, token)
-                        .me()
-                        .await
-                    {
-                        user = Some(u);
-                    }
-                }
-            }
-            serde_json::json!({ "enabled": true, "logged_in": logged_in, "user": user })
-        }
-    };
-    #[cfg(not(feature = "cloud"))]
-    let cloud = serde_json::json!(null);
-
-    Json(serde_json::json!({
-        "agents": {
-            "total": agents.len(),
-            "busy": agents.values().filter(|a| a.busy.load(std::sync::atomic::Ordering::Acquire)).count(),
-        },
-        "channels": channels.len(),
-        "version": crate::VERSION,
-        "cloud": cloud,
-    }))
-}
-
 pub async fn repair_status_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     use std::sync::atomic::Ordering;
     let last_cycle = state
