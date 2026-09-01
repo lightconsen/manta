@@ -142,23 +142,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_build_set_cookie() {
-        let config = SessionCookieConfig::default();
-        let cookie = build_set_cookie(&config, "test_token");
-        assert!(cookie.contains("syscity_session=test_token"));
-        assert!(cookie.contains("HttpOnly"));
-        assert!(cookie.contains("Secure"));
-        assert!(cookie.contains("SameSite=lax"));
-    }
-
-    #[test]
-    fn test_build_clear_cookie() {
-        let config = SessionCookieConfig::default();
-        let cookie = build_clear_cookie(&config);
-        assert!(cookie.contains("Max-Age=0"));
-    }
-
-    #[test]
     fn test_generate_csp_nonce() {
         let nonce1 = generate_csp_nonce();
         let nonce2 = generate_csp_nonce();
@@ -199,26 +182,6 @@ mod tests {
     }
 
     #[test]
-    fn test_build_set_cookie_with_domain() {
-        let config = SessionCookieConfig {
-            domain: Some("example.com".to_string()),
-            ..Default::default()
-        };
-        let cookie = build_set_cookie(&config, "token");
-        assert!(cookie.contains("Domain=example.com"));
-    }
-
-    #[test]
-    fn test_build_set_cookie_without_secure() {
-        let config = SessionCookieConfig {
-            secure: false,
-            ..Default::default()
-        };
-        let cookie = build_set_cookie(&config, "token");
-        assert!(!cookie.contains("Secure"));
-    }
-
-    #[test]
     fn test_extract_session_cookie_single() {
         let req = Request::builder()
             .header(header::COOKIE, "syscity_session=abc123")
@@ -256,47 +219,11 @@ mod tests {
     }
 
     #[test]
-    fn test_oauth_config_default() {
-        let config = OAuthConfig::default();
-        assert!(!config.enabled);
-        assert!(config.github.is_none());
-        assert!(config.google.is_none());
-    }
-
-    #[test]
-    fn test_oauth_config_serde() {
-        let config = OAuthConfig {
-            enabled: true,
-            github: Some(OAuthProviderConfig {
-                client_id: "id".to_string(),
-                client_secret: "secret".to_string(),
-                auth_url: None,
-                token_url: None,
-                redirect_uri: "http://localhost/callback".to_string(),
-                scopes: vec!["read:user".to_string()],
-            }),
-            google: None,
-        };
-        let json = serde_json::to_string(&config).unwrap();
-        assert!(json.contains("enabled"));
-        let restored: OAuthConfig = serde_json::from_str(&json).unwrap();
-        assert!(restored.enabled);
-        assert!(restored.github.is_some());
-    }
-
-    #[test]
-    fn test_oauth_user_profile_serde() {
-        let profile = OAuthUserProfile {
-            provider_user_id: "123".to_string(),
-            provider: "github".to_string(),
-            email: Some("test@example.com".to_string()),
-            name: Some("Test".to_string()),
-            avatar_url: Some("https://example.com/avatar.png".to_string()),
-        };
-        let json = serde_json::to_string(&profile).unwrap();
-        let restored: OAuthUserProfile = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored.provider_user_id, "123");
-        assert_eq!(restored.email, Some("test@example.com".to_string()));
+    fn test_extract_session_cookie_no_header_noop() {
+        // The session-cookie path is kept only for rate-limit identification;
+        // no code creates cookies anymore, so extraction always yields None.
+        let req = Request::builder().body(Body::empty()).unwrap();
+        assert_eq!(extract_session_cookie(&req, "syscity_session"), None);
     }
 
     #[test]

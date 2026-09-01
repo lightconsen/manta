@@ -353,15 +353,6 @@ fn validate_auth_passes_when_security_disabled() {
     let mut config = GatewayConfig::default();
     config.security.enabled = false;
     config.security.shared_token = Some("test-token".into());
-    config.security.oauth.enabled = true;
-    config.security.oauth.github = Some(crate::gateway::auth::OAuthProviderConfig {
-        client_id: "abc".into(),
-        client_secret: "secret".into(),
-        auth_url: None,
-        token_url: None,
-        redirect_uri: "http://localhost/callback".into(),
-        scopes: vec!["user:email".into()],
-    });
     // auth_mode is None by default — should NOT fail
     assert!(super::validate_auth_config(&config).is_ok());
 }
@@ -371,48 +362,18 @@ fn validate_auth_passes_when_only_token_configured() {
     let mut config = GatewayConfig::default();
     config.security.auth_required = true;
     config.security.shared_token = Some("test-token".into());
-    config.security.oauth.enabled = false;
     config.security.auth_mode = AuthMode::None;
-    // Only token, no OAuth — should warn but not fail
+    // Only token — should warn but not fail
     assert!(super::validate_auth_config(&config).is_ok());
 }
 
 #[test]
-fn validate_auth_fails_when_both_token_and_oauth_configured() {
+fn validate_auth_passes_when_token_mode_explicit() {
     let mut config = GatewayConfig::default();
     config.security.enabled = true;
     config.security.auth_required = true;
     config.security.shared_token = Some("test-token".into());
-    config.security.oauth.enabled = true;
-    config.security.oauth.github = Some(crate::gateway::auth::OAuthProviderConfig {
-        client_id: "abc".into(),
-        client_secret: "secret".into(),
-        auth_url: None,
-        token_url: None,
-        redirect_uri: "http://localhost/callback".into(),
-        scopes: vec!["user:email".into()],
-    });
-    config.security.auth_mode = AuthMode::None;
-    // Both configured, mode unset — should fail
-    assert!(super::validate_auth_config(&config).is_err());
-}
-
-#[test]
-fn validate_auth_passes_when_mode_explicitly_set() {
-    let mut config = GatewayConfig::default();
-    config.security.enabled = true;
-    config.security.auth_required = true;
-    config.security.shared_token = Some("test-token".into());
-    config.security.oauth.enabled = true;
-    config.security.oauth.github = Some(crate::gateway::auth::OAuthProviderConfig {
-        client_id: "abc".into(),
-        client_secret: "secret".into(),
-        auth_url: None,
-        token_url: None,
-        redirect_uri: "http://localhost/callback".into(),
-        scopes: vec!["user:email".into()],
-    });
     config.security.auth_mode = AuthMode::Token;
-    // Both configured, mode explicitly set — should pass
+    // Token mode explicitly set — should pass
     assert!(super::validate_auth_config(&config).is_ok());
 }
