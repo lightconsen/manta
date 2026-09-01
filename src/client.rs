@@ -262,6 +262,101 @@ impl DaemonClient {
         }
     }
 
+    /// Generic WebSocket RPC call: connects, performs the `connect` handshake,
+    /// sends `method` with `params`, and returns the response payload.
+    ///
+    /// The gateway's WS protocol expects the `connect` frame first
+    /// (`{protocol_version: 1}`), then a request frame; the response is a
+    /// `WsResponse` with `ok`/`payload`/`error`.
+    pub async fn ws_call(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> crate::Result<serde_json::Value> {
+        use serde_json::json;
+
+        let (ws_stream, _) = connect_async(&self.ws_url).await.map_err(|e| {
+            crate::error::SyscityError::Internal(format!("WebSocket connect failed: {}", e))
+        })?;
+        let (mut write, mut read) = ws_stream.split();
+
+        async fn send_frame<W>(
+            write: &mut W,
+            id: &str,
+            method: &str,
+            params: &serde_json::Value,
+        ) -> crate::Result<()>
+        where
+            W: futures::Sink<Message> + Unpin,
+            W::Error: std::fmt::Display,
+        {
+            let frame = json!({ "type": "req", "id": id, "method": method, "params": params });
+            let text = serde_json::to_string(&frame)
+                .map_err(|e| crate::error::SyscityError::Internal(format!("JSON error: {}", e)))?;
+            futures::SinkExt::send(write, Message::Text(text))
+                .await
+                .map_err(|e| {
+                    crate::error::SyscityError::Internal(format!("WebSocket send failed: {}", e))
+                })
+        }
+
+        async fn read_resp<R>(read: &mut R) -> crate::Result<serde_json::Value>
+        where
+            R: futures::Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>>
+                + Unpin,
+        {
+            if let Some(msg) = futures::StreamExt::next(read).await {
+                match msg {
+                    Ok(Message::Text(text)) => Ok(serde_json::from_str::<serde_json::Value>(&text)
+                        .map_err(|e| {
+                            crate::error::SyscityError::Internal(format!("Invalid response: {}", e))
+                        })?),
+                    Ok(Message::Close(_)) => {
+                        Err(crate::error::SyscityError::Internal("WebSocket closed".to_string()))
+                    }
+                    Err(e) => {
+                        Err(crate::error::SyscityError::Internal(format!("WebSocket error: {}", e)))
+                    }
+                    _ => Err(crate::error::SyscityError::Internal(
+                        "Unexpected message type".to_string(),
+                    )),
+                }
+            } else {
+                Err(crate::error::SyscityError::Internal("No response received".to_string()))
+            }
+        }
+
+        // Connect handshake.
+        send_frame(&mut write, "conn", "connect", &json!({ "protocol_version": 1 })).await?;
+        loop {
+            let resp = read_resp(&mut read).await?;
+            if resp["id"].as_str() == Some("conn") {
+                break;
+            }
+        }
+
+        // Send the actual method and read its response.
+        send_frame(&mut write, "req", method, &params).await?;
+        loop {
+            let resp = read_resp(&mut read).await?;
+            if resp["id"].as_str() != Some("req") {
+                continue;
+            }
+            if resp["ok"].as_bool().unwrap_or(false) {
+                return Ok(resp
+                    .get("payload")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null));
+            }
+            let msg = resp
+                .get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(|m| m.as_str())
+                .unwrap_or("gateway error");
+            return Err(crate::error::SyscityError::Internal(msg.to_string()));
+        }
+    }
+
     /// Check if daemon is available
     pub async fn is_available(&self) -> bool {
         self.health().await.is_ok()
