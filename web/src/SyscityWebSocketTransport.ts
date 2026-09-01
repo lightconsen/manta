@@ -76,7 +76,7 @@ export interface ModelInfo {
   base_url?: string;
 }
 
-/** First-launch identity form payload (POST /onboarding). */
+/** First-launch identity form payload (WS `onboarding.apply`). */
 export interface OnboardingPayload {
   /** Agent name / call sign. */
   name?: string;
@@ -92,7 +92,7 @@ export interface OnboardingPayload {
   user_context?: string;
 }
 
-/** Response from GET /onboarding. */
+/** Response from WS `onboarding.status`. */
 export interface OnboardingStatus {
   status: "pending" | "done";
 }

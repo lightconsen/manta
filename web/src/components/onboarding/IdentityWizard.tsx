@@ -18,9 +18,9 @@ interface IdentityWizardProps {
  * First-launch identity form.
  *
  * Collects the agent's name / vibe / emoji and the user's preferred name /
- * city / context, then submits everything to the gateway via
- * `POST /onboarding`. All fields are optional — an empty field is omitted and
- * the backend writes a sensible default.
+ * city / context, then submits everything to the gateway via the WS
+ * `onboarding.apply` method. All fields are optional — an empty field is
+ * omitted and the backend writes a sensible default.
  */
 export function IdentityWizard({ transport, onComplete }: IdentityWizardProps) {
   const [name, setName] = useState("");
