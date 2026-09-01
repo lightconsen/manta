@@ -517,7 +517,6 @@ impl Gateway {
                 plugin_manager: tools_init.plugin_manager.clone(),
                 model_router: model_router.clone(),
                 shell_hooks: shell_hooks.clone(),
-                engine_metrics: None,
                 feedback_store: feedback_store.clone(),
                 pending_badcase_store: pending_badcase_store.clone(),
                 decision_trace_store: decision_trace_store.clone(),

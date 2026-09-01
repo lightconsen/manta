@@ -97,8 +97,6 @@ pub use config::hot_reload::{
 pub use config::{Config, ConfigWatcher, ReloadableConfig};
 pub use error::{Result, SyscityError};
 
-pub use crate::core::Engine;
-
 /// Application version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
