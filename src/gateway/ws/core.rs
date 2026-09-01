@@ -578,6 +578,8 @@ async fn dispatch_method(
         "cron.enable" => admin_ws::handle_cron_set_enabled(req, state, true).await,
         "cron.disable" => admin_ws::handle_cron_set_enabled(req, state, false).await,
         "cron.run" => admin_ws::handle_cron_run(req, state).await,
+        "cron.add" => admin_ws::handle_cron_add(req, state).await,
+        "cron.remove" => admin_ws::handle_cron_remove(req, state).await,
         "cron.logs" => admin_ws::handle_cron_logs(req, state).await,
         "skills.get" => admin_ws::handle_skills_get(req, state).await,
         "skills.enable" => admin_ws::handle_skills_set_enabled(req, state, true).await,

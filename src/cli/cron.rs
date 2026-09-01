@@ -1,11 +1,10 @@
 //! Cron job management commands for Syscity
 
 use clap::Subcommand;
+use serde_json::json;
 
-use crate::error::{Result, SyscityError};
-
-/// Default daemon base URL.
-const DAEMON_URL: &str = "http://127.0.0.1:18080";
+use crate::cli::ws;
+use crate::error::Result;
 
 #[derive(Debug, Subcommand)]
 pub enum CronCommands {
@@ -50,133 +49,63 @@ pub enum CronCommands {
     },
 }
 
-/// Run cron commands
+/// Run cron commands (over WebSocket).
 pub async fn run_cron_command(command: &CronCommands) -> Result<()> {
-    let client = reqwest::Client::new();
-
     match command {
         CronCommands::List => {
-            let url = format!("{}/api/v1/cron", DAEMON_URL);
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    let body = resp.text().await.unwrap_or_default();
-                    println!("{}", body);
-                }
-                Err(e) => {
-                    eprintln!("Failed to reach daemon at {}: {}", DAEMON_URL, e);
-                    eprintln!("Is the daemon running? Try: syscity start");
-                    return Err(SyscityError::Internal(e.to_string()));
-                }
-            }
+            let payload = ws::call("cron.list", json!({})).await?;
+            println!("{}", payload);
         }
         CronCommands::Add { name, schedule, command } => {
-            let url = format!("{}/api/v1/cron", DAEMON_URL);
-            let body = serde_json::json!({
-                "name": name,
-                "schedule": schedule,
-                "command": command,
-            });
-            match client.post(&url).json(&body).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let text = resp.text().await.unwrap_or_default();
-                    if status.is_success() {
-                        println!("Cron job '{}' added", name);
-                        println!("{}", text);
-                    } else {
-                        eprintln!("Failed to add cron job ({}): {}", status, text);
-                    }
+            let body = json!({ "name": name, "schedule": schedule, "command": command });
+            match ws::call("cron.add", body).await {
+                Ok(payload) => {
+                    println!("Cron job '{}' added", name);
+                    println!("{}", payload);
                 }
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    eprintln!("Failed to add cron job: {}", e);
+                    return Err(e);
                 }
             }
         }
         CronCommands::Remove { name } => {
-            let url = format!("{}/api/v1/cron/{}", DAEMON_URL, name);
-            match client.delete(&url).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let text = resp.text().await.unwrap_or_default();
-                    if status.is_success() {
-                        println!("Cron job '{}' removed", name);
-                    } else {
-                        eprintln!("Failed to remove cron job ({}): {}", status, text);
-                    }
-                }
+            match ws::call("cron.remove", json!({ "id": name })).await {
+                Ok(_) => println!("Cron job '{}' removed", name),
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    eprintln!("Failed to remove cron job: {}", e);
+                    return Err(e);
                 }
             }
         }
         CronCommands::Enable { name } => {
-            let url = format!("{}/api/v1/cron/{}/enable", DAEMON_URL, name);
-            match client.post(&url).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let text = resp.text().await.unwrap_or_default();
-                    if status.is_success() {
-                        println!("Cron job '{}' enabled", name);
-                    } else {
-                        eprintln!("Failed to enable cron job ({}): {}", status, text);
-                    }
-                }
+            match ws::call("cron.enable", json!({ "id": name })).await {
+                Ok(_) => println!("Cron job '{}' enabled", name),
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    eprintln!("Failed to enable cron job: {}", e);
+                    return Err(e);
                 }
             }
         }
         CronCommands::Disable { name } => {
-            let url = format!("{}/api/v1/cron/{}/disable", DAEMON_URL, name);
-            match client.post(&url).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let text = resp.text().await.unwrap_or_default();
-                    if status.is_success() {
-                        println!("Cron job '{}' disabled", name);
-                    } else {
-                        eprintln!("Failed to disable cron job ({}): {}", status, text);
-                    }
-                }
+            match ws::call("cron.disable", json!({ "id": name })).await {
+                Ok(_) => println!("Cron job '{}' disabled", name),
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    eprintln!("Failed to disable cron job: {}", e);
+                    return Err(e);
                 }
             }
         }
-        CronCommands::Run { name } => {
-            let url = format!("{}/api/v1/cron/{}/run", DAEMON_URL, name);
-            match client.post(&url).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let text = resp.text().await.unwrap_or_default();
-                    if status.is_success() {
-                        println!("Cron job '{}' triggered", name);
-                    } else {
-                        eprintln!("Failed to run cron job ({}): {}", status, text);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
-                }
+        CronCommands::Run { name } => match ws::call("cron.run", json!({ "id": name })).await {
+            Ok(_) => println!("Cron job '{}' triggered", name),
+            Err(e) => {
+                eprintln!("Failed to run cron job: {}", e);
+                return Err(e);
             }
-        }
+        },
         CronCommands::Logs { name, lines: _ } => {
-            let url = format!("{}/api/v1/cron/{}/logs", DAEMON_URL, name);
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    let body = resp.text().await.unwrap_or_default();
-                    println!("{}", body);
-                }
-                Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
-                }
-            }
+            let payload = ws::call("cron.logs", json!({ "id": name })).await?;
+            println!("{}", payload);
         }
     }
     Ok(())

@@ -340,6 +340,8 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         | "cron.enable"
         | "cron.disable"
         | "cron.run"
+        | "cron.add"
+        | "cron.remove"
         | "skills.enable"
         | "skills.disable"
         | "skills.uninstall"
