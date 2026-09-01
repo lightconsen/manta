@@ -457,6 +457,8 @@ async fn dispatch_method(
         "sessions.subscribe" => sessions::handle_sessions_subscribe(req, conn, cmd_tx).await,
         "sessions.unsubscribe" => sessions::handle_sessions_unsubscribe(req, conn, cmd_tx).await,
         "agents.list" => agents::handle_agents_list(req, state).await,
+        "agents.create" => admin_ws::handle_agents_create(req, state).await,
+        "agents.delete" => admin_ws::handle_agents_delete(req, state).await,
         "agents.get" => agents::handle_agents_get(req, state).await,
         "agents.registry" => agents::handle_agents_registry(req, state).await,
         "health" => agents::handle_health(req, state).await,

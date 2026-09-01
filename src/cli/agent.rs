@@ -3,10 +3,15 @@
 use std::path::PathBuf;
 
 use clap::Subcommand;
+use serde_json::json;
 
+use crate::cli::ws;
 use crate::error::{Result, SyscityError};
 
-/// Default daemon base URL.
+/// Default daemon base URL. Only used for `edit`/`switch`/`memory`/`import`/
+/// `export` — those REST endpoints were never routed on the gateway, so the
+/// CLI calls stay until the backend is implemented (see the WS-only path
+/// below).
 const DAEMON_URL: &str = "http://127.0.0.1:18080";
 
 #[derive(Debug, Subcommand)]
@@ -77,64 +82,35 @@ pub enum AgentCommands {
     },
 }
 
-/// Run agent commands
+/// Run agent commands.
 pub async fn run_agent_command(command: &AgentCommands) -> Result<()> {
     let client = reqwest::Client::new();
 
     match command {
         AgentCommands::List { all } => {
-            let mut url = format!("{}/api/v1/agents", DAEMON_URL);
-            if *all {
-                url.push_str("?all=true");
-            }
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    let body = resp.text().await.unwrap_or_default();
-                    println!("{}", body);
-                }
-                Err(e) => {
-                    eprintln!("Failed to reach daemon at {}: {}", DAEMON_URL, e);
-                    eprintln!("Is the daemon running? Try: syscity start");
-                    return Err(SyscityError::Internal(e.to_string()));
-                }
-            }
+            let payload = ws::call("agents.list", json!({ "all": *all })).await?;
+            println!("{}", payload);
         }
         AgentCommands::Show { name } => {
             let id = name.as_deref().unwrap_or("default");
-            let url = format!("{}/api/v1/agents/{}", DAEMON_URL, id);
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    let body = resp.text().await.unwrap_or_default();
-                    println!("{}", body);
-                }
-                Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
-                }
-            }
+            let payload = ws::call("agents.get", json!({ "id": id })).await?;
+            println!("{}", payload);
         }
         AgentCommands::Create { name, description, copy_from } => {
-            let url = format!("{}/api/v1/agents", DAEMON_URL);
-            let body = serde_json::json!({
+            let body = json!({
                 "name": name,
                 "description": description,
                 "copy_from": copy_from,
                 "system_prompt": description.clone().unwrap_or_default(),
             });
-            match client.post(&url).json(&body).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let text = resp.text().await.unwrap_or_default();
-                    if status.is_success() {
-                        println!("Agent '{}' created successfully", name);
-                        println!("{}", text);
-                    } else {
-                        eprintln!("Failed to create agent ({}): {}", status, text);
-                    }
+            match ws::call("agents.create", body).await {
+                Ok(payload) => {
+                    println!("Agent '{}' created successfully", name);
+                    println!("{}", payload);
                 }
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    eprintln!("Failed to create agent: {}", e);
+                    return Err(e);
                 }
             }
         }
@@ -146,26 +122,17 @@ pub async fn run_agent_command(command: &AgentCommands) -> Result<()> {
                 println!("Delete agent '{}'? Use --force to confirm.", name);
                 return Ok(());
             }
-            let url = format!("{}/api/v1/agents/{}", DAEMON_URL, name);
-            match client.delete(&url).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    if status.is_success() {
-                        println!("Agent '{}' deleted", name);
-                    } else {
-                        let text = resp.text().await.unwrap_or_default();
-                        eprintln!("Failed to delete agent ({}): {}", status, text);
-                    }
-                }
+            match ws::call("agents.delete", json!({ "id": name })).await {
+                Ok(_) => println!("Agent '{}' deleted", name),
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    eprintln!("Failed to delete agent: {}", e);
+                    return Err(e);
                 }
             }
         }
         AgentCommands::Switch { name } => {
             let url = format!("{}/api/v1/agents/default", DAEMON_URL);
-            let body = serde_json::json!({ "agent_id": name });
+            let body = json!({ "agent_id": name });
             match client.patch(&url).json(&body).send().await {
                 Ok(resp) => {
                     let status = resp.status();
@@ -218,8 +185,7 @@ pub async fn run_agent_command(command: &AgentCommands) -> Result<()> {
             let content = tokio::fs::read_to_string(path)
                 .await
                 .map_err(|e| SyscityError::Internal(format!("Failed to read file: {}", e)))?;
-            let mut body: serde_json::Value =
-                serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
+            let mut body: serde_json::Value = serde_json::from_str(&content).unwrap_or(json!({}));
             if let Some(n) = name {
                 body["name"] = serde_json::Value::String(n.clone());
             }

@@ -294,6 +294,8 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         | "status.get" => Some(SCOPE_READ),
         "sessions.create"
         | "sessions.delete"
+        | "agents.create"
+        | "agents.delete"
         | "sessions.rename"
         | "sessions.set_pinned"
         | "sessions.set_model"
