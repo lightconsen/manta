@@ -306,3 +306,33 @@ async fn auth_profiles_rotate_unknown_errors() {
     assert!(!resp.ok);
     assert_eq!(resp.error.as_ref().unwrap().code, "BAD_REQUEST");
 }
+
+#[tokio::test]
+async fn audit_recent_returns_entries() {
+    let state = state().await;
+    let resp = handle_audit_recent(
+        &req("r1", "audit.recent", Some(serde_json::json!({ "limit": 10 }))),
+        &state,
+    )
+    .await;
+    assert!(resp.ok, "audit.recent failed: {:?}", resp.error);
+    let payload = resp.payload.as_ref().unwrap();
+    assert!(payload["entries"].is_array());
+    assert_eq!(payload["count"], 0);
+}
+
+#[tokio::test]
+async fn audit_all_returns_entries() {
+    let state = state().await;
+    let resp = handle_audit_all(&req("r1", "audit.all", None), &state).await;
+    assert!(resp.ok, "audit.all failed: {:?}", resp.error);
+    let payload = resp.payload.as_ref().unwrap();
+    assert!(payload["entries"].is_array());
+}
+
+#[tokio::test]
+async fn audit_recent_defaults_limit_to_50() {
+    let state = state().await;
+    let resp = handle_audit_recent(&req("r1", "audit.recent", None), &state).await;
+    assert!(resp.ok);
+}

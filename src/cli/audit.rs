@@ -5,7 +5,7 @@
 use clap::Subcommand;
 
 use crate::cli::ws;
-use crate::error::{Result, SyscityError};
+use crate::error::Result;
 use serde_json::json;
 
 #[derive(Debug, Subcommand)]
