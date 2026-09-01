@@ -992,23 +992,6 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
         .route("/api/v1/channels", get(super::channel_list_handler))
         .route("/api/v1/channels/:name/enable", post(super::enable_channel_handler))
         .route("/api/v1/channels/:name/disable", post(super::disable_channel_handler))
-        .route("/api/v1/plugins", get(super::list_plugins_handler))
-        .route("/api/v1/plugins/install", post(super::install_plugin_handler))
-        .route("/api/v1/plugins/uninstall", post(super::uninstall_plugin_handler))
-        .route("/api/v1/plugins/search", get(super::search_plugins_handler))
-        .route("/api/v1/plugins/sign", post(super::sign_plugin_handler))
-        .route("/api/v1/plugins/reload", post(super::reload_plugins_handler))
-        .route("/api/v1/plugins/:name/enable", post(super::enable_plugin_handler))
-        .route("/api/v1/plugins/:name/disable", post(super::disable_plugin_handler))
-        .route("/api/v1/plugins/:name/unload", delete(super::unload_plugin_handler))
-        .route("/api/v1/plugins/:name/reload", post(super::reload_plugin_handler))
-        .route("/api/v1/skills", get(super::list_skills_handler))
-        .route("/api/v1/skills/install", post(super::install_skill_handler))
-        .route("/api/v1/skills/:name", get(super::get_skill_handler))
-        .route("/api/v1/skills/:name/enable", post(super::enable_skill_handler))
-        .route("/api/v1/skills/:name/disable", post(super::disable_skill_handler))
-        .route("/api/v1/skills/:name/run", post(super::run_skill_handler))
-        .route("/api/v1/skills/:name/uninstall", post(super::uninstall_skill_handler))
         .route("/api/v1/connectors", get(super::list_connectors_handler))
         .route("/api/v1/connectors/install", post(super::install_connector_handler))
         .route("/api/v1/connectors/catalog", get(super::catalog_handler))
@@ -1047,21 +1030,8 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
             "/api/v1/mcp/servers/:server_id/resources",
             get(super::list_mcp_resources_handler).post(super::read_mcp_resource_handler),
         )
-        // Provider management (backs the `syscity provider ...` CLI commands).
-        .route("/api/v1/providers", get(super::list_providers_handler))
-        .route(
-            "/api/v1/providers/:id/health",
-            get(super::get_provider_health_handler),
-        )
-        .route("/api/v1/providers/:id/enable", post(super::enable_provider_handler))
-        .route("/api/v1/providers/:id/disable", post(super::disable_provider_handler))
-        .route("/api/v1/providers/switch", post(super::switch_model_handler))
-        .route("/api/v1/providers/usage", get(super::provider_usage_handler))
-        .route(
-            "/api/v1/providers/usage/:id",
-            get(super::provider_usage_by_id_handler),
-        )
-        .route("/api/v1/models/default", get(super::get_default_model_handler))
+        // (Providers are WS-only now — syscity provider ... drives them via
+        // the admin WS methods in ws/admin_ws.rs.)
         .layer(from_fn_with_state(state.clone(), super::middleware::auth_middleware));
 
     let essential_router = essential_public_router.merge(essential_auth_router);

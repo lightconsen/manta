@@ -26,6 +26,43 @@ fn default_reload_scope() -> String {
 
 /// Comprehensive reload handler — reloads plugins, config, providers,
 /// MCP servers, and skills without requiring a daemon restart.
+/// `GET /api/v1/models` — list available concrete model IDs.
+pub async fn list_models_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
+    let entries = state.infra.model_router.model_catalog.list().await;
+    Json(serde_json::json!({
+        "models": entries,
+    }))
+}
+
+/// `GET /api/v1/models/default` — the current default model.
+pub async fn get_default_model_handler(
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let default = state.infra.model_router.get_default_model().await;
+    Json(serde_json::json!({
+        "default_model": default,
+    }))
+}
+
+/// `GET /v1/models` — available model IDs in OpenAI wire format.
+pub async fn openai_list_models_handler(
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let entries = state.infra.model_router.model_catalog.list().await;
+    let data: Vec<_> = entries
+        .iter()
+        .map(|entry| {
+            serde_json::json!({
+                "id": entry.id.clone(),
+                "object": "model",
+                "created": 0,
+                "owned_by": entry.provider.clone(),
+            })
+        })
+        .collect();
+    Json(serde_json::json!({ "object": "list", "data": data }))
+}
+
 pub async fn reload_all_handler(
     State(state): State<Arc<GatewayState>>,
     Json(req): Json<ReloadRequest>,
