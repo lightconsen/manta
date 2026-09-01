@@ -364,7 +364,7 @@ mod tests {
     #[test]
     fn test_authenticate_success() {
         let auth = TrustedProxyAuthenticator::new(sample_config());
-        let mut req = Request::builder().uri("/api/v1/health").body(()).unwrap();
+        let mut req = Request::builder().uri("/health").body(()).unwrap();
         req.headers_mut()
             .insert("X-Forwarded-User", HeaderValue::from_static("alice"));
 

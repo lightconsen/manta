@@ -979,7 +979,6 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
         .route("/health", get(super::health_handler))
         .route("/ready", get(super::ready_handler))
         .route("/live", get(super::live_handler))
-        .route("/api/v1/health", get(super::health_handler))
         .route("/api/v1/metrics", get(super::metrics_handler))
         .route("/api/v1/artifacts/*path", get(super::artifact_handler));
 

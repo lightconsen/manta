@@ -12,41 +12,16 @@ use tower::ServiceExt;
 
 use super::*;
 
-// ── GET /api/v1/agents ──
-
-#[tokio::test]
-async fn list_agents_returns_empty_array() {
-    let state =
-        Arc::new(crate::gateway::state_tests::make_test_state(GatewayConfig::default()).await);
-    let app = Router::new()
-        .route("/api/v1/agents", get(super::list_agents_handler))
-        .with_state(state);
-
-    let req = Request::builder()
-        .uri("/api/v1/agents")
-        .body(Body::empty())
-        .unwrap();
-    let response = app.oneshot(req).await.unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(json.is_array());
-    assert_eq!(json.as_array().unwrap().len(), 0);
-}
-
 // ── GET /api/v1/channels ──
 
 #[tokio::test]
 async fn list_channels_returns_empty_array() {
-    // list_channels_handler reads from state.channels.channels (running channels),
-    // not config.channels. make_test_state does not populate running channels.
+    // channel_list_handler reads from config.channels, not running channels.
+    // make_test_state's default config has no channels.
     let state =
         Arc::new(crate::gateway::state_tests::make_test_state(GatewayConfig::default()).await);
     let app = Router::new()
-        .route("/api/v1/channels", get(super::list_channels_handler))
+        .route("/api/v1/channels", get(super::channel_list_handler))
         .with_state(state);
 
     let req = Request::builder()
@@ -60,52 +35,8 @@ async fn list_channels_returns_empty_array() {
         .await
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(json.is_array());
-    assert_eq!(json.as_array().unwrap().len(), 0);
-}
-
-// ── GET /api/v1/providers ──
-
-#[tokio::test]
-async fn list_providers_returns_array() {
-    let state =
-        Arc::new(crate::gateway::state_tests::make_test_state(GatewayConfig::default()).await);
-    let app = Router::new()
-        .route("/api/v1/providers", get(super::list_providers_handler))
-        .with_state(state);
-
-    let req = Request::builder()
-        .uri("/api/v1/providers")
-        .body(Body::empty())
-        .unwrap();
-    let response = app.oneshot(req).await.unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(json["providers"].is_array());
-    assert!(json["count"].is_number());
-}
-
-// ── GET /api/v1/providers/:id/health (not found) ──
-
-#[tokio::test]
-async fn get_provider_health_not_found() {
-    let state =
-        Arc::new(crate::gateway::state_tests::make_test_state(GatewayConfig::default()).await);
-    let app = Router::new()
-        .route("/api/v1/providers/:id/health", get(super::get_provider_health_handler))
-        .with_state(state);
-
-    let req = Request::builder()
-        .uri("/api/v1/providers/nonexistent/health")
-        .body(Body::empty())
-        .unwrap();
-    let response = app.oneshot(req).await.unwrap();
-
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert!(json["channels"].is_array());
+    assert_eq!(json["channels"].as_array().unwrap().len(), 0);
 }
 
 // ── GET /api/v1/models ──
@@ -130,78 +61,6 @@ async fn list_models_returns_array() {
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert!(json["models"].is_array());
-}
-
-// ── GET /api/v1/plugins ──
-
-#[tokio::test]
-async fn list_plugins_returns_empty() {
-    let state =
-        Arc::new(crate::gateway::state_tests::make_test_state(GatewayConfig::default()).await);
-    let app = Router::new()
-        .route("/api/v1/plugins", get(super::list_plugins_handler))
-        .with_state(state);
-
-    let req = Request::builder()
-        .uri("/api/v1/plugins")
-        .body(Body::empty())
-        .unwrap();
-    let response = app.oneshot(req).await.unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(json["plugins"].is_array());
-}
-
-// ── GET /api/v1/skills ──
-
-#[tokio::test]
-async fn list_skills_returns_empty() {
-    let state =
-        Arc::new(crate::gateway::state_tests::make_test_state(GatewayConfig::default()).await);
-    let app = Router::new()
-        .route("/api/v1/skills", get(super::list_skills_handler))
-        .with_state(state);
-
-    let req = Request::builder()
-        .uri("/api/v1/skills")
-        .body(Body::empty())
-        .unwrap();
-    let response = app.oneshot(req).await.unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(json["skills"].is_array());
-}
-
-// ── GET /api/v1/cron ──
-
-#[tokio::test]
-async fn list_cron_jobs_returns_empty() {
-    let state =
-        Arc::new(crate::gateway::state_tests::make_test_state(GatewayConfig::default()).await);
-    let app = Router::new()
-        .route("/api/v1/cron", get(super::list_cron_jobs_handler))
-        .with_state(state);
-
-    let req = Request::builder()
-        .uri("/api/v1/cron")
-        .body(Body::empty())
-        .unwrap();
-    let response = app.oneshot(req).await.unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(json["jobs"].is_array());
 }
 
 // ── GET /api/v1/config ──
@@ -310,38 +169,6 @@ async fn set_mention_policy_updates_policy() {
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["policy"], "block");
-}
-
-// ── GET /api/v1/status ──
-
-#[tokio::test]
-async fn api_status_returns_summary() {
-    let state =
-        Arc::new(crate::gateway::state_tests::make_test_state(GatewayConfig::default()).await);
-    let app = Router::new()
-        .route("/api/v1/status", get(super::status_handler))
-        .with_state(state);
-
-    let req = Request::builder()
-        .uri("/api/v1/status")
-        .body(Body::empty())
-        .unwrap();
-    let response = app.oneshot(req).await.unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(json["agents"]["total"].is_number());
-    assert!(json["channels"].is_number());
-    assert!(json["version"].is_string());
-    // The cloud block is always present: null in default builds, an object
-    // reflecting the runtime config in cloud builds.
-    #[cfg(feature = "cloud")]
-    assert!(json["cloud"]["enabled"].is_boolean(), "{json}");
-    #[cfg(not(feature = "cloud"))]
-    assert!(json["cloud"].is_null(), "{json}");
 }
 
 // ── Auth mode ambiguity detection ──

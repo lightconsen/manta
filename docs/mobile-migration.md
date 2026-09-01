@@ -448,7 +448,7 @@ Goal: prove the core compiles and runs on Android.
 
 **Acceptance:** `cargo build --target aarch64-linux-android
 --no-default-features --features <mobile-profile>` succeeds; the binary
-starts on Android and serves `/api/v1/health`.
+starts on Android and serves `/health`.
 
 **Decision gate:** P1 acceptance requires the **dependency checklist** to pass
 on `aarch64-linux-android` (and, for iOS later, `aarch64-apple-ios` +

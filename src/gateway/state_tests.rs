@@ -662,31 +662,6 @@ async fn live_handler_returns_200() {
 }
 
 #[tokio::test]
-async fn status_handler_returns_summary() {
-    let config = GatewayConfig::default();
-    let state = Arc::new(make_test_state(config).await);
-    let app = Router::new()
-        .route("/status", get(super::status_handler))
-        .with_state(state);
-
-    let req = Request::builder()
-        .uri("/status")
-        .body(Body::empty())
-        .unwrap();
-    let response = app.oneshot(req).await.unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(json["agents"]["total"].is_number());
-    assert!(json["channels"].is_number());
-    assert!(json["version"].as_str().is_some());
-}
-
-#[tokio::test]
 async fn health_handler_degraded_without_agents() {
     let config = GatewayConfig::default();
     let state = Arc::new(make_test_state(config).await);
