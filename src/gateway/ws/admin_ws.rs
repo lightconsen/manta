@@ -640,9 +640,13 @@ pub(super) async fn handle_status_get(req: &WsRequest, state: &Arc<GatewayState>
     WsResponse::ok(
         &req.id,
         serde_json::json!({
-            "agents": { "total": agents.len(), "busy": agents.values().filter(|a| a.busy.load(std::sync::atomic::Ordering::Acquire)).count() },
+            "agents": {
+                "total": agents.len(),
+                "busy": agents.values().filter(|a| a.busy.load(std::sync::atomic::Ordering::Acquire)).count(),
+            },
             "channels": channels.len(),
             "version": crate::VERSION,
+            "cloud": cloud_status_json(state).await,
         }),
     )
 }
