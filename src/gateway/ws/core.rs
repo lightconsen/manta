@@ -570,6 +570,7 @@ async fn dispatch_method(
         "providers.disable" => admin_ws::handle_providers_set_enabled(req, state, false).await,
         "providers.usage" => admin_ws::handle_providers_usage(req, state).await,
         "providers.health" => admin_ws::handle_providers_health(req, state).await,
+        "providers.fallback" => admin_ws::handle_providers_fallback(req, state).await,
         "providers.check" => admin_ws::handle_providers_check(req, state).await,
         "providers.switch" => admin_ws::handle_providers_switch(req, state).await,
         "models.default" => admin_ws::handle_models_default(req, state).await,

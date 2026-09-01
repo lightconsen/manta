@@ -8,6 +8,7 @@ use clap::Subcommand;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
+use crate::cli::ws;
 use crate::error::{Result, SyscityError};
 
 /// Default daemon base URL.
@@ -159,11 +160,9 @@ pub enum HintSeverity {
 
 /// Run doctor commands.
 pub async fn run_doctor_command(command: &DoctorCommands) -> Result<()> {
-    let client = reqwest::Client::new();
-
     match command {
         DoctorCommands::Run { provider, verbose } => {
-            let report = run_diagnostics(&client, provider.as_deref(), *verbose).await?;
+            let report = run_diagnostics(provider.as_deref(), *verbose).await?;
             print_report(&report, *verbose);
 
             // Cache report to disk
@@ -194,11 +193,7 @@ pub async fn run_doctor_command(command: &DoctorCommands) -> Result<()> {
     }
 }
 
-async fn run_diagnostics(
-    client: &reqwest::Client,
-    filter_provider: Option<&str>,
-    verbose: bool,
-) -> Result<DoctorReport> {
+async fn run_diagnostics(filter_provider: Option<&str>, verbose: bool) -> Result<DoctorReport> {
     let mut provider_diagnostics = Vec::new();
     let mut auth_diagnostics = Vec::new();
     let mut deprecation_warnings = Vec::new();
@@ -207,17 +202,12 @@ async fn run_diagnostics(
     let mut recommendations = Vec::new();
 
     // Fetch provider list
-    let providers_resp = client
-        .get(format!("{}/api/v1/providers", DAEMON_URL))
-        .send()
-        .await;
+    let providers_resp = ws::call("providers.list", serde_json::json!({})).await;
 
     let providers: Vec<serde_json::Value> = match providers_resp {
-        Ok(resp) => resp
-            .json::<serde_json::Value>()
-            .await
-            .ok()
-            .and_then(|v| v.get("providers").cloned())
+        Ok(payload) => payload
+            .get("providers")
+            .cloned()
             .and_then(|v| serde_json::from_value(v).ok())
             .unwrap_or_default(),
         Err(e) => {
@@ -251,14 +241,11 @@ async fn run_diagnostics(
         let healthy = p.get("healthy").and_then(|v| v.as_bool()).unwrap_or(false);
 
         // Health check endpoint
-        let health_body: Option<JsonValue> = match client
-            .get(format!("{}/api/v1/providers/{}/health", DAEMON_URL, id))
-            .send()
-            .await
-        {
-            Ok(resp) => resp.json().await.ok(),
-            Err(_) => None,
-        };
+        let health_body: Option<JsonValue> =
+            match ws::call("providers.health", serde_json::json!({ "id": id })).await {
+                Ok(payload) => Some(payload),
+                Err(_) => None,
+            };
 
         let circuit_state = health_body
             .as_ref()
@@ -267,29 +254,18 @@ async fn run_diagnostics(
             .to_string();
 
         // Auth status
-        let auth_resp = client
-            .get(format!("{}/api/v1/providers/{}/check", DAEMON_URL, id))
-            .send()
-            .await;
-
-        let (auth_status, auth_body) = match auth_resp {
-            Ok(resp) if resp.status().is_success() => {
-                let body: Option<JsonValue> = resp.json().await.ok();
-                ("ok".to_string(), body)
-            }
-            Ok(resp) => (format!("error {}", resp.status()), None),
-            Err(_) => ("unreachable".to_string(), None),
-        };
+        let (auth_status, auth_body) =
+            match ws::call("providers.check", serde_json::json!({ "id": id })).await {
+                Ok(payload) => ("ok".to_string(), Some(payload)),
+                Err(_) => ("unreachable".to_string(), None),
+            };
 
         // Usage status
-        let usage_body: Option<JsonValue> = match client
-            .get(format!("{}/api/v1/providers/usage/{}", DAEMON_URL, id))
-            .send()
-            .await
-        {
-            Ok(resp) => resp.json().await.ok(),
-            Err(_) => None,
-        };
+        let usage_body: Option<JsonValue> =
+            match ws::call("providers.usage", serde_json::json!({ "id": id })).await {
+                Ok(payload) => Some(payload),
+                Err(_) => None,
+            };
 
         let usage_status = usage_body
             .as_ref()
@@ -380,33 +356,25 @@ async fn run_diagnostics(
     }
 
     // Deprecation checks: fetch model catalog and match against rules
-    match client
-        .get(format!("{}/api/v1/models", DAEMON_URL))
-        .send()
-        .await
-    {
-        Ok(resp) => {
-            if let Ok(body) = resp.json::<serde_json::Value>().await {
-                if let Some(models) = body.get("models").and_then(|m| m.as_array()) {
-                    for model in models {
-                        let model_id = model.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                        let provider = model.get("provider").and_then(|v| v.as_str()).unwrap_or("");
-                        for rule in DEPRECATION_RULES {
-                            if model_id.contains(rule.pattern) || provider.contains(rule.pattern) {
-                                let msg = format!(
-                                    "{} (model: {}, provider: {})",
-                                    rule.reason, model_id, provider
-                                );
-                                if !deprecation_warnings.contains(&msg) {
-                                    deprecation_warnings.push(msg);
-                                }
-                                let hint = format!(
-                                    "Migrate {}:{} — {}",
-                                    provider, model_id, rule.migration
-                                );
-                                if !migration_hints.contains(&hint) {
-                                    migration_hints.push(hint);
-                                }
+    match ws::call("models.list", serde_json::json!({})).await {
+        Ok(payload) => {
+            if let Some(models) = payload.get("models").and_then(|m| m.as_array()) {
+                for model in models {
+                    let model_id = model.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                    let provider = model.get("provider").and_then(|v| v.as_str()).unwrap_or("");
+                    for rule in DEPRECATION_RULES {
+                        if model_id.contains(rule.pattern) || provider.contains(rule.pattern) {
+                            let msg = format!(
+                                "{} (model: {}, provider: {})",
+                                rule.reason, model_id, provider
+                            );
+                            if !deprecation_warnings.contains(&msg) {
+                                deprecation_warnings.push(msg);
+                            }
+                            let hint =
+                                format!("Migrate {}:{} — {}", provider, model_id, rule.migration);
+                            if !migration_hints.contains(&hint) {
+                                migration_hints.push(hint);
                             }
                         }
                     }
@@ -471,39 +439,34 @@ async fn run_diagnostics(
     }
 
     // Plugin diagnostics — query daemon for plugin list
-    let plugins_resp = client
-        .get(format!("{}/api/v1/plugins", DAEMON_URL))
-        .send()
-        .await;
+    let plugins_resp = ws::call("plugins.list", serde_json::json!({})).await;
 
-    if let Ok(resp) = plugins_resp {
-        if let Ok(body) = resp.json::<serde_json::Value>().await {
-            if let Some(plugins) = body.get("plugins").and_then(|v| v.as_array()) {
-                for p in plugins {
-                    let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("?");
-                    let name = p.get("name").and_then(|v| v.as_str()).unwrap_or(id);
-                    let enabled = p.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+    if let Ok(payload) = plugins_resp {
+        if let Some(plugins) = payload.get("plugins").and_then(|v| v.as_array()) {
+            for p in plugins {
+                let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+                let name = p.get("name").and_then(|v| v.as_str()).unwrap_or(id);
+                let enabled = p.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
 
-                    if !enabled {
+                if !enabled {
+                    plugin_hints.push(DiagnosticHint {
+                        category: format!("plugin:{}", id),
+                        message: format!("Plugin '{}' ({}) is disabled", name, id),
+                        severity: HintSeverity::Warning,
+                    });
+                }
+
+                // Check for version info if available
+                if let Some(version) = p.get("version").and_then(|v| v.as_str()) {
+                    if crate::skills::semver::Version::parse(version).is_err() {
                         plugin_hints.push(DiagnosticHint {
                             category: format!("plugin:{}", id),
-                            message: format!("Plugin '{}' ({}) is disabled", name, id),
+                            message: format!(
+                                "Plugin '{}' has invalid semver version '{}'",
+                                name, version
+                            ),
                             severity: HintSeverity::Warning,
                         });
-                    }
-
-                    // Check for version info if available
-                    if let Some(version) = p.get("version").and_then(|v| v.as_str()) {
-                        if crate::skills::semver::Version::parse(version).is_err() {
-                            plugin_hints.push(DiagnosticHint {
-                                category: format!("plugin:{}", id),
-                                message: format!(
-                                    "Plugin '{}' has invalid semver version '{}'",
-                                    name, version
-                                ),
-                                severity: HintSeverity::Warning,
-                            });
-                        }
                     }
                 }
             }

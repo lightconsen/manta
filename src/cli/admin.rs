@@ -1,10 +1,13 @@
 //! Admin commands for Gateway management
 
 use clap::Subcommand;
+use serde_json::json;
 
-use crate::error::{Result, SyscityError};
+use crate::cli::ws;
+use crate::error::Result;
 
-/// Default daemon base URL.
+/// Default daemon base URL (only for the `send` command, which has no WS
+/// equivalent).
 const DAEMON_URL: &str = "http://127.0.0.1:18080";
 
 #[derive(Debug, Subcommand)]
@@ -59,158 +62,66 @@ pub enum AdminCommands {
     },
 }
 
-/// Run admin commands
+/// Run admin commands (over WebSocket where possible).
 pub async fn run_admin_command(command: &AdminCommands) -> Result<()> {
-    let client = reqwest::Client::new();
-
     match command {
         AdminCommands::Status => {
-            let url = format!("{}/api/v1/status", DAEMON_URL);
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    let body = resp.text().await.unwrap_or_default();
-                    println!("{}", body);
-                }
-                Err(e) => {
-                    eprintln!("Failed to reach daemon at {}: {}", DAEMON_URL, e);
-                    eprintln!("Is the daemon running? Try: syscity start");
-                    return Err(SyscityError::Internal(e.to_string()));
-                }
-            }
+            let payload = ws::call("status.get", json!({})).await?;
+            println!("{}", payload);
         }
         AdminCommands::Providers => {
-            let url = format!("{}/api/v1/providers", DAEMON_URL);
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    let body = resp.text().await.unwrap_or_default();
-                    println!("{}", body);
-                }
-                Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
-                }
-            }
+            let payload = ws::call("providers.list", json!({})).await?;
+            println!("{}", payload);
         }
         AdminCommands::Models => {
-            let url = format!("{}/api/v1/models", DAEMON_URL);
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    let body = resp.text().await.unwrap_or_default();
-                    println!("{}", body);
-                }
-                Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
-                }
-            }
+            let payload = ws::call("models.list", json!({})).await?;
+            println!("{}", payload);
         }
         AdminCommands::Default => {
-            let url = format!("{}/api/v1/models/default", DAEMON_URL);
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    let body = resp.text().await.unwrap_or_default();
-                    println!("{}", body);
-                }
-                Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
-                }
-            }
+            let payload = ws::call("models.default", json!({})).await?;
+            println!("{}", payload);
         }
         AdminCommands::Switch { model } => {
-            let url = format!("{}/api/v1/providers/switch", DAEMON_URL);
-            let body = serde_json::json!({ "model": model });
-            match client.post(&url).json(&body).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let text = resp.text().await.unwrap_or_default();
-                    if status.is_success() {
-                        println!("Switched to model '{}'", model);
-                        println!("{}", text);
-                    } else {
-                        eprintln!("Failed to switch model ({}): {}", status, text);
-                    }
+            match ws::call("providers.switch", json!({ "model": model })).await {
+                Ok(payload) => {
+                    println!("Switched to model '{}'", model);
+                    println!("{}", payload);
                 }
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    eprintln!("Failed to switch model: {}", e);
+                    return Err(e);
                 }
             }
         }
         AdminCommands::Enable { provider } => {
-            let url = format!("{}/api/v1/providers/{}/enable", DAEMON_URL, provider);
-            match client.post(&url).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let text = resp.text().await.unwrap_or_default();
-                    if status.is_success() {
-                        println!("Provider '{}' enabled", provider);
-                    } else {
-                        eprintln!("Failed to enable provider ({}): {}", status, text);
-                    }
-                }
+            match ws::call("providers.enable", json!({ "id": provider })).await {
+                Ok(_) => println!("Provider '{}' enabled", provider),
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    eprintln!("Failed to enable provider: {}", e);
+                    return Err(e);
                 }
             }
         }
         AdminCommands::Disable { provider } => {
-            let url = format!("{}/api/v1/providers/{}/disable", DAEMON_URL, provider);
-            match client.post(&url).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let text = resp.text().await.unwrap_or_default();
-                    if status.is_success() {
-                        println!("Provider '{}' disabled", provider);
-                    } else {
-                        eprintln!("Failed to disable provider ({}): {}", status, text);
-                    }
-                }
+            match ws::call("providers.disable", json!({ "id": provider })).await {
+                Ok(_) => println!("Provider '{}' disabled", provider),
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    eprintln!("Failed to disable provider: {}", e);
+                    return Err(e);
                 }
             }
         }
         AdminCommands::Health { provider } => {
-            let url = format!("{}/api/v1/providers/{}/health", DAEMON_URL, provider);
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    let body = resp.text().await.unwrap_or_default();
-                    println!("{}", body);
-                }
-                Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
-                }
-            }
+            let payload = ws::call("providers.health", json!({ "id": provider })).await?;
+            println!("{}", payload);
         }
         AdminCommands::Fallback { model_id } => {
-            let url = format!("{}/api/v1/providers/fallback/{}", DAEMON_URL, model_id);
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    let body = resp.text().await.unwrap_or_default();
-                    println!("{}", body);
-                }
-                Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
-                }
-            }
+            let payload = ws::call("providers.fallback", json!({ "model_id": model_id })).await?;
+            println!("{}", payload);
         }
         AdminCommands::Agents => {
-            let url = format!("{}/api/v1/agents", DAEMON_URL);
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    let body = resp.text().await.unwrap_or_default();
-                    println!("{}", body);
-                }
-                Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
-                }
-            }
+            let payload = ws::call("agents.list", json!({})).await?;
+            println!("{}", payload);
         }
         AdminCommands::Send {
             session_id,
@@ -218,6 +129,9 @@ pub async fn run_admin_command(command: &AdminCommands) -> Result<()> {
             provider,
             model,
         } => {
+            // No WS method for sending a message to an existing session; keep
+            // the REST call.
+            let client = reqwest::Client::new();
             let url = format!("{}/api/v1/sessions/{}/messages", DAEMON_URL, session_id);
             let body = serde_json::json!({
                 "content": message,
@@ -236,7 +150,7 @@ pub async fn run_admin_command(command: &AdminCommands) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    return Err(crate::error::SyscityError::Internal(e.to_string()));
                 }
             }
         }

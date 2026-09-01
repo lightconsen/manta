@@ -543,6 +543,19 @@ pub(super) async fn handle_models_default(
     WsResponse::ok(&req.id, serde_json::json!({ "default_model": default }))
 }
 
+/// `providers.fallback` — the fallback chain for a model (`{ model_id }`).
+pub(super) async fn handle_providers_fallback(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    let model_id = match parse_params::<serde_json::Value>(req) {
+        Ok(v) => v["model_id"].as_str().unwrap_or("").to_string(),
+        Err(res) => return res,
+    };
+    let chain = state.infra.model_router.get_fallback_chain(&model_id).await;
+    WsResponse::ok(&req.id, serde_json::json!({ "model_id": model_id, "fallback_chain": chain }))
+}
+
 // ── Status ──────────────────────────────────────────────────────────────
 
 /// `status.get` — engine status (agents, channels, version, cloud block).

@@ -286,6 +286,7 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         | "providers.list"
         | "providers.usage"
         | "providers.health"
+        | "providers.fallback"
         | "traces.get"
         | "cron.get"
         | "cron.logs"
