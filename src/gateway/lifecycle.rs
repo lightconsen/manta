@@ -991,18 +991,6 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
         .route("/api/v1/channels", get(super::channel_list_handler))
         .route("/api/v1/channels/:name/enable", post(super::enable_channel_handler))
         .route("/api/v1/channels/:name/disable", post(super::disable_channel_handler))
-        .route("/api/v1/connectors", get(super::list_connectors_handler))
-        .route("/api/v1/connectors/install", post(super::install_connector_handler))
-        .route("/api/v1/connectors/catalog", get(super::catalog_handler))
-        .route(
-            "/api/v1/connectors/catalog/install",
-            post(super::catalog_install_handler),
-        )
-        .route("/api/v1/connectors/updates", get(super::connector_updates_handler))
-        .route("/api/v1/connectors/:id/enable", post(super::enable_connector_handler))
-        .route("/api/v1/connectors/:id/disable", post(super::disable_connector_handler))
-        .route("/api/v1/connectors/:id/uninstall", post(super::uninstall_connector_handler))
-        .route("/api/v1/connectors/:id/auth/status", get(super::connector_auth_status_handler))
         .route("/api/v1/device/pairing/pending", get(super::list_device_pending_handler))
         .route("/api/v1/device/pairing/authorized", get(super::list_device_authorized_handler))
         .route("/api/v1/device/pairing/approve", post(super::approve_device_handler))
@@ -1099,10 +1087,6 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
     #[cfg(feature = "cloud")]
     let cloud_router = Router::new()
         .route("/api/v1/cloud/login", get(super::handlers::cloud::login_handler))
-        .route("/api/v1/cloud/token", post(super::handlers::cloud::token_handler))
-        .route("/api/v1/cloud/logout", post(super::handlers::cloud::logout_handler))
-        .route("/api/v1/cloud/subscription", get(super::handlers::cloud::subscription_handler))
-        .route("/api/v1/cloud/usage", get(super::handlers::cloud::usage_handler))
         .with_state(state.clone());
 
     // Public engine status is now exposed via the WS `status.get` method

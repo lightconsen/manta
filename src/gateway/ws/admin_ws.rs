@@ -53,17 +53,83 @@ pub(super) async fn handle_onboarding_apply(
 
 // ── Connectors catalog (marketplace) ────────────────────────────────────
 
-/// `connectors.catalog` — the marketplace catalog document.
+/// `connectors.catalog` — the marketplace catalog (cached) joined with each
+/// entry's installed state.
+///
+/// On a first visit with an empty cache the handler one-shot syncs from the
+/// cloud catalog URL when cloud mode is active (feature + `cloud.enabled` +
+/// logged in), so member/cloud entries are visible immediately. Returns
+/// `{ version, synced, entries }` — the shape the UI consumes.
 pub(super) async fn handle_connectors_catalog(
     req: &WsRequest,
     state: &Arc<GatewayState>,
 ) -> WsResponse {
     let manager = &state.tools.connector_manager;
-    match manager.cached_catalog().await {
-        Ok(Some(doc)) => WsResponse::ok(&req.id, doc),
-        Ok(None) => WsResponse::ok(&req.id, serde_json::json!(null)),
-        Err(e) => WsResponse::err(&req.id, "INTERNAL", e.to_string()),
-    }
+    let doc: Option<crate::mcp::connectors::catalog::CatalogDocument> = {
+        let cached = match manager.cached_catalog().await {
+            Ok(Some(doc)) => Some(doc),
+            Ok(None) => None,
+            Err(e) => return WsResponse::err(&req.id, "INTERNAL", e.to_string()),
+        };
+        #[cfg(feature = "cloud")]
+        let synced = if cached.is_none() {
+            let cfg = state.config.read().await.cloud.clone();
+            if cfg.enabled && crate::cloud::session::logged_in().await {
+                let url = format!("{}/catalog.json", cfg.api_base.trim_end_matches('/'));
+                if let Ok((fresh, _)) = manager.sync_catalog(&url).await {
+                    Some(fresh)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        #[cfg(not(feature = "cloud"))]
+        let synced: Option<crate::mcp::connectors::catalog::CatalogDocument> = None;
+        cached.or(synced)
+    };
+
+    let installed = manager.list().await.unwrap_or_default();
+    let installed_by_id: std::collections::HashMap<String, _> =
+        installed.into_iter().map(|s| (s.id.clone(), s)).collect();
+
+    let entries: Vec<_> = doc
+        .iter()
+        .flat_map(|d| d.connectors.iter())
+        .map(|e| {
+            let inst = installed_by_id.get(&e.id);
+            // Experts are "installed" once their role dir exists in agents/.
+            let expert_installed =
+                e.entry_type == "expert" && crate::dirs::agents_dir().join(&e.id).is_dir();
+            serde_json::json!({
+                "id": e.id,
+                "version": e.version,
+                "display_name": e.display_name,
+                "description": e.description,
+                "icon": e.icon,
+                "type": e.entry_type,
+                "kind": e.kind,
+                "visibility": e.visibility,
+                "credits_per_use": e.credits_per_use,
+                "category": e.category,
+                "installed": inst.is_some() || expert_installed,
+                "installed_version": inst.map(|s| s.version.clone()),
+                "state": inst.map(|s| serde_json::to_value(s.state).unwrap_or_default()),
+            })
+        })
+        .collect();
+
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "version": doc.as_ref().map(|d| d.version).unwrap_or(0),
+            "synced": doc.is_some(),
+            "entries": entries,
+        }),
+    )
 }
 
 /// `connectors.catalog_install` — install a catalog entry (connector,
@@ -92,7 +158,7 @@ pub(super) async fn handle_connectors_catalog_install(
         .connectors
         .into_iter()
         .filter(|e| e.id == p.id)
-        .max_by_key(|e| crate::gateway::handlers::connectors::catalog_version_key(&e.version))
+        .max_by_key(|e| crate::mcp::connectors::catalog::catalog_version_key(&e.version))
     else {
         return WsResponse::err(&req.id, "NOT_FOUND", format!("no catalog entry for '{}'", p.id));
     };
@@ -925,11 +991,17 @@ pub(super) async fn handle_cloud_token(req: &WsRequest, state: &Arc<GatewayState
         if let Err(e) = crate::cloud::session::set_token(&params.token).await {
             return WsResponse::err(&req.id, "INTERNAL", e.to_string());
         }
-        match crate::cloud::client::CloudClient::new(&cfg, params.token)
+        match crate::cloud::client::CloudClient::new(&cfg, params.token.clone())
             .me()
             .await
         {
             Ok(Some(user)) => {
+                // Best-effort device registration (P2-9): a stable device
+                // identity for future cloud sync. Never fails the login on
+                // bind errors (mirrors the removed REST token handler).
+                if let Err(e) = crate::cloud::device::bind(&cfg).await {
+                    tracing::warn!("Cloud device bind failed: {e}");
+                }
                 WsResponse::ok(&req.id, serde_json::json!({ "ok": true, "user": user }))
             }
             Ok(None) => WsResponse::err(&req.id, "UNAUTHORIZED", "invalid cloud token"),

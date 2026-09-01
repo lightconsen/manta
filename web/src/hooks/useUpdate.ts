@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { getActiveTransport } from "@/SyscityWebSocketTransport";
 
-/** Latest release info (WS `update.status` / GET /api/v1/update/status). */
+/** Latest release info (WS `update.status`). */
 export interface UpdateStatus {
   enabled: boolean;
   current: string;
@@ -10,7 +10,7 @@ export interface UpdateStatus {
   embedded: boolean;
 }
 
-/** Phase/percent (WS `update.progress` / GET /api/v1/update/progress). */
+/** Phase/percent (WS `update.progress`). */
 export interface UpdateProgress {
   phase:
     | "idle"
@@ -44,11 +44,11 @@ async function fetchProgress(): Promise<UpdateProgress> {
 }
 
 /**
- * Drives the online-update flow. Polls `/api/v1/update/status` on a slow
+ * Drives the online-update flow over WS: polls `update.status` on a slow
  * cadence (server-side TTL is 6h); while an update is in flight it polls
- * `/api/v1/update/progress` once a second. In the Tauri desktop webview the
- * trigger button routes to the `check_for_updates` command instead of the
- * daemon endpoint (embedded instances refuse binary replacement).
+ * `update.progress` once a second. In the Tauri desktop webview the trigger
+ * button routes to the `check_for_updates` command instead of the daemon
+ * (embedded instances refuse binary replacement).
  */
 export function useUpdate() {
   const [status, setStatus] = useState<UpdateStatus | null>(null);

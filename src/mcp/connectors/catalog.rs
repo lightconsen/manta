@@ -174,6 +174,15 @@ pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(digest)
 }
 
+/// Ordering key for catalog versions (semver when parseable, else raw string).
+pub(crate) fn catalog_version_key(v: &str) -> (u64, u64, u64, String) {
+    if let Ok(p) = crate::skills::semver::Version::parse(v) {
+        (p.major, p.minor, p.patch, v.to_string())
+    } else {
+        (0, 0, 0, v.to_string())
+    }
+}
+
 // ─────────────────────────────────────────────
 // Updates diffing
 // ─────────────────────────────────────────────

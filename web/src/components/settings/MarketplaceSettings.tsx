@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Download, Loader2, Lock, RefreshCw, Sparkles, Zap } from "lucide-react";
 import { Section } from "@/components/ui/Section";
-import { apiFetch } from "@/lib/gatewayBase";
 import { getActiveTransport } from "@/SyscityWebSocketTransport";
 
 interface CatalogEntry {
@@ -67,9 +66,8 @@ export function MarketplaceSettings({
     setError(null);
     try {
       const transport = getActiveTransport();
-      const body = transport
-        ? ((await transport.getConnectorsCatalog()) as CatalogResponse)
-        : ((await (await apiFetch("/api/v1/connectors/catalog")).json()) as CatalogResponse);
+      if (!transport) throw new Error("No gateway connection");
+      const body = (await transport.getConnectorsCatalog()) as CatalogResponse;
       if ((body as { error?: string }).error) throw new Error((body as { error?: string }).error);
       setData(body);
     } catch (e) {
@@ -89,18 +87,10 @@ export function MarketplaceSettings({
     setError(null);
     try {
       const transport = getActiveTransport();
-      const body = transport
-        ? ((await transport.sendRequestAndWait("connectors.catalog_install", { id })) as {
-            error?: string;
-            agents?: string[];
-          })
-        : ((await (
-            await apiFetch("/api/v1/connectors/catalog/install", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ id }),
-            })
-          ).json()) as { error?: string; agents?: string[] });
+      if (!transport) throw new Error("No gateway connection");
+      const body = (await transport.sendRequestAndWait("connectors.catalog_install", {
+        id,
+      })) as { error?: string; agents?: string[] };
       if (body.error) throw new Error(body.error);
       await load();
       return body.agents?.[0] ?? null;
@@ -128,14 +118,11 @@ export function MarketplaceSettings({
     setError(null);
     try {
       const transport = getActiveTransport();
-      const body = transport
-        ? ((await transport.sendRequestAndWait(
-            action === "enable" ? "connectors.enable" : "connectors.disable",
-            { id }
-          )) as { error?: string })
-        : ((await (
-            await apiFetch(`/api/v1/connectors/${id}/${action}`, { method: "POST" })
-          ).json()) as { error?: string });
+      if (!transport) throw new Error("No gateway connection");
+      const body = (await transport.sendRequestAndWait(
+        action === "enable" ? "connectors.enable" : "connectors.disable",
+        { id }
+      )) as { error?: string };
       if (body.error) throw new Error(body.error);
       await load();
     } catch (e) {
