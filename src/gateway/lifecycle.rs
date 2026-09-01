@@ -1066,7 +1066,6 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
             get(super::provider_usage_by_id_handler),
         )
         .route("/api/v1/models/default", get(super::get_default_model_handler))
-        .route("/api/traces/:turn_id", get(super::trace_replay_handler))
         .layer(from_fn_with_state(state.clone(), super::middleware::auth_middleware));
 
     let essential_router = essential_public_router.merge(essential_auth_router);

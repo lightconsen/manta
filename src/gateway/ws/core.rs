@@ -567,6 +567,7 @@ async fn dispatch_method(
         "providers.enable" => admin_ws::handle_providers_set_enabled(req, state, true).await,
         "providers.disable" => admin_ws::handle_providers_set_enabled(req, state, false).await,
         "providers.usage" => admin_ws::handle_providers_usage(req, state).await,
+        "traces.get" => admin_ws::handle_traces_get(req, state).await,
         _ => error_method_not_found(&req.id, &req.method),
     }
 }

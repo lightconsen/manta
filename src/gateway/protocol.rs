@@ -283,7 +283,8 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         | "plugins.list"
         | "plugins.search"
         | "providers.list"
-        | "providers.usage" => Some(SCOPE_READ),
+        | "providers.usage"
+        | "traces.get" => Some(SCOPE_READ),
         "sessions.create"
         | "sessions.delete"
         | "sessions.rename"
