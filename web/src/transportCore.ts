@@ -1867,6 +1867,7 @@ export interface SyscityWebSocketTransport {
   setDefaultModel(modelId: string): Promise<boolean>;
   setSessionModel( sessionId: string, model: string | null ): Promise<boolean>;
   setSessionPinned( sessionId: string, pinned: boolean ): Promise<boolean>;
+  respondToApproval(approvalId: string, decision: "approve" | "deny", reason?: string): Promise<boolean>;
   renameSession(sessionId: string, name: string): Promise<boolean>;
   respondToAsk(askId: string, response: string): Promise<boolean>;
   vote( turnId: string, vote: "up" | "down", opts?: { input?: string; response?: string; comment?: string } ): Promise<boolean>;

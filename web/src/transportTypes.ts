@@ -171,3 +171,13 @@ export interface FeedbackOpsPayload {
     count: number;
   }[];
 }
+
+/** A pending tool-call approval the human must decide. */
+export interface ApprovalPrompt {
+  approval_id: string;
+  tool_name: string;
+  requested_by: string;
+  /** "Low" | "Medium" | "High" | "Critical" */
+  risk_level: string;
+  message: string;
+}

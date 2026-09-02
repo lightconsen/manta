@@ -3,6 +3,7 @@
 
 import { SyscityWebSocketTransport } from "./transportCore";
 import { install as installAgents } from "./transportMixins/agents";
+import { install as installApprovals } from "./transportMixins/approvals";
 import { install as installChannels } from "./transportMixins/channels";
 import { install as installCloud } from "./transportMixins/cloud";
 import { install as installConfig } from "./transportMixins/config";
@@ -19,6 +20,7 @@ import { install as installUpdate } from "./transportMixins/update";
 import { install as installWorkspace } from "./transportMixins/workspace";
 
 installAgents(SyscityWebSocketTransport.prototype);
+installApprovals(SyscityWebSocketTransport.prototype);
 installChannels(SyscityWebSocketTransport.prototype);
 installCloud(SyscityWebSocketTransport.prototype);
 installConfig(SyscityWebSocketTransport.prototype);

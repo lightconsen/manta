@@ -37,6 +37,10 @@ interface SessionItem {
 
 interface SidebarProps {
   collapsed: boolean;
+  /** Pending tool-approval count (0 hides the badge). */
+  pendingApprovals?: number;
+  /** Open the approval modal for the front of the queue. */
+  onShowApprovals?: () => void;
   onToggle: () => void;
   sessions: SessionItem[];
   currentSessionId: string;
@@ -56,6 +60,8 @@ interface SidebarProps {
 
 export function Sidebar({
   collapsed,
+  pendingApprovals = 0,
+  onShowApprovals,
   onToggle,
   sessions,
   currentSessionId,
@@ -218,6 +224,18 @@ export function Sidebar({
         <div className="px-1 pb-2 shrink-0">
           <AccountButton />
         </div>
+      )}
+
+      {/* Pending tool approvals — a persistent reminder above the session
+          list. Clicking opens the approval modal for the front of the queue. */}
+      {!collapsed && pendingApprovals > 0 && (
+        <button
+          onClick={onShowApprovals}
+          className="mx-1 mb-2 px-3 py-2 rounded-lg text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-900/40 transition text-left shrink-0"
+          title="Show pending approvals"
+        >
+          ⚠️ {pendingApprovals} pending approval{pendingApprovals > 1 ? "s" : ""}
+        </button>
       )}
 
       <div

@@ -25,6 +25,8 @@ import { UpdateBanner } from "@/components/update/UpdateBanner";
 import { CloudEnabledBanner } from "@/components/update/CloudEnabledBanner";
 import { MarketplaceView } from "@/components/marketplace/MarketplaceView";
 import { AskModal, type AskPrompt } from "@/components/ask/AskModal";
+import { ApprovalModal } from "@/components/approval/ApprovalModal";
+import type { ApprovalPrompt } from "@/components/approval/ApprovalModal";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 
 /* ── Agent emoji pool — ensures each agent has a unique icon ── */
@@ -222,6 +224,8 @@ function ChatApp() {
   const setPreviewDocument = useChatStore((s) => s.setPreviewDocument);
   // A pending ask_user question awaiting a human answer.
   const [askPrompt, setAskPrompt] = useState<AskPrompt | null>(null);
+  const [pendingApprovals, setPendingApprovals] = useState<ApprovalPrompt[]>([]);
+  const approvalPrompt = pendingApprovals[0] ?? null;
   const workspacePanelOpen = useChatStore((s) => s.workspacePanelOpen);
   const setWorkspacePanelOpen = useChatStore((s) => s.setWorkspacePanelOpen);
   const currentAgent = useChatStore((s) => s.currentAgent);
@@ -355,6 +359,20 @@ function ChatApp() {
         setAskPrompt((prev) =>
           prev && prev.ask_id === p.ask_id ? null : prev
         );
+      }
+      if (evt.event === "approval.required") {
+        const p = evt.payload;
+        if (!p) return;
+        setPendingApprovals((prev) => [
+          ...prev,
+          {
+            approval_id: String(p.approval_id ?? ""),
+            tool_name: String(p.tool_name ?? ""),
+            requested_by: String(p.requested_by ?? ""),
+            risk_level: String(p.risk_level ?? "Medium"),
+            message: String(p.message ?? ""),
+          },
+        ]);
       }
       if (evt.event === "session.created") {
         refreshSessions();
@@ -515,6 +533,21 @@ function ChatApp() {
     // No server resolve: the blocked tool times out server-side (5 min) and
     // broadcasts ask.resolved(cancelled), which clears this modal.
     setAskPrompt(null);
+  }, []);
+
+  const handleApprovalDecide = useCallback(
+    async (decision: "approve" | "deny", reason?: string) => {
+      if (!approvalPrompt) return;
+      await transport.respondToApproval(approvalPrompt.approval_id, decision, reason);
+      setPendingApprovals((prev) => prev.slice(1));
+    },
+    [approvalPrompt, transport]
+  );
+
+  const handleApprovalDismiss = useCallback(() => {
+    // The approval stays pending server-side; the next turn that needs it
+    // will re-emit approval.required, or the user acts via the badge.
+    setPendingApprovals((prev) => prev.slice(1));
   }, []);
 
   const handleNewSession = useCallback(() => {
@@ -723,6 +756,8 @@ function ChatApp() {
           networkStatus={networkStatus}
           onOpenSettings={() => openSettings("general")}
           onOpenMarketplace={openMarketplace}
+          pendingApprovals={pendingApprovals.length}
+          onShowApprovals={() => {}}
           onRenameSession={handleRenameSession}
           onDeleteSession={handleDeleteSession}
           onPinSession={handlePinSession}
@@ -902,6 +937,16 @@ function ChatApp() {
           prompt={askPrompt}
           onRespond={handleAskRespond}
           onDismiss={handleAskDismiss}
+        />
+      )}
+
+      {/* A tool call is waiting for human approval — one modal per pending
+          approval, front of the queue. */}
+      {approvalPrompt && (
+        <ApprovalModal
+          prompt={approvalPrompt}
+          onDecide={handleApprovalDecide}
+          onDismiss={handleApprovalDismiss}
         />
       )}
     </div>
