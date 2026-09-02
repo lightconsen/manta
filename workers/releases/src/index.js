@@ -45,6 +45,10 @@ export default {
     }
 
     // Pass the request headers so R2 honors Range (resumable downloads).
+    // Only emit a 206 when the client actually asked for a range; R2 populates
+    // `object.range` with the full span even for whole-object reads when given
+    // a Headers object without a Range header.
+    const requestedRange = request.headers.has("range");
     const object = await env.RELEASES.get(key, { range: request.headers });
     if (!object) {
       return new Response("Not Found", { status: 404 });
@@ -52,7 +56,7 @@ export default {
 
     const headers = downloadHeaders(object, key);
     let status = 200;
-    if (object.range && "offset" in object.range) {
+    if (requestedRange && object.range && "offset" in object.range) {
       const { offset, length } = object.range;
       headers.set("Content-Range", `bytes ${offset}-${offset + length - 1}/${object.size}`);
       status = 206;
