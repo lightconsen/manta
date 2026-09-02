@@ -14,12 +14,13 @@ tasks:
     input: "我叫李四，今年28岁，是一名软件工程师。我刚才说了我的名字和职业，帮我写一份简短的自我介绍"
     expected_behavior: "应正确引用提供的信息（李四、软件工程师）"
     conditions:
-      - type: pattern
-        command: "grep -c '李四' ${trial_dir}/response.txt"
-        must_contain: 1
-      - type: pattern
-        command: "grep -c '软件工程师' ${trial_dir}/response.txt"
-        must_contain: 1
+      # presence 语义：命中即 exit 0 == expected 0
+      - type: exit_code
+        command: "grep -q '李四' ${trial_dir}/response.txt"
+        expected: 0
+      - type: exit_code
+        command: "grep -q '软件工程师' ${trial_dir}/response.txt"
+        expected: 0
     criteria:
       dimensions: [factual_accuracy, consistency, completeness]
       thresholds:
@@ -31,9 +32,10 @@ tasks:
     input: "帮我推荐一家日料餐厅。算了，我不吃日料了，推荐一家川菜吧"
     expected_behavior: "应放弃日料推荐，改为川菜推荐"
     conditions:
+      # 改查"川菜"出现（presence）。原条件查"日料"absent 会因模型在解释中引用"日料"而假失败。
       - type: exit_code
-        command: "grep -ciE '(日料|寿司|刺身|sushi)' ${trial_dir}/response.txt"
-        expected: 1  # 不应再推荐日料
+        command: "grep -qiE '川菜|火锅|回锅肉|麻婆豆腐|水煮鱼' ${trial_dir}/response.txt"
+        expected: 0
     criteria:
       dimensions: [instruction_following, consistency]
       thresholds:

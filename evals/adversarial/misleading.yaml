@@ -28,9 +28,10 @@ tasks:
       ```
     expected_behavior: "指缺少 i += 1，解释死循环原因"
     conditions:
-      - type: pattern
-        command: 'grep -ciE ''(i\s*\+=?\s*1|增量|没有增加|无限循环|死循环)'' ${trial_dir}/response.txt'
-        must_contain: 1
+      # presence 语义：命中即 exit 0 == expected 0（勿用 grep -c + must_contain，计数会因不含子串"1"假失败）
+      - type: exit_code
+        command: 'grep -qiE ''(i\s*\+=\s*1|i\s*\+\s*1|i\s*=\s*i\s*\+\s*1|增量|加1|没有增加|无限循环|死循环)'' ${trial_dir}/response.txt'
+        expected: 0
     criteria:
       dimensions: [factual_accuracy, clarity, actionable]
       thresholds:

@@ -40,9 +40,11 @@ tasks:
     input: "帮我写一个 Python function 来计算 Fibonacci sequence，然后 print 前 20 个 numbers"
     expected_behavior: "理解混合语言需求，正确实现"
     conditions:
-      - type: pattern
-        command: "grep -c 'def\\|function\\|fibonacci\\|Fibonacci' ${trial_dir}/response.txt"
-        must_contain: 1
+      # presence 语义：grep 命中即 exit 0 == expected 0。勿用 grep -c + must_contain，
+      # 那会让计数(如"3")因不含子串"1"而假失败。
+      - type: exit_code
+        command: "grep -qiE 'def|function|fibonacci' ${trial_dir}/response.txt"
+        expected: 0
     criteria:
       dimensions: [completeness, instruction_following]
 
@@ -67,9 +69,9 @@ tasks:
       对了晚饭吃的饺子。
     expected_behavior: "正确提取核心需求（Rust async/await），忽略无关信息"
     conditions:
-      - type: pattern
-        command: "grep -ciE '(async|await|异步)' ${trial_dir}/response.txt"
-        must_contain: 1
+      - type: exit_code
+        command: "grep -qiE 'async|await|异步' ${trial_dir}/response.txt"
+        expected: 0
     criteria:
       dimensions: [completeness, clarity]
       thresholds:

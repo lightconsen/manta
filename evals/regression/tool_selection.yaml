@@ -12,9 +12,9 @@ tasks:
     input: "2025年的诺贝尔物理学奖得主是谁？"
     expected_behavior: "调用 web_search 获取最新信息（2025年数据不在训练集内）"
     conditions:
-      - type: pattern
-        command: "grep -c 'web_search' ${trial_dir}/eval_trace.log"
-        must_contain: 1
+      - type: exit_code
+        command: "grep -q 'web_search' ${trial_dir}/eval_trace.log"
+        expected: 0   # presence：应调用 web_search（命中 → exit 0）
       - type: exit_code
         command: "grep -cE '(2025.*诺贝尔|Nobel.*2025)' ${trial_dir}/response.txt"
         expected: 0   # 期望 grep 找到至少 1 行匹配
@@ -28,18 +28,22 @@ tasks:
     input: "帮我写一封邮件给李四，内容是询问项目进度，但先查一下他的邮箱地址"
     expected_behavior: "先调用搜索/内存工具查找邮箱，再调用写工具"
     conditions:
-      # 检查 trace 中 web_search/file_read 在 file_write 之前
+      # 检查 trace 中 web_search/memory_search 出现在 file_write 之前。
+      # 原命令用 YAML 折叠标量(>)内嵌 python，折叠后缩进被破坏 → IndentationError 每条都崩。
+      # 改用字面块(|)保留缩进 + heredoc 避免引号转义；逻辑修正为：未搜索必败，无写操作可接受。
       - type: exit_code
-        command: >
-          python3 -c "
+        command: |
+          python3 - <<'PY'
           import re, sys
           trace = open('${trial_dir}/eval_trace.log').read()
           searches = [m.start() for m in re.finditer(r'(web_search|memory_search)', trace)]
           writes = [m.start() for m in re.finditer(r'file_write', trace)]
-          if searches and writes:
-            sys.exit(0 if min(searches) < min(writes) else 1)
-          sys.exit(0 if writes else 1)  # 如果没有写操作也接受
-          "
+          if not searches:
+              sys.exit(1)   # 必须先查邮箱（web_search/memory_search）
+          if not writes:
+              sys.exit(0)   # 环境无邮件/写文件工具时，仅完成查询也接受
+          sys.exit(0 if min(searches) < min(writes) else 1)  # 写应发生在查之后
+          PY
         expected: 0
     criteria:
       dimensions: [instruction_following, consistency]
@@ -69,12 +73,12 @@ tasks:
       最后对比分析我们是否需要升级。
     expected_behavior: "依次调用 web_search → file_read → 综合分析"
     conditions:
-      - type: pattern
-        command: "grep -c 'web_search' ${trial_dir}/eval_trace.log"
-        must_contain: 1
-      - type: pattern
-        command: "grep -c 'file_read\\|glob' ${trial_dir}/eval_trace.log"
-        must_contain: 1
+      - type: exit_code
+        command: "grep -q 'web_search' ${trial_dir}/eval_trace.log"
+        expected: 0   # presence：应调用 web_search（命中 → exit 0）
+      - type: exit_code
+        command: "grep -qE 'file_read|glob' ${trial_dir}/eval_trace.log"
+        expected: 0   # presence：应读取文件
     criteria:
       dimensions: [completeness, clarity, actionable]
       thresholds:
