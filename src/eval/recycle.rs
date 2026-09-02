@@ -571,7 +571,7 @@ pub fn write_badcase_yaml(
     // Serialize to YAML
     let root = serde_yml::Value::Mapping({
         let mut m = serde_yml::Mapping::new();
-        m.insert("tasks".into(), serde_yml::Value::Sequence(existing_tasks));
+        m.insert("tasks".to_string(), serde_yml::Value::Sequence(existing_tasks));
         m
     });
 
@@ -591,39 +591,39 @@ fn build_badcase_yaml_task(record: &BadcaseRecord, original: &EvalTask) -> serde
 
     // id: append suffix to avoid collision with original task id
     task.insert(
-        "id".into(),
+        "id".to_string(),
         format!("{}_bc", &record.task_id[..record.task_id.len().min(50)]).into(),
     );
 
     // input
-    task.insert("input".into(), record.input.clone().into());
+    task.insert("input".to_string(), record.input.clone().into());
 
     // description
     if !record.description.is_empty() {
-        task.insert("description".into(), record.description.clone().into());
+        task.insert("description".to_string(), record.description.clone().into());
     }
 
     // expected_behavior
     if !original.expected_behavior.is_empty() {
-        task.insert("expected_behavior".into(), original.expected_behavior.clone().into());
+        task.insert("expected_behavior".to_string(), original.expected_behavior.clone().into());
     }
 
     // source: always "badcase"
-    task.insert("source".into(), "badcase".into());
+    task.insert("source".to_string(), "badcase".into());
 
     // difficulty + coverage (§八) — round-trip the regression labels
-    task.insert("difficulty".into(), record.difficulty.clone().into());
+    task.insert("difficulty".to_string(), record.difficulty.clone().into());
     if !record.coverage.is_empty() {
-        task.insert("coverage".into(), record.coverage.clone().into());
+        task.insert("coverage".to_string(), record.coverage.clone().into());
     }
 
     // failure_reason
-    task.insert("failure_reason".into(), record.failure_reason.clone().into());
+    task.insert("failure_reason".to_string(), record.failure_reason.clone().into());
 
     // rca_result (if available)
     if let Some(ref rca) = record.rca_result {
         if let Ok(val) = serde_yml::to_value(rca) {
-            task.insert("rca_result".into(), val);
+            task.insert("rca_result".to_string(), val);
         }
     }
 
@@ -634,7 +634,7 @@ fn build_badcase_yaml_task(record: &BadcaseRecord, original: &EvalTask) -> serde
             .iter()
             .map(goal_condition_to_yaml)
             .collect();
-        task.insert("conditions".into(), conds.into());
+        task.insert("conditions".to_string(), conds.into());
     }
 
     // criteria (if original has it)
@@ -645,17 +645,17 @@ fn build_badcase_yaml_task(record: &BadcaseRecord, original: &EvalTask) -> serde
             .iter()
             .map(|d| format!("{:?}", d).into())
             .collect();
-        crit.insert("dimensions".into(), dims.into());
+        crit.insert("dimensions".to_string(), dims.into());
 
         // thresholds: HashMap<String, f64> serializes cleanly
         let thresh_map: serde_yml::Mapping = criteria
             .thresholds
             .iter()
-            .map(|(k, v)| (Value::String(k.clone()), Value::Number(serde_yml::Number::from(*v))))
+            .map(|(k, v)| (k.clone(), Value::Number(serde_yml::Number::from(*v))))
             .collect();
-        crit.insert("thresholds".into(), thresh_map.into());
+        crit.insert("thresholds".to_string(), thresh_map.into());
 
-        task.insert("criteria".into(), crit.into());
+        task.insert("criteria".to_string(), crit.into());
     }
 
     Value::Mapping(task)
@@ -668,35 +668,35 @@ fn goal_condition_to_yaml(cond: &GoalCondition) -> serde_yml::Value {
     let mut m = serde_yml::Mapping::new();
     match cond {
         GoalCondition::ExitCode { command, expected } => {
-            m.insert("type".into(), "exit_code".into());
-            m.insert("command".into(), command.clone().into());
+            m.insert("type".to_string(), "exit_code".into());
+            m.insert("command".to_string(), command.clone().into());
             if let Some(exp) = expected {
-                m.insert("expected".into(), Value::Number((*exp).into()));
+                m.insert("expected".to_string(), Value::Number((*exp).into()));
             }
         }
         GoalCondition::Pattern { command, must_contain } => {
-            m.insert("type".into(), "pattern".into());
-            m.insert("command".into(), command.clone().into());
-            m.insert("must_contain".into(), must_contain.clone().into());
+            m.insert("type".to_string(), "pattern".into());
+            m.insert("command".to_string(), command.clone().into());
+            m.insert("must_contain".to_string(), must_contain.clone().into());
         }
         GoalCondition::FileExists { path } => {
-            m.insert("type".into(), "file_exists".into());
-            m.insert("path".into(), path.clone().into());
+            m.insert("type".to_string(), "file_exists".into());
+            m.insert("path".to_string(), path.clone().into());
         }
         GoalCondition::Numeric { command, operator, threshold } => {
-            m.insert("type".into(), "numeric".into());
-            m.insert("command".into(), command.clone().into());
-            m.insert("operator".into(), format!("{:?}", operator).into());
-            m.insert("threshold".into(), Value::Number(serde_yml::Number::from(*threshold)));
+            m.insert("type".to_string(), "numeric".into());
+            m.insert("command".to_string(), command.clone().into());
+            m.insert("operator".to_string(), format!("{:?}", operator).into());
+            m.insert("threshold".to_string(), Value::Number(serde_yml::Number::from(*threshold)));
         }
         GoalCondition::MustNotContain { command, must_not_contain } => {
-            m.insert("type".into(), "must_not_contain".into());
-            m.insert("command".into(), command.clone().into());
-            m.insert("must_not_contain".into(), must_not_contain.clone().into());
+            m.insert("type".to_string(), "must_not_contain".into());
+            m.insert("command".to_string(), command.clone().into());
+            m.insert("must_not_contain".to_string(), must_not_contain.clone().into());
         }
         GoalCondition::StaticAnalysis { command } => {
-            m.insert("type".into(), "static_analysis".into());
-            m.insert("command".into(), command.clone().into());
+            m.insert("type".to_string(), "static_analysis".into());
+            m.insert("command".to_string(), command.clone().into());
         }
     }
     Value::Mapping(m)
@@ -994,9 +994,9 @@ mod tests {
         };
         let yaml_val = goal_condition_to_yaml(&cond);
         let mapping = yaml_val.as_mapping().unwrap();
-        assert_eq!(mapping[&v("type")], v("pattern"));
-        assert_eq!(mapping[&v("command")], v("grep -c 'web_search' ${trial_dir}/trace.log"));
-        assert_eq!(mapping[&v("must_contain")], v("1"));
+        assert_eq!(mapping["type"], v("pattern"));
+        assert_eq!(mapping["command"], v("grep -c 'web_search' ${trial_dir}/trace.log"));
+        assert_eq!(mapping["must_contain"], v("1"));
 
         // Numeric variant
         let cond2 = GoalCondition::Numeric {
@@ -1006,9 +1006,9 @@ mod tests {
         };
         let yaml_val2 = goal_condition_to_yaml(&cond2);
         let m2 = yaml_val2.as_mapping().unwrap();
-        assert_eq!(m2[&v("type")], v("numeric"));
-        assert_eq!(m2[&v("operator")], v("Ge"));
-        assert_eq!(m2[&v("threshold")].as_f64().unwrap(), 3.0);
+        assert_eq!(m2["type"], v("numeric"));
+        assert_eq!(m2["operator"], v("Ge"));
+        assert_eq!(m2["threshold"].as_f64().unwrap(), 3.0);
 
         // ExitCode variant
         let cond3 = GoalCondition::ExitCode {
@@ -1017,8 +1017,8 @@ mod tests {
         };
         let yaml_val3 = goal_condition_to_yaml(&cond3);
         let m3 = yaml_val3.as_mapping().unwrap();
-        assert_eq!(m3[&v("type")], v("exit_code"));
-        assert_eq!(m3[&v("expected")].as_i64().unwrap(), 0);
+        assert_eq!(m3["type"], v("exit_code"));
+        assert_eq!(m3["expected"].as_i64().unwrap(), 0);
 
         // FileExists variant
         let cond4 = GoalCondition::FileExists {
@@ -1026,8 +1026,8 @@ mod tests {
         };
         let yaml_val4 = goal_condition_to_yaml(&cond4);
         let m4 = yaml_val4.as_mapping().unwrap();
-        assert_eq!(m4[&v("type")], v("file_exists"));
-        assert_eq!(m4[&v("path")], v("/tmp/result.json"));
+        assert_eq!(m4["type"], v("file_exists"));
+        assert_eq!(m4["path"], v("/tmp/result.json"));
     }
 
     #[test]
@@ -1379,10 +1379,9 @@ mod tests {
         labeled.difficulty = "hard".into();
         labeled.coverage = vec!["tools".into(), "routing".into()];
         let value = build_badcase_yaml_task(&labeled, &crate::eval::EvalTask::default());
-        let key = |s: &str| serde_yml::Value::String(s.to_string());
         let mapping = value.as_mapping().unwrap();
-        assert_eq!(mapping.get(&key("difficulty")), Some(&serde_yml::Value::String("hard".into())));
-        let coverage = mapping.get(&key("coverage")).expect("coverage key");
+        assert_eq!(mapping.get("difficulty"), Some(&serde_yml::Value::String("hard".into())));
+        let coverage = mapping.get("coverage").expect("coverage key");
         assert_eq!(
             coverage
                 .as_sequence()
