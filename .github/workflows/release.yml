@@ -384,3 +384,25 @@ jobs:
           files: artifacts/*
           generate_release_notes: true
 
+      # Mirror every release artifact to Cloudflare R2 (bucket layout is flat)
+      # so the marketing site can serve them at https://syscity.net/releases/<file>
+      # via the worker in workers/releases/. Filenames are stable across tags
+      # (latest semantics): sync overwrites in place and --delete prunes
+      # artifacts dropped from the release.
+      #
+      # Required repo secrets:
+      #   CLOUDFLARE_ACCOUNT_ID   — Cloudflare account ID
+      #   R2_ACCESS_KEY_ID        — R2 API token access key
+      #   R2_SECRET_ACCESS_KEY    — R2 API token secret
+      #   (token scope: Object Read & Write on the `syscity-releases` bucket)
+      - name: Publish to Cloudflare R2
+        working-directory: artifacts
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_EC2_METADATA_DISABLED: "true"
+        run: |
+          aws s3 sync . s3://syscity-releases/ \
+            --endpoint-url "https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com" \
+            --delete
+

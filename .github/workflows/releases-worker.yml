@@ -1,0 +1,36 @@
+name: Deploy releases worker
+
+# Deploys the syscity.net/releases/* download worker (workers/releases/) to
+# Cloudflare. Runs on changes to the worker; the first deploy can also be done
+# manually from a checkout with `npx wrangler deploy` (working dir:
+# workers/releases).
+#
+# Required repo secrets:
+#   CLOUDFLARE_ACCOUNT_ID  — Cloudflare account ID (dashboard → right sidebar)
+#   CLOUDFLARE_API_TOKEN   — API token with:
+#                              Account · Workers Scripts · Edit
+#                              Zone    · Workers Routes   · Edit  (zone syscity.net)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "workers/releases/**"
+      - ".github/workflows/releases-worker.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: workers/releases
