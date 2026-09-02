@@ -67,12 +67,20 @@ impl FileReadTool {
         data[..check_len].contains(&0)
     }
 
-    /// Truncate file content if too large
+    /// Truncate file content if too large.
+    ///
+    /// `max_chars` bounds the returned prefix in bytes; the slice is stepped
+    /// back to the nearest UTF-8 character boundary so a multi-byte character
+    /// (e.g. an emoji) is never split, which would panic.
     fn truncate_content(content: String, max_chars: usize) -> String {
         if content.len() > max_chars {
+            let mut byte_end = max_chars.min(content.len());
+            while byte_end > 0 && !content.is_char_boundary(byte_end) {
+                byte_end -= 1;
+            }
             format!(
                 "{}\n[File truncated: {} total characters]",
-                &content[..max_chars],
+                &content[..byte_end],
                 content.len()
             )
         } else {
@@ -640,6 +648,20 @@ mod tests {
         let truncated = FileReadTool::truncate_content(content.clone(), 100);
         assert!(truncated.len() < content.len());
         assert!(truncated.contains("truncated"));
+    }
+
+    #[test]
+    fn test_truncate_content_does_not_split_multibyte_char() {
+        // "#!/usr/bin/env python3\n" is 24 ASCII bytes; 🚀 spans bytes 24..28.
+        // A limit of 26 lands inside the emoji and used to panic with "byte
+        // index 26 is not a char boundary"; it must step back to byte 24.
+        let content = format!("#!/usr/bin/env python3\n🚀{}", "x".repeat(200));
+        let truncated = FileReadTool::truncate_content(content.clone(), 26);
+        assert!(truncated.len() < content.len());
+        assert!(truncated.contains("truncated"));
+        // Prefix before the marker must be valid UTF-8 (no split codepoint).
+        let prefix = truncated.split("\n[File truncated").next().unwrap();
+        assert_eq!(prefix, "#!/usr/bin/env python3\n");
     }
 
     #[tokio::test]
