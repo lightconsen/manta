@@ -236,8 +236,6 @@ pub(crate) async fn handle_agents_update(req: &WsRequest, state: &Arc<GatewaySta
     }
 }
 
-#[cfg(test)]
-
 /// `agents.default` — switch the default agent (`{ agent_id }`).
 pub(crate) async fn handle_agents_default(
     req: &WsRequest,
@@ -274,10 +272,7 @@ pub(crate) async fn handle_agents_memory_get(
     };
     let dir = crate::dirs::agents_dir().join(&params.agent_id);
     let path = dir.join("MEMORY.md");
-    let content = match tokio::fs::read_to_string(&path).await {
-        Ok(c) => c,
-        Err(_) => String::new(),
-    };
+    let content = tokio::fs::read_to_string(&path).await.unwrap_or_default();
     WsResponse::ok(&req.id, serde_json::json!({ "agent_id": params.agent_id, "memory": content }))
 }
 
@@ -395,6 +390,7 @@ pub(crate) async fn handle_agents_import(req: &WsRequest, state: &Arc<GatewaySta
     )
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::gateway::state_tests::make_test_state;

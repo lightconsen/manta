@@ -2,9 +2,12 @@
 
 use std::sync::Arc;
 
+#[cfg(feature = "cloud")]
 use serde::Deserialize;
 
-use super::super::{parse_params, WsRequest, WsResponse};
+#[cfg(feature = "cloud")]
+use super::super::parse_params;
+use super::super::{WsRequest, WsResponse};
 use super::{cloud_status_json, cloud_unavailable};
 use crate::gateway::GatewayState;
 
