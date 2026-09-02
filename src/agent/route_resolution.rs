@@ -384,8 +384,8 @@ pub struct RouteResolver {
     cache: Arc<BindingCache>,
     /// Routing rules (sorted by priority descending).
     rules: RwLock<Vec<RouteRule>>,
-    /// Default agent ID.
-    default_agent_id: String,
+    /// Default agent ID (runtime-switchable via `set_default_agent`).
+    default_agent_id: RwLock<String>,
     /// Default binding mode.
     default_mode: BindingMode,
     /// Session-scoped overrides (session_key -> ResolvedBinding).
@@ -398,7 +398,7 @@ impl RouteResolver {
         Self {
             cache: Arc::new(BindingCache::new()),
             rules: RwLock::new(Vec::new()),
-            default_agent_id: default_agent_id.into(),
+            default_agent_id: RwLock::new(default_agent_id.into()),
             default_mode: BindingMode::Persistent,
             session_overrides: RwLock::new(HashMap::new()),
         }
@@ -473,13 +473,27 @@ impl RouteResolver {
             "No rule matched for peer={} channel={}, using default",
             resolution.peer, resolution.channel
         );
+        let default_agent_id = self.default_agent_id.read().await;
         let binding = ResolvedBinding::new(
             format!("thread-{}", uuid::Uuid::new_v4()),
-            &self.default_agent_id,
+            default_agent_id.as_str(),
             self.default_mode,
         );
         self.cache.insert(cache_key, binding.clone()).await;
         binding
+    }
+
+    /// Switch the default agent (runtime, used by `agents.default`).
+    pub async fn set_default_agent(&self, agent_id: impl Into<String>) {
+        *self.default_agent_id.write().await = agent_id.into();
+        // Invalidate cached bindings so the new default takes effect
+        // immediately for conversations that had no explicit routing.
+        self.cache.clear().await;
+    }
+
+    /// The currently configured default agent.
+    pub async fn default_agent(&self) -> String {
+        self.default_agent_id.read().await.clone()
     }
 
     /// Set a session-scoped override.

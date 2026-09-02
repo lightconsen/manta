@@ -8,12 +8,6 @@ use serde_json::json;
 use crate::cli::ws;
 use crate::error::{Result, SyscityError};
 
-/// Default daemon base URL. Only used for `edit`/`switch`/`memory`/`import`/
-/// `export` — those REST endpoints were never routed on the gateway, so the
-/// CLI calls stay until the backend is implemented (see the WS-only path
-/// below).
-const DAEMON_URL: &str = "http://127.0.0.1:18080";
-
 #[derive(Debug, Subcommand)]
 pub enum AgentCommands {
     /// List all agent personalities
@@ -84,8 +78,6 @@ pub enum AgentCommands {
 
 /// Run agent commands.
 pub async fn run_agent_command(command: &AgentCommands) -> Result<()> {
-    let client = reqwest::Client::new();
-
     match command {
         AgentCommands::List { all } => {
             let payload = ws::call("agents.list", json!({ "all": *all })).await?;
@@ -131,52 +123,35 @@ pub async fn run_agent_command(command: &AgentCommands) -> Result<()> {
             }
         }
         AgentCommands::Switch { name } => {
-            let url = format!("{}/api/v1/agents/default", DAEMON_URL);
-            let body = json!({ "agent_id": name });
-            match client.patch(&url).json(&body).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    if status.is_success() {
-                        println!("Switched to agent '{}'", name);
-                    } else {
-                        let text = resp.text().await.unwrap_or_default();
-                        eprintln!("Failed to switch agent ({}): {}", status, text);
-                    }
-                }
+            match ws::call("agents.default", json!({ "agent_id": name })).await {
+                Ok(_) => println!("Switched to agent '{}'", name),
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    eprintln!("Failed to switch agent: {}", e);
+                    return Err(e);
                 }
             }
         }
         AgentCommands::Memory { name, clear } => {
             let id = name.as_deref().unwrap_or("default");
             if *clear {
-                let url = format!("{}/api/v1/agents/{}/memory", DAEMON_URL, id);
-                match client.delete(&url).send().await {
-                    Ok(resp) => {
-                        if resp.status().is_success() {
-                            println!("Memory cleared for agent '{}'", id);
-                        } else {
-                            let text = resp.text().await.unwrap_or_default();
-                            eprintln!("Failed to clear memory: {}", text);
-                        }
-                    }
+                match ws::call("agents.memory.clear", json!({ "agent_id": id })).await {
+                    Ok(_) => println!("Memory cleared for agent '{}'", id),
                     Err(e) => {
-                        eprintln!("Failed to reach daemon: {}", e);
-                        return Err(SyscityError::Internal(e.to_string()));
+                        eprintln!("Failed to clear memory: {}", e);
+                        return Err(e);
                     }
                 }
             } else {
-                let url = format!("{}/api/v1/agents/{}/memory", DAEMON_URL, id);
-                match client.get(&url).send().await {
-                    Ok(resp) => {
-                        let body = resp.text().await.unwrap_or_default();
-                        println!("{}", body);
+                match ws::call("agents.memory.get", json!({ "agent_id": id })).await {
+                    Ok(payload) => {
+                        println!(
+                            "{}",
+                            payload.get("memory").and_then(|m| m.as_str()).unwrap_or("")
+                        );
                     }
                     Err(e) => {
-                        eprintln!("Failed to reach daemon: {}", e);
-                        return Err(SyscityError::Internal(e.to_string()));
+                        eprintln!("Failed to get memory: {}", e);
+                        return Err(e);
                     }
                 }
             }
@@ -185,45 +160,43 @@ pub async fn run_agent_command(command: &AgentCommands) -> Result<()> {
             let content = tokio::fs::read_to_string(path)
                 .await
                 .map_err(|e| SyscityError::Internal(format!("Failed to read file: {}", e)))?;
-            let mut body: serde_json::Value = serde_json::from_str(&content).unwrap_or(json!({}));
-            if let Some(n) = name {
-                body["name"] = serde_json::Value::String(n.clone());
-            }
-            let url = format!("{}/api/v1/agents", DAEMON_URL);
-            match client.post(&url).json(&body).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let text = resp.text().await.unwrap_or_default();
-                    if status.is_success() {
-                        println!("Agent imported successfully");
-                        println!("{}", text);
-                    } else {
-                        eprintln!("Failed to import agent ({}): {}", status, text);
-                    }
-                }
+            let body: serde_json::Value = serde_json::from_str(&content)
+                .map_err(|e| SyscityError::Internal(format!("Invalid JSON: {}", e)))?;
+            let agent_id = name
+                .clone()
+                .or_else(|| {
+                    body.get("agent_id")
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                })
+                .ok_or_else(|| {
+                    SyscityError::Internal("Export file has no agent_id; pass --name".into())
+                })?;
+            let files = body.get("files").cloned().unwrap_or_else(|| json!({}));
+            match ws::call("agents.import", json!({ "agent_id": agent_id, "files": files })).await {
+                Ok(_) => println!("Agent '{}' imported successfully", agent_id),
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    eprintln!("Failed to import agent: {}", e);
+                    return Err(e);
                 }
             }
         }
         AgentCommands::Export { name, output } => {
-            let url = format!("{}/api/v1/agents/{}", DAEMON_URL, name);
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    let body = resp.text().await.unwrap_or_default();
+            match ws::call("agents.export", json!({ "agent_id": name })).await {
+                Ok(body) => {
+                    let text = serde_json::to_string_pretty(&body).unwrap_or_default();
                     if let Some(path) = output {
-                        tokio::fs::write(path, &body).await.map_err(|e| {
+                        tokio::fs::write(path, &text).await.map_err(|e| {
                             SyscityError::Internal(format!("Failed to write file: {}", e))
                         })?;
                         println!("Agent '{}' exported to {:?}", name, path);
                     } else {
-                        println!("{}", body);
+                        println!("{}", text);
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to reach daemon: {}", e);
-                    return Err(SyscityError::Internal(e.to_string()));
+                    eprintln!("Failed to export agent: {}", e);
+                    return Err(e);
                 }
             }
         }

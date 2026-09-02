@@ -463,6 +463,11 @@ async fn dispatch_method(
         "agents.registry" => agents::handle_agents_registry(req, state).await,
         "agents.get_config" => agents::handle_agents_get_config(req, state).await,
         "agents.update" => agents::handle_agents_update(req, state).await,
+        "agents.default" => agents::handle_agents_default(req, state).await,
+        "agents.memory.get" => agents::handle_agents_memory_get(req, state).await,
+        "agents.memory.clear" => agents::handle_agents_memory_clear(req, state).await,
+        "agents.export" => agents::handle_agents_export(req, state).await,
+        "agents.import" => agents::handle_agents_import(req, state).await,
         "health" => agents::handle_health(req, state).await,
         "system.presence" => agents::handle_system_presence(req).await,
         "commands.list" => {

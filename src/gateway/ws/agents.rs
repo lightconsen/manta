@@ -237,6 +237,164 @@ pub(crate) async fn handle_agents_update(req: &WsRequest, state: &Arc<GatewaySta
 }
 
 #[cfg(test)]
+
+/// `agents.default` — switch the default agent (`{ agent_id }`).
+pub(crate) async fn handle_agents_default(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct Params {
+        agent_id: String,
+    }
+    let params: Params = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+    state
+        .agents
+        .route_resolver
+        .set_default_agent(&params.agent_id)
+        .await;
+    WsResponse::ok(&req.id, serde_json::json!({ "agent_id": params.agent_id, "default": true }))
+}
+
+/// `agents.memory.get` — the agent's `MEMORY.md` (`{ agent_id }`).
+pub(crate) async fn handle_agents_memory_get(
+    req: &WsRequest,
+    _state: &Arc<GatewayState>,
+) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct Params {
+        agent_id: String,
+    }
+    let params: Params = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+    let dir = crate::dirs::agents_dir().join(&params.agent_id);
+    let path = dir.join("MEMORY.md");
+    let content = match tokio::fs::read_to_string(&path).await {
+        Ok(c) => c,
+        Err(_) => String::new(),
+    };
+    WsResponse::ok(&req.id, serde_json::json!({ "agent_id": params.agent_id, "memory": content }))
+}
+
+/// `agents.memory.clear` — clear the agent's `MEMORY.md` (`{ agent_id }`).
+pub(crate) async fn handle_agents_memory_clear(
+    req: &WsRequest,
+    _state: &Arc<GatewayState>,
+) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct Params {
+        agent_id: String,
+    }
+    let params: Params = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+    let dir = crate::dirs::agents_dir().join(&params.agent_id);
+    match tokio::fs::create_dir_all(&dir).await {
+        Ok(()) => {}
+        Err(e) => {
+            return WsResponse::err(
+                &req.id,
+                "INTERNAL",
+                format!("Failed to access agent dir: {}", e),
+            )
+        }
+    }
+    match tokio::fs::write(dir.join("MEMORY.md"), "").await {
+        Ok(()) => WsResponse::ok(
+            &req.id,
+            serde_json::json!({ "agent_id": params.agent_id, "cleared": true }),
+        ),
+        Err(e) => WsResponse::err(&req.id, "INTERNAL", format!("Failed to clear memory: {}", e)),
+    }
+}
+
+/// `agents.export` — the agent's on-disk personality files as JSON
+/// (`{ agent_id }` → `{ agent_id, files: { "SOUL.md": ... } }`).
+pub(crate) async fn handle_agents_export(
+    req: &WsRequest,
+    _state: &Arc<GatewayState>,
+) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct Params {
+        agent_id: String,
+    }
+    let params: Params = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+    let dir = crate::dirs::agents_dir().join(&params.agent_id);
+    const MD_FILES: &[&str] = &[
+        "PERSONALITY.md",
+        "SOUL.md",
+        "IDENTITY.md",
+        "BOOTSTRAP.md",
+        "USER.md",
+        "AGENTS.md",
+        "TOOLS.md",
+        "HEARTBEAT.md",
+        "MEMORY.md",
+    ];
+    let mut files = serde_json::Map::new();
+    for name in MD_FILES {
+        let content = tokio::fs::read_to_string(dir.join(name))
+            .await
+            .unwrap_or_default();
+        if !content.is_empty() {
+            files.insert(name.to_string(), serde_json::Value::String(content));
+        }
+    }
+    WsResponse::ok(&req.id, serde_json::json!({ "agent_id": params.agent_id, "files": files }))
+}
+
+/// `agents.import` — write an agent's personality files and rediscover it
+/// (`{ agent_id, files: { "SOUL.md": ... } }`).
+pub(crate) async fn handle_agents_import(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct Params {
+        agent_id: String,
+        files: std::collections::HashMap<String, String>,
+    }
+    let params: Params = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+    let dir = crate::dirs::agents_dir().join(&params.agent_id);
+    if let Err(e) = tokio::fs::create_dir_all(&dir).await {
+        return WsResponse::err(&req.id, "INTERNAL", format!("Failed to create agent dir: {}", e));
+    }
+    for (name, content) in &params.files {
+        if name.contains('/') || name.contains("..") {
+            return WsResponse::err(
+                &req.id,
+                "INVALID_PARAMS",
+                format!("Invalid file name: {}", name),
+            );
+        }
+        if let Err(e) = tokio::fs::write(dir.join(name), content).await {
+            return WsResponse::err(
+                &req.id,
+                "INTERNAL",
+                format!("Failed to write {}: {}", name, e),
+            );
+        }
+    }
+    let discovered = state.agents.registry.write().await.discover().await;
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "agent_id": params.agent_id,
+            "imported": true,
+            "registry_size": discovered.unwrap_or(0),
+        }),
+    )
+}
+
 mod tests {
     use super::*;
     use crate::gateway::state_tests::make_test_state;
@@ -395,5 +553,46 @@ mod tests {
         )
         .await;
         assert!(!resp.ok);
+    }
+    #[tokio::test]
+    async fn agents_default_switches_resolver() {
+        let state = state().await;
+        let resp = handle_agents_default(
+            &req("r1", Some(serde_json::json!({ "agent_id": "main" }))),
+            &state,
+        )
+        .await;
+        assert!(resp.ok, "default failed: {:?}", resp.error);
+        assert_eq!(state.agents.route_resolver.default_agent().await, "main");
+    }
+
+    #[tokio::test]
+    async fn agents_memory_get_unknown_returns_empty() {
+        let state = state().await;
+        let resp = handle_agents_memory_get(
+            &req("r1", Some(serde_json::json!({ "agent_id": "__no_such_agent__" }))),
+            &state,
+        )
+        .await;
+        assert!(resp.ok, "memory.get failed: {:?}", resp.error);
+        assert_eq!(resp.payload.as_ref().unwrap()["memory"], "");
+    }
+
+    #[tokio::test]
+    async fn agents_import_invalid_filename_errors() {
+        let state = state().await;
+        let resp = handle_agents_import(
+            &req(
+                "r1",
+                Some(serde_json::json!({
+                    "agent_id": "t-import",
+                    "files": { "../evil.md": "x" }
+                })),
+            ),
+            &state,
+        )
+        .await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_PARAMS");
     }
 }
