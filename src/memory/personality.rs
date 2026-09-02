@@ -574,9 +574,15 @@ impl PersonalityMemory {
             SyscityError::Validation(format!("Failed to serialize SOUL.md config: {}", e))
         })?;
 
+        // serde_yml does not guarantee a trailing newline, so trim and add one
+        // before the closing `---` delimiter — otherwise the terminator would be
+        // glued onto the last YAML line and the frontmatter would not re-parse.
+        let yaml = yaml.trim_end();
+
         let mut output = String::new();
         output.push_str("---\n");
-        output.push_str(&yaml);
+        output.push_str(yaml);
+        output.push('\n');
         output.push_str("---\n\n");
         output.push_str(&soul_file.body);
 
