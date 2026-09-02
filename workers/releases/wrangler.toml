@@ -2,13 +2,6 @@ name = "syscity-releases"
 main = "src/index.js"
 compatibility_date = "2025-01-01"
 
-# Serves the `syscity-releases` R2 bucket under https://syscity.net/releases/*.
-# The bucket is written by the Release workflow (`.github/workflows/release.yml`)
-# via the S3-compatible API; this worker is the read path.
-[[r2_buckets]]
-binding = "RELEASES"
-bucket_name = "syscity-releases"
-
 # Worker routes only fire on PROXIED (orange-cloud) DNS records — make sure
 # both syscity.net and www.syscity.net are proxied in the Cloudflare dashboard
 # (GitHub Pages works fine behind the proxy; use SSL mode "Full").
@@ -16,3 +9,10 @@ routes = [
   { pattern = "syscity.net/releases/*", zone_name = "syscity.net" },
   { pattern = "www.syscity.net/releases/*", zone_name = "syscity.net" },
 ]
+
+# Serves the `syscity-releases` R2 bucket under https://syscity.net/releases/*.
+# The bucket is written by the Release workflow (`.github/workflows/release.yml`)
+# via the S3-compatible API; this worker is the read path.
+[[r2_buckets]]
+binding = "RELEASES"
+bucket_name = "syscity-releases"

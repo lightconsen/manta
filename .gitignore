@@ -81,3 +81,5 @@ lcov.info
 .dev.vars*
 !.dev.vars.example
 !.env.example
+
+*.secret
