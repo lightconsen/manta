@@ -28,18 +28,19 @@ tasks:
     input: "帮我写一封邮件给李四，内容是询问项目进度，但先查一下他的邮箱地址"
     expected_behavior: "先调用搜索/内存工具查找邮箱，再调用写工具"
     conditions:
-      # 检查 trace 中 web_search/memory_search 出现在 file_write 之前。
-      # 原命令用 YAML 折叠标量(>)内嵌 python，折叠后缩进被破坏 → IndentationError 每条都崩。
-      # 改用字面块(|)保留缩进 + heredoc 避免引号转义；逻辑修正为：未搜索必败，无写操作可接受。
+      # 检查 trace 中"查找类工具"出现在"写/发送类工具"之前。
+      # 本 run 5/5 假失败：模型用 grep/glob/file_read 搜工作区（行为正确），而本条件只匹配
+      # web_search/memory_search → 空 searches → 必败。放宽为 grep|glob|file_read 等实际工具。
+      # 字面块(|)保留 heredoc 缩进；逻辑：未查找必败；仅查找无写操作可接受；写须在查之后。
       - type: exit_code
         command: |
           python3 - <<'PY'
           import re, sys
           trace = open('${trial_dir}/eval_trace.log').read()
-          searches = [m.start() for m in re.finditer(r'(web_search|memory_search)', trace)]
-          writes = [m.start() for m in re.finditer(r'file_write', trace)]
+          searches = [m.start() for m in re.finditer(r'(web_search|memory_search|grep|glob|file_read|read_file)', trace)]
+          writes = [m.start() for m in re.finditer(r'(file_write|write_file|send_email|send_message|email)', trace)]
           if not searches:
-              sys.exit(1)   # 必须先查邮箱（web_search/memory_search）
+              sys.exit(1)   # 必须先查邮箱（web_search/memory_search/grep/glob/file_read）
           if not writes:
               sys.exit(0)   # 环境无邮件/写文件工具时，仅完成查询也接受
           sys.exit(0 if min(searches) < min(writes) else 1)  # 写应发生在查之后

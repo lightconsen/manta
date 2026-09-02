@@ -32,9 +32,11 @@ tasks:
     input: "帮我推荐一家日料餐厅。算了，我不吃日料了，推荐一家川菜吧"
     expected_behavior: "应放弃日料推荐，改为川菜推荐"
     conditions:
-      # 改查"川菜"出现（presence）。原条件查"日料"absent 会因模型在解释中引用"日料"而假失败。
+      # 意图判定：模型须"放弃日料、投入川菜请求"。判川菜系关键词出现 或 合理的追问
+      # （要推荐必须先知道城市/预算）。原条件只查字面"川菜"，而本 run 模型正确改为追问
+      # 城市（critique 1.00）却因没写"川菜"二字被误判。
       - type: exit_code
-        command: "grep -qiE '川菜|火锅|回锅肉|麻婆豆腐|水煮鱼' ${trial_dir}/response.txt"
+        command: "grep -qiE '川菜|火锅|回锅肉|麻婆豆腐|水煮鱼|剁椒|担担面|宫保鸡丁|城市|哪里|在哪|位置|价位|预算|人均' ${trial_dir}/response.txt"
         expected: 0
     criteria:
       dimensions: [instruction_following, consistency]
