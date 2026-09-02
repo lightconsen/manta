@@ -163,7 +163,6 @@ pub struct InfraState {
     pub model_router: Arc<ModelRouter>,
     /// CC-compatible shell hooks bridge (`~/.syscity/hooks.json`).
     pub shell_hooks: Arc<crate::hooks::ShellHookBridge>,
-    /// Engine metrics counters (populated when a core `Engine` is wired in).
     /// Per-turn Like/Dislike feedback store (`feedback.vote`).
     pub feedback_store: Option<Arc<crate::gateway::FeedbackStore>>,
     /// Auto-collected badcase pool (online risk signals + human 👎).

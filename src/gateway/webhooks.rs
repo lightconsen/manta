@@ -65,7 +65,7 @@ async fn reset_session(sessions: &RwLock<HashMap<String, String>>, platform_key:
 
 /// Create the public webhook router
 pub fn create_webhook_router(state: Arc<GatewayState>) -> Router {
-    Router::new()
+    let router = Router::new()
         // WhatsApp Business API webhooks
         .route("/webhooks/whatsapp", post(whatsapp_webhook_handler))
         .route("/webhooks/whatsapp/verify", get(whatsapp_verify_handler))
@@ -73,13 +73,19 @@ pub fn create_webhook_router(state: Arc<GatewayState>) -> Router {
         .route("/webhooks/telegram/:token", post(telegram_webhook_handler))
         // Feishu/Lark webhooks
         .route("/webhooks/feishu", post(feishu_webhook_handler))
-        // WeChat Official Account (公众号) webhooks
-        .route("/webhooks/wechatmp", get(wechatmp_verify_handler).post(wechatmp_webhook_handler))
         // Slack Events API webhooks
         .route("/webhooks/slack", post(slack_webhook_handler))
         // Generic webhook for custom integrations
-        .route("/webhooks/:channel", post(generic_webhook_handler))
-        .with_state(state)
+        .route("/webhooks/:channel", post(generic_webhook_handler));
+
+    // WeChat Official Account (公众号) webhooks (feature-gated channel)
+    #[cfg(feature = "wechatmp")]
+    let router = router.route(
+        "/webhooks/wechatmp",
+        get(wechatmp_verify_handler).post(wechatmp_webhook_handler),
+    );
+
+    router.with_state(state)
 }
 
 /// Verify WhatsApp webhook subscription (GET request for verification)
@@ -551,6 +557,7 @@ async fn feishu_webhook_handler(
 
 /// Resolve one wechatmp credential from config, falling back to the secret
 /// store. Returns `None` when unset.
+#[cfg(feature = "wechatmp")]
 async fn wechatmp_cred(state: &Arc<GatewayState>, key: &str) -> Option<String> {
     let legacy = {
         let config = state.config.read().await;
@@ -568,6 +575,7 @@ async fn wechatmp_cred(state: &Arc<GatewayState>, key: &str) -> Option<String> {
 }
 
 /// Resolve wechatmp credentials from config (with secret-store fallback).
+#[cfg(feature = "wechatmp")]
 async fn wechatmp_credentials(
     state: &Arc<GatewayState>,
 ) -> Option<crate::channels::wechatmp::WechatMpConfig> {
@@ -580,6 +588,7 @@ async fn wechatmp_credentials(
 }
 
 /// WeChat MP verification query params (GET /webhooks/wechatmp).
+#[cfg(feature = "wechatmp")]
 #[derive(Debug, Deserialize)]
 pub struct WechatMpVerifyQuery {
     pub signature: String,
@@ -589,6 +598,7 @@ pub struct WechatMpVerifyQuery {
 }
 
 /// GET verification: echo `echostr` when the signature matches.
+#[cfg(feature = "wechatmp")]
 async fn wechatmp_verify_handler(
     Query(query): Query<WechatMpVerifyQuery>,
     State(state): State<Arc<GatewayState>>,
@@ -607,6 +617,7 @@ async fn wechatmp_verify_handler(
 }
 
 /// POST webhook: verify → decrypt → route to the inbound pipeline.
+#[cfg(feature = "wechatmp")]
 async fn wechatmp_webhook_handler(
     State(state): State<Arc<GatewayState>>,
     body: Bytes,

@@ -209,7 +209,6 @@ async fn make_test_state(config: GatewayConfig) -> GatewayState {
                 syscity::model_router::ModelRouterConfig::default(),
             )),
             shell_hooks: syscity::hooks::ShellHookBridge::empty(),
-            engine_metrics: None,
             feedback_store: None,
             pending_badcase_store: None,
             decision_trace_store: None,
