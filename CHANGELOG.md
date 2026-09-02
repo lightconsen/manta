@@ -11,6 +11,37 @@ if no section matches, the release falls back to auto-generated notes.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-02
+
+### Highlights
+
+- **Syscity Cloud platform** (default-off `cloud` feature): account sign-in with popup + callback, a marketplace to browse and install experts/skills/connectors, cloud model / search / knowledge-base providers, device binding with usage & subscription display, and cloud-provisioned connectors — all double-gated behind the feature.
+- **Document authoring**: slides canvas pipeline (`write_report format=slides` with live preview and PPTX export), full `write_document` coverage via authored-HTML docx/xlsx slices, chart/diagram generation (`svg_to_png` + `generate_chart`) with image embedding, and a document-authoring skill.
+- **Closed-loop harness / eval**: turn feedback buttons with an eval dashboard, layered scorer wired into governance-weighted verdict gates, compression quality gating, human-review sampling, online monitoring, and a governed regression suite (`badcase-run`) — plus online sampling, a low-retention compression gate, feedback ops aggregation, and N=1 online shadow replay.
+- **CLI migrated to WebSocket RPC**: agents, cron, skills, providers, plugin, device, admin, and audit commands now speak WS instead of REST.
+- **Desktop & remote**: remote gateway connection mode (desktop and mobile), reuse of an already-running gateway, an in-web tool approval UI (modal + sidebar badge), and a WeChat Official Account channel.
+
+### Added
+
+- WS methods: `agents.*` (default/memory/import/export/config), `audit.*`, `cron.*`, `skills.*`, `providers.fallback`, `plugins.reload_all`, `device.pairing`, `mcp`, `security gate/allowlist/status`
+- Marketplace: expert summoning, connector WS/HTTP surface + events, MCP connector abstraction (catalog sync, lifecycle DSL, bundled skills, persistent state)
+- Office: slides rich text, anchoring, gradients, PPTX export; docx/xlsx authored-HTML slices; svg_to_png + generate_chart tools; docx image embedding
+- Cloud: login/token/status/logout endpoints, `cloud_kb` tool, cloud search provider, OpenAI-compatible cloud model provider
+- Site: per-platform download buttons (macOS Apple Silicon / Intel split), tab-switched install commands, pricing (USD on EN / RMB on zh), a Syscity Cloud section, light demo GIF with EN/中文 switcher, favicons
+- Windows installer (`install.ps1`), `--cloud` build flag
+- Release: CHANGELOG-driven release notes with auto-notes fallback; release artifacts published to Cloudflare R2 and served via the `syscity-releases` worker
+
+### Changed
+
+- Sidebar account/login moved to the top and bottom rows; composer merges image/file into one attach button; marketplace gets a full-screen view
+- Desktop: reuse an already-running gateway; remote gateway connection mode with unified frontend HTTP base
+- Site hero install tabs, larger platform icons, enlarged mobile screenshots
+
+### Fixed
+
+- CI: dropped the stale `engine_metrics` field, gated wechatmp webhooks behind the feature, hoisted `routes` above `r2_buckets` in the releases worker config
+- Bumped wasmtime 45.0 → 46.0 for RUSTSEC-2026-0269
+
 ## [0.2.2] - 2026-08-24
 
 ### Highlights
