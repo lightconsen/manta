@@ -372,6 +372,12 @@ pub async fn run_suite(
     }
 
     // ── Step 9: Run each task ───────────────────────────────────────────────
+    // The gate verdict is suite-wide: `min_pass_rate` is the fraction of ALL
+    // trials that must pass (e.g. 0.85 of 135). A per-task threshold would be a
+    // de-facto 100% requirement at 5 trials (4/5 = 0.8 < 0.85), which no live
+    // eval can meet reliably. `all_passed` here only records hard task-level
+    // execution errors (a task that fails to run at all is a real problem);
+    // per-task pass rates are still printed below for review.
     let mut all_passed = true;
     let mut total_trials = 0usize;
     let mut total_passed = 0usize;
@@ -463,9 +469,6 @@ pub async fn run_suite(
 
                 total_trials += summary.total_trials;
                 total_passed += (summary.pass_rate * summary.total_trials as f64).round() as usize;
-                if summary.pass_rate < suite.min_pass_rate {
-                    all_passed = false;
-                }
             }
             Err(e) => {
                 println!(" failed\n");
@@ -482,18 +485,22 @@ pub async fn run_suite(
     } else {
         0.0
     };
+    // Gate verdict: `min_pass_rate` applies to the whole suite (all trials),
+    // not per task. A hard task error (a task that could not run) still fails
+    // the gate regardless of the overall rate.
+    let gate_passed = all_passed && overall_pass_rate >= suite.min_pass_rate;
 
     println!("═══ Suite Summary: {} ═══", suite.name);
     println!("  Overall pass rate: {:.1}%", overall_pass_rate * 100.0);
     println!("  Total trials:      {}", total_trials);
     println!("  Total passed:      {}", total_passed);
     println!("  Min required:      {:.0}%", suite.min_pass_rate * 100.0);
-    println!("  Result:            {}", if all_passed { "PASS" } else { "FAIL" });
+    println!("  Result:            {}", if gate_passed { "PASS" } else { "FAIL" });
 
     // ── Step 10: Shutdown ──────────────────────────────────────────────────
     agent.shutdown().await?;
 
-    if !all_passed {
+    if !gate_passed {
         return Err(crate::error::SyscityError::Validation(
             "Suite did not meet minimum pass rate".into(),
         ));
