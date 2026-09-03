@@ -9,6 +9,13 @@ use tracing::{debug, info, warn};
 
 use super::super::*;
 
+/// Injected once when an LLM round ends with neither text nor tool calls —
+/// e.g. a reasoning-only stream that exhausted its output budget, or a
+/// provider that silently stops. Pushes the model to actually answer instead
+/// of completing the turn with a blank reply.
+const EMPTY_REPLY_NUDGE: &str = "你的上一条回复内容为空（没有生成任何文字，也没有调用工具）。请直接继续：要么基于已有信息给出最终回答，要么执行下一步操作，不要返回空内容。\n\
+Your previous reply was empty (no text and no tool calls were produced). Continue directly: give your final answer based on what you already have, or take the next concrete step — do not reply with empty content.";
+
 impl Agent {
     /// Resolve the effective model id for a conversation, using the same
     /// precedence as the send path: per-session binding > temporary override >
@@ -74,7 +81,38 @@ impl Agent {
         context: &mut Context,
         user_id: &str,
     ) -> crate::Result<crate::providers::CompletionResponse> {
-        self.get_completion_inner(context, user_id, false).await
+        // An LLM round can end with neither text nor tool calls (e.g. a
+        // reasoning-only stream that exhausted its output budget, or the
+        // provider silently stopping). That must not complete the turn as a
+        // blank reply — nudge once toward a real answer, then surface
+        // whatever comes back (honest even if still empty).
+        let mut nudged_empty = false;
+        loop {
+            let response = self.get_completion_inner(context, user_id, false).await?;
+            let has_output = !response.message.content.trim().is_empty()
+                || response
+                    .message
+                    .tool_calls
+                    .as_ref()
+                    .is_some_and(|c| !c.is_empty());
+            if has_output || nudged_empty {
+                return Ok(response);
+            }
+            nudged_empty = true;
+            warn!(
+                "LLM returned an empty reply (no text, no tool calls); nudging once toward a response"
+            );
+            context.add_message(Message {
+                role: Role::User,
+                content: EMPTY_REPLY_NUDGE.to_string(),
+                content_blocks: None,
+                reasoning_content: None,
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+                metadata: None,
+            });
+        }
     }
 
     /// Get a completion from the LLM, handling tool calls.
@@ -339,8 +377,43 @@ impl Agent {
         progress_cb: ProgressCallback,
         user_id: &str,
     ) -> crate::Result<crate::providers::CompletionResponse> {
-        self.get_completion_with_progress_inner(context, collector, progress_cb, user_id, false)
-            .await
+        // Same empty-reply guard as [`Agent::get_completion`]: a round that
+        // yields neither text nor tool calls must not complete the turn blank.
+        let mut nudged_empty = false;
+        loop {
+            let response = self
+                .get_completion_with_progress_inner(
+                    context,
+                    collector,
+                    progress_cb.clone(),
+                    user_id,
+                    false,
+                )
+                .await?;
+            let has_output = !response.message.content.trim().is_empty()
+                || response
+                    .message
+                    .tool_calls
+                    .as_ref()
+                    .is_some_and(|c| !c.is_empty());
+            if has_output || nudged_empty {
+                return Ok(response);
+            }
+            nudged_empty = true;
+            warn!(
+                "LLM round returned an empty reply (no text, no tool calls); nudging once toward a response"
+            );
+            context.add_message(Message {
+                role: Role::User,
+                content: EMPTY_REPLY_NUDGE.to_string(),
+                content_blocks: None,
+                reasoning_content: None,
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+                metadata: None,
+            });
+        }
     }
 
     /// Get a completion from the LLM with progress callbacks.
