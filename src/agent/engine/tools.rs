@@ -8,6 +8,22 @@ use tracing::{debug, error, info, warn};
 
 use super::super::*;
 
+/// Tools whose success changes on-disk state, invalidating any earlier
+/// identical read/run result. After one of these succeeds the cross-turn
+/// duplicate filter is reset so the model can re-run a command or re-read a
+/// file it just touched (e.g. edit a script, then re-run the same test
+/// command to verify).
+fn tool_mutates_filesystem(name: &str) -> bool {
+    matches!(name, "file_write" | "file_edit")
+}
+
+/// Synthetic `Role::Tool` result content used when a proposed tool call is not
+/// executed but the model must still be asked for a final answer (duplicate /
+/// disallowed / budget-exhausted). Kept 1:1 with the pending `tool_calls` ids
+/// so strict-pairing providers (DeepSeek) accept the batch.
+const NOT_EXECUTED_NOTE: &str = "[Not executed — provide your final answer now \
+                                 using results already gathered.]";
+
 impl Agent {
     /// Handle tool calls from the LLM
     pub(crate) async fn handle_tool_calls(
@@ -86,10 +102,37 @@ impl Agent {
             .collect();
 
         if filtered_tool_calls.is_empty() {
-            // All tool calls were duplicates or disallowed; return the original
-            // response as-is (the assistant message with tool_calls was never
-            // added to context)
-            return Ok(original_response.clone());
+            // Every proposed call was a duplicate or is disallowed in this
+            // scope. Returning the pending assistant message here would hand
+            // the user a blank reply (a tool-call turn usually carries no text
+            // content). Instead record the pending assistant message plus one
+            // synthetic Tool result per call (1:1 id pairing so
+            // prune_if_needed keeps the batch), then run one final no-tool
+            // round so the model writes a real user-facing answer.
+            let mut pending_assistant = original_response.message.clone();
+            pending_assistant.tool_calls = Some(tool_calls.to_vec());
+
+            let mut batch = Vec::with_capacity(1 + tool_calls.len());
+            batch.push(pending_assistant);
+            for call in tool_calls {
+                batch.push(Message {
+                    role: Role::Tool,
+                    content: NOT_EXECUTED_NOTE.to_string(),
+                    content_blocks: None,
+                    reasoning_content: None,
+                    name: None,
+                    tool_calls: None,
+                    tool_call_id: Some(call.id.clone()),
+                    metadata: None,
+                });
+            }
+            context.add_batch(batch);
+
+            info!(
+                "handle_tool_calls: all {} proposed calls were filtered — running final no-tool round",
+                tool_calls.len()
+            );
+            return Box::pin(self.get_completion_inner(context, user_id, true)).await;
         }
 
         // Execute tools FIRST, before adding the assistant message.
@@ -118,6 +161,11 @@ impl Agent {
                 Ok(exec_result) => {
                     // Reset circuit-breaker on success
                     self.tools.reset_failure(&tool_call.function.name);
+                    // Filesystem state changed: earlier identical reads/runs may
+                    // now be re-run legitimately (edit → re-run same command).
+                    if tool_mutates_filesystem(&tool_call.function.name) {
+                        context.clear_executed_tool_calls();
+                    }
                     let tool_result = exec_result.to_tool_result(&tool_call.id);
                     // Extract artifacts from successful tool results
                     self.extract_and_store_artifacts(
@@ -314,9 +362,43 @@ impl Agent {
             .collect();
 
         if filtered_tool_calls.is_empty() {
-            // All tool calls were duplicates or disallowed; return the original
-            // response as-is
-            return Ok(original_response.clone());
+            // Every proposed call was a duplicate or is disallowed in this
+            // scope. Do NOT end the turn on the (usually content-less) pending
+            // assistant message: append it plus one synthetic Tool result per
+            // call (1:1 id pairing so prune_if_needed keeps the batch) and run
+            // one final no-tool round so the model writes a real user-facing
+            // answer instead of returning a blank reply.
+            let mut pending_assistant = original_response.message.clone();
+            pending_assistant.tool_calls = Some(tool_calls.to_vec());
+
+            let mut batch = Vec::with_capacity(1 + tool_calls.len());
+            batch.push(pending_assistant);
+            for call in tool_calls {
+                batch.push(Message {
+                    role: Role::Tool,
+                    content: NOT_EXECUTED_NOTE.to_string(),
+                    content_blocks: None,
+                    reasoning_content: None,
+                    name: None,
+                    tool_calls: None,
+                    tool_call_id: Some(call.id.clone()),
+                    metadata: None,
+                });
+            }
+            context.add_batch(batch);
+
+            info!(
+                "handle_tool_calls_with_progress: all {} proposed calls were filtered — running final no-tool round",
+                tool_calls.len()
+            );
+            return Box::pin(self.get_completion_with_progress_inner(
+                context,
+                &mut *collector,
+                progress_cb,
+                user_id,
+                true,
+            ))
+            .await;
         }
 
         // Execute tools with progress FIRST, before adding the assistant message.
@@ -356,6 +438,12 @@ impl Agent {
                 tool_name,
                 _start.elapsed()
             );
+
+            // Filesystem state changed on success: earlier identical reads/runs
+            // may now be re-run legitimately (edit → re-run same test command).
+            if !result.is_error.unwrap_or(false) && tool_mutates_filesystem(&tool_name) {
+                context.clear_executed_tool_calls();
+            }
 
             let rec = ToolCallRecord {
                 name: tool_name.clone(),

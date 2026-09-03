@@ -207,6 +207,17 @@ impl Context {
         self.tools_used.clear();
     }
 
+    /// Forget all executed-tool-call history.
+    ///
+    /// Called after a filesystem-mutating tool succeeds: the on-disk state has
+    /// changed, so an earlier identical `shell`/`file_read`/`web_fetch` call may
+    /// now legitimately be re-run (e.g. edit a script, then re-run the same test
+    /// command). Whole-conversation dedup would otherwise block that re-run as a
+    /// "duplicate".
+    pub fn clear_executed_tool_calls(&mut self) {
+        self.executed_tool_calls.clear();
+    }
+
     /// Record a tool call and its result in the turn's accumulator.
     pub fn push_tool_call_record(&mut self, record: ToolCallRecord) {
         self.tool_call_records.push(record);
