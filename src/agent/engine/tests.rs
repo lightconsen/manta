@@ -119,6 +119,95 @@ async fn test_get_completion_retries_once_on_context_length() {
     assert!(context.message_count() < 20);
 }
 
+/// A provider whose first completion is an empty reply (no text, no tool
+/// calls) and whose second is a real answer — models the reasoning-only /
+/// silent-stop empty round that must not end the turn as a blank reply.
+struct EmptyThenOk {
+    calls: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl Provider for EmptyThenOk {
+    fn name(&self) -> &str {
+        "empty-then-ok-test"
+    }
+
+    fn default_model(&self) -> &str {
+        "test-model"
+    }
+
+    fn supports_tools(&self) -> bool {
+        false
+    }
+
+    fn max_context(&self) -> usize {
+        128_000
+    }
+
+    async fn complete(&self, _request: CompletionRequest) -> crate::Result<CompletionResponse> {
+        let n = self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(CompletionResponse {
+            message: Message::assistant(if n == 0 {
+                String::new()
+            } else {
+                "final answer".into()
+            }),
+            model: self.default_model().to_string(),
+            usage: Some(Usage::default()),
+            finish_reason: Some("stop".to_string()),
+        })
+    }
+
+    async fn stream(&self, _request: CompletionRequest) -> crate::Result<CompletionStream> {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let _ = tx.send(CompletionChunk {
+            content: Some("final answer".to_string()),
+            reasoning_content: None,
+            tool_calls: None,
+            is_done: true,
+            usage: None,
+        });
+        Ok(Box::pin(tokio_stream::wrappers::UnboundedReceiverStream::new(rx)))
+    }
+
+    async fn health_check(&self) -> crate::Result<bool> {
+        Ok(true)
+    }
+
+    async fn set_credential(
+        &self,
+        _credential: crate::model_router::Credential,
+    ) -> crate::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn test_get_completion_nudges_once_on_empty_reply() {
+    let provider = Arc::new(EmptyThenOk { calls: AtomicUsize::new(0) });
+    let store = Arc::new(crate::memory::DatabaseStore::new_in_memory().await.unwrap());
+    let agent = crate::agent::Agent::new(
+        crate::agent::AgentConfig::default(),
+        provider.clone(),
+        Arc::new(crate::tools::ToolRegistry::new()),
+    )
+    .with_chat_history(store.clone());
+
+    let mut context =
+        crate::agent::Context::new("conv-empty", "You are a helpful assistant", 100_000);
+    context.add_message(Message::user("hello"));
+
+    let response = agent.get_completion(&mut context, "user1").await.unwrap();
+    // The empty first round is nudged once; the second round's answer is returned.
+    assert_eq!(response.message.content, "final answer");
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    // The injected nudge is present in history so the model sees why it retried.
+    let nudged = context.history().iter().any(|m| {
+        m.role == crate::providers::Role::User && m.content.contains("上一条回复内容为空")
+    });
+    assert!(nudged, "expected the empty-reply nudge to be recorded in context");
+}
+
 /// A provider whose completions always succeed.
 struct AlwaysOk;
 
