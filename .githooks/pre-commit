@@ -39,11 +39,12 @@ fi
 
 # First run failed. Retry once with the cached advisory DB so a transient
 # advisory-db fetch failure (offline / flaky GitHub) doesn't block commits.
-# Real findings fail both runs, so the gate stays strict.
+# Real findings fail both runs, so the gate stays strict. cargo-deny has no
+# --no-fetch, so run it --offline against its local advisory DB cache.
 echo ""
 echo "⚠️   audit failed — retrying once with the cached advisory DB"
 echo ""
-if cargo audit --stale --no-fetch && cargo deny check; then
+if cargo audit --stale --no-fetch && cargo deny --offline check; then
     echo ""
     echo "✅  Passed on retry with the cached advisory DB."
     exit 0
