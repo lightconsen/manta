@@ -6,6 +6,7 @@
 //! syscity eval run ci_smoke --full --trials 3
 //! ```
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -65,6 +66,10 @@ pub struct SuiteRunOptions {
     /// Judge (Critic) provider overrides. All-`None` judges with the agent's
     /// own provider (self-evaluation); setting any field separates the judge.
     pub judge: ProviderSelection,
+    /// When set, run only the tasks whose id is in this list (all others are
+    /// dropped before execution). Lets a full gate failure be re-run cheaply
+    /// on just the failing tasks with identical judge/conditions semantics.
+    pub only_tasks: Option<Vec<String>>,
 }
 
 /// Run a full eval suite standalone (no daemon needed).
@@ -105,7 +110,7 @@ pub async fn run_standalone_suite(
 /// 4. Prints per-task and summary results.
 pub async fn run_suite(
     _config: &crate::config::Config,
-    suite: EvalSuite,
+    mut suite: EvalSuite,
     opts: SuiteRunOptions,
     selection: ProviderSelection,
 ) -> Result<()> {
@@ -116,6 +121,7 @@ pub async fn run_suite(
         skill_breakdown,
         collect_badcases,
         judge,
+        only_tasks,
     } = opts;
     let ProviderSelection {
         provider: provider_override,
@@ -124,6 +130,30 @@ pub async fn run_suite(
         base_url: base_url_override,
     } = selection;
     let evals_dir = evals_dir_override.unwrap_or_else(default_evals_dir);
+
+    // `--only <ids>`: drop every task whose id isn't listed so a full gate
+    // failure can be re-run cheaply on just the failing tasks. Judge,
+    // conditions and criteria come from the original task YAML unchanged, so
+    // the subset verdict is faithful to the full suite.
+    if let Some(ids) = only_tasks {
+        if !ids.is_empty() {
+            let wanted: HashSet<&str> = ids.iter().map(String::as_str).collect();
+            let before = suite.tasks.len();
+            suite.tasks.retain(|t| wanted.contains(t.id.as_str()));
+            let dropped = before - suite.tasks.len();
+            println!(
+                "--only: kept {} / dropped {} of {} tasks",
+                suite.tasks.len(),
+                dropped,
+                before
+            );
+            if suite.tasks.is_empty() {
+                return Err(crate::error::SyscityError::Validation(
+                    "--only matched no tasks in the suite".into(),
+                ));
+            }
+        }
+    }
 
     // Eval-only tool-iteration budget (改动2): give multi-step eval tasks enough
     // tool budget to actually finish; overridable via the env var at launch.

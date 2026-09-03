@@ -64,6 +64,11 @@ pub enum EvalCommands {
         /// Fraction of tasks to run (0.0–1.0). 1.0 = all tasks (§10).
         #[arg(long)]
         sampling_rate: Option<f64>,
+        /// Re-run only these task ids (comma-separated); all other tasks are
+        /// skipped. Lets a full-gate failure be re-run on just the failing
+        /// tasks with identical judge/conditions semantics.
+        #[arg(long, value_delimiter = ',')]
+        only: Option<Vec<String>>,
         /// Judge (Critic) provider preset (defaults to the agent's provider)
         #[arg(long)]
         judge_provider: Option<String>,
@@ -245,6 +250,7 @@ impl EvalCommands {
                 skill_breakdown,
                 collect_badcases,
                 sampling_rate,
+                only,
                 judge_provider,
                 judge_model,
                 judge_api_key,
@@ -260,6 +266,7 @@ impl EvalCommands {
                         sampling_rate_override: *sampling_rate,
                         skill_breakdown: *skill_breakdown,
                         collect_badcases: *collect_badcases,
+                        only_tasks: only.clone(),
                         judge: eval::standalone::ProviderSelection {
                             provider: judge_provider.clone(),
                             model: judge_model.clone(),
@@ -299,6 +306,7 @@ impl EvalCommands {
                         sampling_rate_override: *sampling_rate,
                         skill_breakdown: *skill_breakdown,
                         collect_badcases: *collect_badcases,
+                        only_tasks: None,
                         judge: eval::standalone::ProviderSelection {
                             provider: judge_provider.clone(),
                             model: judge_model.clone(),
@@ -481,7 +489,7 @@ async fn cmd_run(
         return Ok(());
     }
 
-    let eval_suite = eval::load_suite(&manifest_path, &suite)?;
+    let mut eval_suite = eval::load_suite(&manifest_path, &suite)?;
 
     if full {
         // Standalone eval mode (no daemon needed)
@@ -497,7 +505,13 @@ async fn cmd_run(
         .await;
     }
 
-    // Dry-run: print suite details
+    // Dry-run: print suite details (respect --only for the preview too)
+    if let Some(ids) = &opts.only_tasks {
+        if !ids.is_empty() {
+            let wanted: std::collections::HashSet<&str> = ids.iter().map(String::as_str).collect();
+            eval_suite.tasks.retain(|t| wanted.contains(t.id.as_str()));
+        }
+    }
     println!("═══ Eval Suite: {} ═══", eval_suite.name);
     println!("  ID:       {}", eval_suite.id);
     println!("  Category: {:?}", eval_suite.category);
