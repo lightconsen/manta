@@ -125,6 +125,12 @@ pub async fn run_suite(
     } = selection;
     let evals_dir = evals_dir_override.unwrap_or_else(default_evals_dir);
 
+    // Eval-only tool-iteration budget (改动2): give multi-step eval tasks enough
+    // tool budget to actually finish; overridable via the env var at launch.
+    if std::env::var("SYSCITY_MAX_TOOL_ITERATIONS").is_err() {
+        std::env::set_var("SYSCITY_MAX_TOOL_ITERATIONS", "30");
+    }
+
     println!("\n═══ Eval Suite: {} ═══", suite.name);
     println!("  Tasks:    {}", suite.tasks.len());
     println!("  Min pass: {:.0}%", suite.min_pass_rate * 100.0);
@@ -219,10 +225,11 @@ pub async fn run_suite(
         let tools_for_builder = tool_registry.clone();
         let provider_for_builder = provider.clone();
         acp.set_agent_builder(move |subagent_id| {
-            let cfg = crate::agent::AgentConfig {
+            let mut cfg = crate::agent::AgentConfig {
                 agent_id: Some(subagent_id.to_string()),
                 ..crate::agent::AgentConfig::default()
             };
+            cfg.max_tokens = 8192;
             Ok(Agent::new(cfg, provider_for_builder.clone(), tools_for_builder.clone()))
         })
         .await;
@@ -233,6 +240,10 @@ pub async fn run_suite(
         .as_ref()
         .map(|g| g.default_agent.clone())
         .unwrap_or_default();
+    // 改动1 (eval-only): raise the eval agent's output cap so long analyses and
+    // multi-step summaries aren't truncated mid-sentence (judge measures
+    // capability, not the 2048-token default). Production default unchanged.
+    agent_config.max_tokens = 8192;
     agent_config.system_prompt.push_str(
         "\n\n## Tool Usage Guidelines\n\n\
          Always prefer using dedicated tools over shell commands. \

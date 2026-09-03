@@ -20,30 +20,39 @@ impl Agent {
         let cfg = self.config_snapshot();
         // Check iteration limit before processing
         if !context.increment_tool_iteration() {
-            warn!("Tool iteration limit reached ({}), stopping", context.tool_iterations());
+            warn!(
+                "Tool iteration limit reached ({}), running a final no-tool round",
+                context.tool_iterations()
+            );
 
-            // Return a response indicating the limit was reached
-            return Ok(crate::providers::CompletionResponse {
-                message: Message {
-                    role: Role::Assistant,
-                    content: format!(
-                        "I've reached the maximum number of tool calls ({}) for this request. The \
-                         task may be too complex or the tools may not be providing the expected \
-                         results. Please try a more specific request or break the task into \
-                         smaller steps.",
-                        Context::DEFAULT_MAX_TOOL_ITERATIONS
-                    ),
+            // Budget spent: do NOT execute this batch and do NOT return a canned
+            // English message. Record the pending assistant message plus one
+            // synthetic Tool result per call (1:1 id pairing so prune_if_needed
+            // keeps the batch), then run one final LLM round with tools
+            // suppressed so the agent writes a real user-facing summary.
+            let mut pending_assistant = original_response.message.clone();
+            pending_assistant.tool_calls = Some(tool_calls.to_vec());
+
+            let not_executed = "[Not executed — tool-iteration budget exhausted. Provide your \
+                                final answer now using results already gathered.]";
+            let mut batch = Vec::with_capacity(1 + tool_calls.len());
+            batch.push(pending_assistant);
+            for call in tool_calls {
+                batch.push(Message {
+                    role: Role::Tool,
+                    content: not_executed.to_string(),
                     content_blocks: None,
                     reasoning_content: None,
                     name: None,
                     tool_calls: None,
-                    tool_call_id: None,
+                    tool_call_id: Some(call.id.clone()),
                     metadata: None,
-                },
-                usage: None,
-                model: "system".to_string(),
-                finish_reason: Some("tool_limit".to_string()),
-            });
+                });
+            }
+            context.add_batch(batch);
+
+            info!("handle_tool_calls: budget exhausted — requesting final summary round");
+            return Box::pin(self.get_completion_inner(context, user_id, true)).await;
         }
 
         // Filter out duplicate tool calls before adding assistant message
@@ -199,40 +208,48 @@ impl Agent {
 
         // Check iteration limit before processing
         if !context.increment_tool_iteration() {
-            warn!("Tool iteration limit reached ({}), stopping", context.tool_iterations());
+            warn!(
+                "Tool iteration limit reached ({}), running a final no-tool round",
+                context.tool_iterations()
+            );
 
-            // Notify user about the limit
-            (progress_cb)(ProgressEvent::Error {
-                message: format!(
-                    "Tool iteration limit reached ({}) - the agent was taking too many steps. \
-                     Please try a more specific request.",
-                    Context::DEFAULT_MAX_TOOL_ITERATIONS
-                ),
-            })
-            .await;
+            // The budget is spent. Do NOT execute this batch and do NOT return a
+            // canned English message. Instead: record the pending assistant
+            // message plus one synthetic Tool result per call (1:1 id pairing so
+            // prune_if_needed keeps the batch), then run one final LLM round with
+            // tools suppressed so the agent writes a real user-facing summary.
+            let mut pending_assistant = original_response.message.clone();
+            pending_assistant.tool_calls = Some(tool_calls.to_vec());
 
-            // Return a response indicating the limit was reached
-            return Ok(crate::providers::CompletionResponse {
-                message: Message {
-                    role: Role::Assistant,
-                    content: format!(
-                        "I've reached the maximum number of tool calls ({}) for this request. The \
-                         task may be too complex or the tools may not be providing the expected \
-                         results. Please try a more specific request or break the task into \
-                         smaller steps.",
-                        Context::DEFAULT_MAX_TOOL_ITERATIONS
-                    ),
+            let not_executed = "[Not executed — tool-iteration budget exhausted. Provide your \
+                                final answer now using results already gathered.]";
+            let mut batch = Vec::with_capacity(1 + tool_calls.len());
+            batch.push(pending_assistant);
+            for call in tool_calls {
+                batch.push(Message {
+                    role: Role::Tool,
+                    content: not_executed.to_string(),
                     content_blocks: None,
                     reasoning_content: None,
                     name: None,
                     tool_calls: None,
-                    tool_call_id: None,
+                    tool_call_id: Some(call.id.clone()),
                     metadata: None,
-                },
-                usage: None,
-                model: "system".to_string(),
-                finish_reason: Some("tool_limit".to_string()),
-            });
+                });
+            }
+            context.add_batch(batch);
+
+            info!(
+                "handle_tool_calls_with_progress: budget exhausted — requesting final summary round"
+            );
+            return Box::pin(self.get_completion_with_progress_inner(
+                context,
+                &mut *collector,
+                progress_cb,
+                user_id,
+                true,
+            ))
+            .await;
         }
 
         // Filter out duplicate tool calls before adding assistant message

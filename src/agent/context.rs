@@ -307,6 +307,11 @@ impl Context {
         self.max_tool_iterations = max;
     }
 
+    /// Get the current tool-iteration budget (actual, not the constant default).
+    pub fn max_tool_iterations(&self) -> usize {
+        self.max_tool_iterations
+    }
+
     /// Get the context ID
     pub fn id(&self) -> &str {
         &self.id

@@ -66,11 +66,27 @@ impl Agent {
         });
     }
 
-    /// Get a completion from the LLM, handling tool calls
+    /// Get a completion from the LLM, handling tool calls.
+    ///
+    /// Thin wrapper over [`Agent::get_completion_inner`] with `final_round = false`.
     pub(crate) async fn get_completion(
         &self,
         context: &mut Context,
         user_id: &str,
+    ) -> crate::Result<crate::providers::CompletionResponse> {
+        self.get_completion_inner(context, user_id, false).await
+    }
+
+    /// Get a completion from the LLM, handling tool calls.
+    ///
+    /// When `final_round == true` the model is NOT offered tools and residual
+    /// tool calls are discarded, so it can only write a text answer — used to
+    /// close a turn with a real summary after the tool budget is exhausted.
+    pub(crate) async fn get_completion_inner(
+        &self,
+        context: &mut Context,
+        user_id: &str,
+        final_round: bool,
     ) -> crate::Result<crate::providers::CompletionResponse> {
         let cfg = self.config_snapshot();
         // If the context is over-budget, reduce it before sending (persisting
@@ -84,15 +100,17 @@ impl Agent {
         let mut messages = context.to_messages();
         crate::attachments::materialize_history(&mut messages);
 
-        // Get available tools
-        let tool_context =
-            self.build_tool_context(user_id, context.id(), context.delegation().cloned());
-        let tool_defs = self.tools.get_available(&tool_context);
-        let has_tools = !tool_defs.is_empty();
-
-        // Convert FunctionDefinition to ToolDefinition. Kept owned so the
-        // request can be re-armed after a compaction retry below.
-        let tools: Vec<crate::providers::ToolDefinition> =
+        // Get available tools (skipped on the final round so the model can no
+        // longer request more tools — it must write its closing summary).
+        let tools: Vec<crate::providers::ToolDefinition> = if final_round {
+            Vec::new()
+        } else {
+            let tool_context =
+                self.build_tool_context(user_id, context.id(), context.delegation().cloned());
+            let tool_defs = self.tools.get_available(&tool_context);
+            let has_tools = !tool_defs.is_empty();
+            // Convert FunctionDefinition to ToolDefinition. Kept owned so the
+            // request can be re-armed after a compaction retry below.
             if has_tools && self.provider.supports_tools() {
                 tool_defs
                     .into_iter()
@@ -103,7 +121,8 @@ impl Agent {
                     .collect()
             } else {
                 Vec::new()
-            };
+            }
+        };
 
         let extra = self.extra_params.read().await.clone();
         let mut request = CompletionRequest {
@@ -196,18 +215,27 @@ impl Agent {
             }
         }
 
-        // Handle tool calls if present
-        if let Some(tool_calls) = &response.message.tool_calls {
-            if !tool_calls.is_empty() {
-                debug!("Processing {} tool calls", tool_calls.len());
-                return self
-                    .handle_tool_calls(context, &response, tool_calls, user_id)
-                    .await;
+        // Handle tool calls if present — unless this is the final round, in
+        // which case residual tool calls are discarded so the agent cannot loop
+        // back into the tool-iteration guard.
+        if !final_round {
+            if let Some(tool_calls) = &response.message.tool_calls {
+                if !tool_calls.is_empty() {
+                    debug!("Processing {} tool calls", tool_calls.len());
+                    return self
+                        .handle_tool_calls(context, &response, tool_calls, user_id)
+                        .await;
+                }
             }
         }
 
-        // Add assistant message to context
-        context.add_message(response.message.clone());
+        // Add assistant message to context (final round never carries dangling
+        // tool calls into history).
+        let mut final_message = response.message.clone();
+        if final_round {
+            final_message.tool_calls = None;
+        }
+        context.add_message(final_message);
 
         Ok(response)
     }
@@ -300,13 +328,35 @@ impl Agent {
         }
     }
 
-    /// Get a completion from the LLM with progress callbacks
+    /// Get a completion from the LLM with progress callbacks.
+    ///
+    /// Thin wrapper over [`Agent::get_completion_with_progress_inner`] with
+    /// `final_round = false` — ordinary rounds may request tools.
     pub(crate) async fn get_completion_with_progress(
         &self,
         context: &mut Context,
         collector: &mut TurnMetricsCollector,
         progress_cb: ProgressCallback,
         user_id: &str,
+    ) -> crate::Result<crate::providers::CompletionResponse> {
+        self.get_completion_with_progress_inner(context, collector, progress_cb, user_id, false)
+            .await
+    }
+
+    /// Get a completion from the LLM with progress callbacks.
+    ///
+    /// When `final_round == true` the model is NOT offered any tools and any
+    /// residual tool calls in its reply are discarded — it can only write a
+    /// text answer. Used after the tool-iteration budget is exhausted so the
+    /// agent always closes with a real user-facing summary instead of a canned
+    /// "reached the maximum number of tool calls" message.
+    pub(crate) async fn get_completion_with_progress_inner(
+        &self,
+        context: &mut Context,
+        collector: &mut TurnMetricsCollector,
+        progress_cb: ProgressCallback,
+        user_id: &str,
+        final_round: bool,
     ) -> crate::Result<crate::providers::CompletionResponse> {
         let cfg = self.config_snapshot();
         // Attachment refs in tool results: current turn materializes to
@@ -327,11 +377,29 @@ impl Agent {
             tool_msg_count
         );
 
-        // Get available tools
-        let tool_context =
-            self.build_tool_context(user_id, context.id(), context.delegation().cloned());
-        let tool_defs = self.tools.get_available(&tool_context);
-        let has_tools = !tool_defs.is_empty();
+        // Get available tools (skipped on the final round so the model can no
+        // longer request more tools — it must write its closing summary).
+        let tools: Vec<crate::providers::ToolDefinition> = if final_round {
+            Vec::new()
+        } else {
+            let tool_context =
+                self.build_tool_context(user_id, context.id(), context.delegation().cloned());
+            let tool_defs = self.tools.get_available(&tool_context);
+            let has_tools = !tool_defs.is_empty();
+            // Convert FunctionDefinition to ToolDefinition. Kept owned so the
+            // request can be re-armed after a compaction retry below.
+            if has_tools && self.provider.supports_tools() {
+                tool_defs
+                    .into_iter()
+                    .map(|f| crate::providers::ToolDefinition {
+                        tool_type: "function".to_string(),
+                        function: f,
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        };
 
         let extra = self.extra_params.read().await.clone();
         let mut request = CompletionRequest {
@@ -344,21 +412,6 @@ impl Agent {
             ..Default::default()
         };
         self.patch_request_for_reasoning(&mut request);
-
-        // Convert FunctionDefinition to ToolDefinition. Kept owned so the
-        // request can be re-armed after a compaction retry below.
-        let tools: Vec<crate::providers::ToolDefinition> =
-            if has_tools && self.provider.supports_tools() {
-                tool_defs
-                    .into_iter()
-                    .map(|f| crate::providers::ToolDefinition {
-                        tool_type: "function".to_string(),
-                        function: f,
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
         if !tools.is_empty() {
             request.tools = Some(tools.clone());
         }
@@ -596,25 +649,34 @@ impl Agent {
             guard.record_usage(prompt_tokens, completion_tokens, response.model.as_str());
         }
 
-        // Handle tool calls if present
-        if let Some(ref tool_calls) = response.message.tool_calls {
-            if !tool_calls.is_empty() {
-                debug!("Processing {} tool calls with progress", tool_calls.len());
-                return self
-                    .handle_tool_calls_with_progress(
-                        context,
-                        &mut *collector,
-                        &response,
-                        tool_calls,
-                        progress_cb,
-                        user_id,
-                    )
-                    .await;
+        // Handle tool calls if present — unless this is the final round, in
+        // which case residual tool calls are discarded so the agent cannot loop
+        // back into the tool-iteration guard.
+        if !final_round {
+            if let Some(ref tool_calls) = response.message.tool_calls {
+                if !tool_calls.is_empty() {
+                    debug!("Processing {} tool calls with progress", tool_calls.len());
+                    return self
+                        .handle_tool_calls_with_progress(
+                            context,
+                            &mut *collector,
+                            &response,
+                            tool_calls,
+                            progress_cb,
+                            user_id,
+                        )
+                        .await;
+                }
             }
         }
 
-        // Add assistant message to context
-        context.add_message(response.message.clone());
+        // Add assistant message to context (final round never carries dangling
+        // tool calls into history).
+        let mut final_message = response.message.clone();
+        if final_round {
+            final_message.tool_calls = None;
+        }
+        context.add_message(final_message);
 
         // Accumulate token usage for non-tool-call responses
         if let Some(ref usage) = response.usage {
