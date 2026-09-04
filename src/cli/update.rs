@@ -138,6 +138,7 @@ async fn restart_daemon() -> Result<bool> {
         remote_control_key: None,
         headless: false,
         headless_display: String::new(),
+        nocloud: false,
     };
     let daemon = DaemonManager::new(daemon_config)?;
     if daemon.is_running().await? {

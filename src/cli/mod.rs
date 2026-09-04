@@ -195,6 +195,9 @@ pub enum Commands {
         /// Headless display identifier (e.g. ":99")
         #[arg(long, default_value = ":99")]
         headless_display: String,
+        /// Force-disable cloud features (cloud is on by default)
+        #[arg(long)]
+        nocloud: bool,
     },
     /// Stop the Syscity daemon
     Stop {
@@ -217,6 +220,10 @@ pub enum Commands {
         /// Port for gateway API, WebSocket, and SPA
         #[arg(short, long, default_value = "18080")]
         port: u16,
+        /// Force-disable cloud features (preserves a `start --nocloud` across
+        /// self-update restarts)
+        #[arg(long)]
+        nocloud: bool,
     },
     /// Show and tail daemon logs
     Logs {
@@ -453,6 +460,7 @@ impl Cli {
                 remote_control_key,
                 headless,
                 headless_display,
+                nocloud,
             } => {
                 let daemon_config = crate::daemon::DaemonConfig {
                     host: host.clone(),
@@ -465,14 +473,15 @@ impl Cli {
                     remote_control_key: remote_control_key.clone(),
                     headless: *headless,
                     headless_display: headless_display.clone(),
+                    nocloud: *nocloud,
                 };
                 daemon::run_start_daemon(*foreground, config, daemon_config).await
             }
             Commands::Stop { force } => daemon::run_stop_daemon(*force).await,
             Commands::Reload => daemon::run_reload_daemon().await,
             Commands::Status => daemon::run_daemon_status().await,
-            Commands::Restart { pid, host, port } => {
-                daemon::run_restart_daemon(*pid, host, *port).await
+            Commands::Restart { pid, host, port, nocloud } => {
+                daemon::run_restart_daemon(*pid, host, *port, *nocloud).await
             }
             Commands::Logs { lines, follow } => daemon::run_logs(*lines, *follow).await,
             Commands::Mcp { command } => mcp::run_mcp_command(command).await,

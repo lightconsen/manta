@@ -261,7 +261,7 @@ windows-sys = { version = "=0.59.0", features = [
 ] }
 
 [features]
-default = ["telegram", "discord", "slack", "whatsapp", "qq", "feishu", "signal", "imessage", "webchat", "wechatmp", "plugins", "hot-reload", "local-embeddings", "browser", "vision", "sqlite-vec"]
+default = ["cloud", "telegram", "discord", "slack", "whatsapp", "qq", "feishu", "signal", "imessage", "webchat", "wechatmp", "plugins", "hot-reload", "local-embeddings", "browser", "vision", "sqlite-vec"]
 telegram = ["teloxide"]
 discord = ["serenity"]
 slack = []
@@ -275,8 +275,11 @@ wechatmp = ["dep:aes", "dep:cbc", "dep:sha1", "dep:roxmltree"]
 all-channels = ["telegram", "discord", "slack", "whatsapp", "qq", "feishu", "signal", "imessage", "webchat", "wechatmp"]
 web = []
 # Syscity Cloud integration (login + cloud LLM/search/KB/connectors). Default
-# OFF: default builds contain no cloud coupling (§2.7). Enable with
-# `--features cloud`; runtime is additionally gated by `cloud.enabled` + login.
+# ON: cloud ships in default builds; the runtime gate `cloud.enabled` (on by
+# default) + login state still control actual cloud usage. Turn it off at
+# runtime with `syscity start --nocloud`, `SYSCITY_CLOUD_ENABLED=0`, or
+# config.toml `[cloud] enabled = false`; build without it via
+# `--no-default-features` (§2.7).
 cloud = []
 browser = ["chromiumoxide", "sourcemap"]
 local-embeddings = ["llama-cpp-2", "hf-hub"]

@@ -25,6 +25,7 @@ pub async fn run_health_check(_config: &crate::config::Config) -> Result<()> {
         remote_control_key: None,
         headless: false,
         headless_display: String::new(),
+        nocloud: false,
     };
     let daemon = DaemonManager::new(daemon_config)?;
     daemon.status().await?;
@@ -166,6 +167,7 @@ pub async fn run_stop_daemon(force: bool) -> Result<()> {
         remote_control_key: None,
         headless: false,
         headless_display: String::new(),
+        nocloud: false,
     };
 
     let daemon = DaemonManager::new(daemon_config)?;
@@ -185,7 +187,12 @@ pub async fn run_stop_daemon(force: bool) -> Result<()> {
 /// for the recorded PID to disappear so the port is freed, then starts a fresh
 /// daemon — which is the newly installed binary. Used only by the web/daemon
 /// update flow.
-pub async fn run_restart_daemon(pid: Option<u32>, host: &str, port: u16) -> Result<()> {
+pub async fn run_restart_daemon(
+    pid: Option<u32>,
+    host: &str,
+    port: u16,
+    nocloud: bool,
+) -> Result<()> {
     if let Some(pid) = pid {
         let daemon = DaemonManager::new(DaemonConfig {
             host: host.to_string(),
@@ -198,6 +205,7 @@ pub async fn run_restart_daemon(pid: Option<u32>, host: &str, port: u16) -> Resu
             remote_control_key: None,
             headless: false,
             headless_display: String::new(),
+            nocloud,
         })?;
 
         // Wait up to 15s for the old daemon to fully exit so the port is free
@@ -221,6 +229,7 @@ pub async fn run_restart_daemon(pid: Option<u32>, host: &str, port: u16) -> Resu
         remote_control_key: None,
         headless: false,
         headless_display: String::new(),
+        nocloud,
     })?;
     daemon.start().await
 }
@@ -238,6 +247,7 @@ pub async fn run_daemon_status() -> Result<()> {
         remote_control_key: None,
         headless: false,
         headless_display: String::new(),
+        nocloud: false,
     };
 
     let daemon = DaemonManager::new(daemon_config)?;

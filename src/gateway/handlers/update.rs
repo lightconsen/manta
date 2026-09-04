@@ -93,8 +93,14 @@ pub(crate) async fn run_update_task(
 
     // Spawn a detached helper that restarts the daemon once this process has
     // exited, then shut the gateway down so the new binary can bind the port.
+    // `nocloud` preserves a `start --nocloud` CLI override across the restart:
+    // the flag lives only on the command line, never in config.toml.
+    #[cfg(feature = "cloud")]
+    let nocloud = !state.config.read().await.cloud.enabled;
+    #[cfg(not(feature = "cloud"))]
+    let nocloud = false;
     if let Err(e) =
-        crate::daemon::DaemonManager::spawn_restart_helper(&host, port, std::process::id())
+        crate::daemon::DaemonManager::spawn_restart_helper(&host, port, std::process::id(), nocloud)
     {
         state.update.failures_total.fetch_add(1, Ordering::Relaxed);
         warn!("Failed to spawn restart helper: {}", e);

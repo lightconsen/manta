@@ -5,11 +5,12 @@
 
 ## 硬性要求（§2.7，对本清单**所有**功能通用）
 
-**清单内每一项都必须收进 Cargo feature `cloud`（默认关闭）+ 运行时双闸（`cloud.enabled` + 登录态）**，否则不被接受：
+**清单内每一项都必须收进 Cargo feature `cloud`（已进 default features，2026-09-04 起）+ 运行时双闸（`cloud.enabled` + 登录态）**，否则不被接受：
 
-- 公开仓库**默认构建不得包含任何云耦合代码**——`cargo build`（无 `--features cloud`）必须能编译且行为与现在完全一致；
+- 云集成代码仍全部隔离在 `#[cfg(feature = "cloud")]` 之下，保持可审计（`--no-default-features` 可编译出无云版本）；
 - 每项实现后都要验证：默认 feature 下编译通过、云路径不启用；
-- 运行时仅当 `cloud.enabled=true` **且**已登录时才走云路径，否则回退本地模式（§2.8 双模式）。
+- 运行时仅当 `cloud.enabled=true` **且**已登录时才走云路径，否则回退本地模式（§2.8 双模式）；
+- **默认开启、可一键关闭**：`cloud.enabled` 默认 on；关闭方式 = `syscity start --nocloud`（CLI 覆盖，经后台/自更新重启透传）、`SYSCITY_CLOUD_ENABLED=0`、config.toml `[cloud] enabled = false`，或构建期 `--no-default-features`。
 
 **依赖顺序**：P0（登录态）是一切的前提 → P1（分发，已有基础）→ P2（云端服务使用）→ 延后（同步）。
 
@@ -18,8 +19,8 @@
 ## P0 — 账号/登录（用云端的前提）
 
 - [x] **1. Cargo feature `cloud` 隔离**（§2.7）
-      - 所有云集成代码收进 `cloud` feature（默认关闭、运行时双闸 `cloud.enabled` + 登录态）。
-      - 目的：公开仓库不含任何云耦合，运营侧代码可审计。
+      - 所有云集成代码收进 `cloud` feature（已进 default features、运行时双闸 `cloud.enabled` + 登录态，`--nocloud` / `SYSCITY_CLOUD_ENABLED=0` / config 一键关闭）。
+      - 目的：云耦合代码集中隔离、可审计；不想带云能力的构建用 `--no-default-features`。
 - [x] **2. gateway 登录态 + 账号绑定**（P0-2）
       - 引擎 web/UI 加「登录」入口 → **popup 打开云端 console 的登录页**（`{console_url}/login?redirect=<engine>`，用户选 github/google/wechat）→ 云端 OAuth → 回调回引擎 `redirect_base#token=...`。
       - popup 自关 + postMessage 通知引擎 web；引擎 web 轮询 `/api/v1/status` 兜底 → 登录态自动刷新（按钮从「Signing in…」变头像）。
@@ -80,7 +81,7 @@
 - [x] **8. 云端采购连接器（kind=cloud）**（§3.6）
       - 引擎侧 cloud connector 走云端 MCP 代理：`POST /api/v1/mcp/tools` / `POST /api/v1/mcp/call`（带 token，按 credits 扣费）。
       - `connector.json` 加顶层 `kind`（`byoa`|`cloud`，默认 byoa，校验）；`McpTransport::Cloud`（feature `cloud`，`connector_id` + `api_base`）；`McpClient` 对 Cloud transport 走 `cloud_list_tools`/`cloud_call_tool`（会话 token + bearer）；`ConnectorManager::server_config_for` 对 `kind=cloud` 且 `cloud_api_base` 存在时生成 Cloud relay 配置；`cloud.enabled=false` 时 enable 报错并记 `Error` 态。
-      - 双闸：feature `cloud`（默认关）+ `cloud.enabled`（`init/tools.rs` 只传 `Some(api_base)` when enabled）+ 调用时校验会话 token。
+      - 双闸：feature `cloud`（default features 内含）+ `cloud.enabled`（`init/tools.rs` 只传 `Some(api_base)` when enabled）+ 调用时校验会话 token。
 - [x] **9. 设备绑定**
       - 引擎侧 `src/cloud/device.rs`：稳定本地 device_id（首用生成 UUID 持久化到 `cloud/device_id`，重启不变、重复绑定幂等）→ `POST /api/v1/devices` 拿 device_token（存 secret store，`SystemGenerated`）。
       - 登录成功后 best-effort 绑定（`token_handler` 调 `device::bind`），失败只记 warn 不阻断登录；device_token 为未来同步打底。

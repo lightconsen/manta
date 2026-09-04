@@ -31,6 +31,8 @@ pub struct DaemonConfig {
     pub headless: bool,
     /// Headless display identifier (CLI override)
     pub headless_display: String,
+    /// Force-disable cloud features (CLI override; cloud is on by default)
+    pub nocloud: bool,
 }
 
 /// Daemon manager
@@ -75,13 +77,19 @@ impl DaemonManager {
             .map_err(crate::error::SyscityError::Io)?;
 
         // Spawn the daemon process with output redirected to log file
-        let child = Command::new(&exe_path)
-            .arg("start")
+        let mut cmd = Command::new(&exe_path);
+        cmd.arg("start")
             .arg("--host")
             .arg(&self.config.host)
             .arg("--port")
             .arg(self.config.port.to_string())
-            .arg("--foreground")
+            .arg("--foreground");
+        if self.config.nocloud {
+            // Propagate the cloud opt-out to the detached child; without this
+            // a backgrounded `syscity start --nocloud` would silently lose it.
+            cmd.arg("--nocloud");
+        }
+        let child = cmd
             .stdin(std::process::Stdio::null())
             .stdout(
                 log_file_std
@@ -130,7 +138,15 @@ impl DaemonManager {
     /// the caller is expected to shut down promptly so the helper can take
     /// over. This is only used from the web/daemon update flow, where the
     /// process performing the update is the process that must be replaced.
-    pub fn spawn_restart_helper(host: &str, port: u16, old_pid: u32) -> crate::Result<()> {
+    ///
+    /// `nocloud` preserves a CLI `--nocloud` override across the restart: the
+    /// flag lives only on the command line, never in config.toml.
+    pub fn spawn_restart_helper(
+        host: &str,
+        port: u16,
+        old_pid: u32,
+        nocloud: bool,
+    ) -> crate::Result<()> {
         let exe_path = std::env::current_exe().map_err(crate::error::SyscityError::Io)?;
         let log_path = crate::logs::log_file_path();
         if let Some(parent) = log_path.parent() {
@@ -142,15 +158,18 @@ impl DaemonManager {
             .open(&log_path)
             .map_err(crate::error::SyscityError::Io)?;
 
-        std::process::Command::new(&exe_path)
-            .arg("restart")
+        let mut cmd = std::process::Command::new(&exe_path);
+        cmd.arg("restart")
             .arg("--pid")
             .arg(old_pid.to_string())
             .arg("--host")
             .arg(host)
             .arg("--port")
-            .arg(port.to_string())
-            .stdin(std::process::Stdio::null())
+            .arg(port.to_string());
+        if nocloud {
+            cmd.arg("--nocloud");
+        }
+        cmd.stdin(std::process::Stdio::null())
             .stdout(
                 log_file_std
                     .try_clone()
@@ -560,6 +579,14 @@ workspace_only = true
             println!("🖥️  Headless mode enabled on display {}", self.config.headless_display);
         }
 
+        // Cloud opt-out (CLI override): cloud features are on by default;
+        // `--nocloud` forces the runtime gate off regardless of config.toml.
+        #[cfg(feature = "cloud")]
+        if self.config.nocloud {
+            gateway_config.cloud.enabled = false;
+            println!("☁️  Cloud features disabled (--nocloud)");
+        }
+
         // Configure LLM Provider from environment variables (legacy support)
         apply_env_provider_overrides(&mut gateway_config);
 
@@ -923,6 +950,7 @@ mod tests {
             remote_control_key: None,
             headless: false,
             headless_display: ":99".to_string(),
+            nocloud: false,
         };
         assert_eq!(config.host, "127.0.0.1");
         assert_eq!(config.port, 8080);
@@ -942,6 +970,7 @@ mod tests {
             remote_control_key: None,
             headless: false,
             headless_display: ":99".to_string(),
+            nocloud: false,
         };
         let manager = DaemonManager::new(config.clone());
         assert!(manager.is_ok());
@@ -966,6 +995,7 @@ mod tests {
             remote_control_key: None,
             headless: false,
             headless_display: ":99".to_string(),
+            nocloud: false,
         };
         let manager = DaemonManager::new(config).unwrap();
 
@@ -994,6 +1024,7 @@ mod tests {
             remote_control_key: None,
             headless: false,
             headless_display: ":99".to_string(),
+            nocloud: false,
         };
         let manager = DaemonManager::new(config).unwrap();
 
@@ -1019,6 +1050,7 @@ mod tests {
             remote_control_key: None,
             headless: false,
             headless_display: ":99".to_string(),
+            nocloud: false,
         };
         let manager = DaemonManager::new(config).unwrap();
 
@@ -1042,6 +1074,7 @@ mod tests {
             remote_control_key: None,
             headless: false,
             headless_display: ":99".to_string(),
+            nocloud: false,
         };
         let manager = DaemonManager::new(config).unwrap();
 
@@ -1065,6 +1098,7 @@ mod tests {
             remote_control_key: None,
             headless: false,
             headless_display: ":99".to_string(),
+            nocloud: false,
         };
         let manager = DaemonManager::new(config).unwrap();
 
@@ -1085,6 +1119,7 @@ mod tests {
             remote_control_key: None,
             headless: false,
             headless_display: ":99".to_string(),
+            nocloud: false,
         };
         let manager = DaemonManager::new(config).unwrap();
 
