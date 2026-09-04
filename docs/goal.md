@@ -168,7 +168,9 @@ Fresh-Context Mode。
 ## Persistence
 
 Goal 状态在每个 round 结束后 checkpoint 到 `~/.syscity/goals/<goal_id>.json`，内容包括
-plan、当前 round、condition history，以及（fresh-context 模式）最近一次通过校验的 handoff。
+plan、当前 round、condition history、累计 token 花销，以及（fresh-context 模式）最近一次
+通过校验的 handoff。写入是原子的：先写 `{file}.tmp` 再 `rename` 落盘，进程在写盘中途
+崩溃只会留下上一轮的完好 checkpoint，不会截断现有文件。
 
 **重启后不再自动恢复**：gateway 启动时只记录 `N persisted goal(s) suspended`，这些
 *suspended* goal 出现在 `/goal list` 中（含 round/max_rounds 和 blocked reason），需要显式
@@ -180,6 +182,25 @@ Checkpoint 的去留取决于终止方式：
 - **Policy stop**（loop detected、max rounds、invalid handoff、fatal config error）：状态文件
   **保留**，并写入结构化的 `blocked_reason {code, message}`，以便人工排查后通过
   `/goal resume <id>` 继续
+- **Gateway 停机**：runner 走 abort（≈崩溃语义）——上一轮的 checkpoint 幸存，goal 变为
+  suspended。这与 `/goal cancel`（用户显式作废、删除 checkpoint）是两条不同路径
+
+### Token 成本上报
+
+Runner 对每轮 LLM 调用累计 token 消耗（`TurnUsage`），随 checkpoint 持久化（resume 续算）
+并附在 `goal.done` / `goal.aborted` 事件上。goal 终态还会回写一条摘要消息到父会话线程
+（含轮数与 token 花销），重启后聊天记录仍保留完整结局。
+
+### CLI
+
+```
+syscity goal list            # 运行中 + 挂起的 goal
+syscity goal resume <id>     # 从 checkpoint 恢复挂起的 goal
+syscity goal cancel <id>     # 取消运行中的 goal / 丢弃挂起的 checkpoint
+```
+
+CLI 走 WebSocket `commands.execute`（与 `/goal` 斜杠命令同一通路），无新增 WS 方法或 REST
+端点。
 
 ---
 
@@ -199,10 +220,13 @@ src/goal/
 Gateway 集成：
 
 - `src/gateway/commands/agents.rs` — `/goal` 命令处理（start / cancel / list / resume）
-- `src/gateway/goal_spawn.rs` — suspended goal 列表 + 从 checkpoint 重建 runner
-- `src/gateway/lifecycle.rs` — 启动时记录 suspended goals（不自动恢复）
+- `src/gateway/goal_spawn.rs` — suspended goal 列表、从 checkpoint 重建 runner（runner 注册为
+  `goal:{id}`、事件 relay 注册为 `goal-relay:{id}`，停机统一排空）、终态回写父会话
+- `src/gateway/lifecycle.rs` — 启动时记录 suspended goals（不自动恢复）；停机时以 abort
+  语义排空所有 goal 任务
 - `src/gateway/protocol.rs` — `gateway.progress` 事件序列化
 - `src/gateway/ws.rs` — WebSocket 路由到订阅 session
+- `src/cli/goal.rs` — `syscity goal` CLI 子命令
 
 ---
 

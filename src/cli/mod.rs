@@ -25,6 +25,7 @@ mod device;
 mod doctor;
 mod eval;
 mod export;
+mod goal;
 mod kb;
 mod mcp;
 mod memory;
@@ -52,6 +53,7 @@ pub use doctor::DoctorCommands;
 pub use doctor::{DiagnosticHint, HintSeverity};
 pub use eval::EvalCommands;
 pub use export::ExportCommands;
+pub use goal::GoalCommands;
 pub use kb::KbCommands;
 pub use mcp::McpCommands;
 pub use memory::MemoryCommands;
@@ -96,6 +98,12 @@ pub enum Commands {
         /// Export subcommand
         #[command(subcommand)]
         command: ExportCommands,
+    },
+    /// Goal management (list, resume, cancel)
+    Goal {
+        /// Goal subcommand
+        #[command(subcommand)]
+        command: GoalCommands,
     },
     /// Configuration management (get, set, validate)
     Config {
@@ -418,6 +426,7 @@ impl Cli {
         match &self.command {
             Commands::Eval { command } => command.run(config).await,
             Commands::Export { command } => export::run_export_command(command).await,
+            Commands::Goal { command } => goal::run_goal_command(command).await,
             Commands::Config { command } => match command {
                 Some(cmd) => config_cmd::run_config_command(cmd).await,
                 None => setup::run_setup().await,
