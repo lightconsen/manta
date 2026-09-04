@@ -579,12 +579,18 @@ workspace_only = true
             println!("🖥️  Headless mode enabled on display {}", self.config.headless_display);
         }
 
-        // Cloud opt-out (CLI override): cloud features are on by default;
-        // `--nocloud` forces the runtime gate off regardless of config.toml.
+        // Cloud opt-out (CLI override): cloud-compiled builds default the
+        // runtime gate on; `--nocloud` forces it off regardless of config.toml.
         #[cfg(feature = "cloud")]
         if self.config.nocloud {
             gateway_config.cloud.enabled = false;
             println!("☁️  Cloud features disabled (--nocloud)");
+        }
+        // A binary built without the cloud feature has nothing to disable;
+        // say so instead of silently ignoring the flag.
+        #[cfg(not(feature = "cloud"))]
+        if self.config.nocloud {
+            println!("☁️  Cloud support not compiled in (--nocloud is a no-op)");
         }
 
         // Configure LLM Provider from environment variables (legacy support)
