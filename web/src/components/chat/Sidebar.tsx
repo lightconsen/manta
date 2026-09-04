@@ -2,9 +2,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Plus,
-  Sun,
-  Moon,
-  Settings,
   Bot,
   Pencil,
   Trash2,
@@ -13,10 +10,6 @@ import {
   Loader2,
   Store,
 } from "lucide-react";
-import { useThemeStore } from "@/stores/themeStore";
-import { StatusDot } from "./StatusDot";
-import { AccountButton } from "./AccountButton";
-import type { NetworkStatus } from "@/SyscityWebSocketTransport";
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 
 interface AgentItem {
@@ -49,8 +42,6 @@ interface SidebarProps {
   onNewSession: () => void;
   agents: AgentItem[];
   onCreateSessionWithAgent: (agentId: string) => void;
-  networkStatus: NetworkStatus;
-  onOpenSettings: () => void;
   /** Open the marketplace directly (Settings → Marketplace tab). */
   onOpenMarketplace: () => void;
   onRenameSession?: (id: string, name: string) => void | Promise<void>;
@@ -70,14 +61,11 @@ export function Sidebar({
   onNewSession,
   agents,
   onCreateSessionWithAgent,
-  networkStatus,
-  onOpenSettings,
   onOpenMarketplace,
   onRenameSession,
   onDeleteSession,
   onPinSession,
 }: SidebarProps) {
-  const { resolvedTheme, setTheme } = useThemeStore();
 
   const listContainerRef = useRef<HTMLDivElement>(null);
   const [sessionRatio, setSessionRatio] = useState<number>(() => {
@@ -216,15 +204,6 @@ export function Sidebar({
           )}
         </button>
       </div>
-
-      {/* Account/login entry, in its own full-width row right below the logo
-          bar (above + New Session). `px-1` matches the sessions container so
-          the row aligns with "+ New session". Hidden when collapsed. */}
-      {!collapsed && (
-        <div className="px-1 pb-2 shrink-0">
-          <AccountButton />
-        </div>
-      )}
 
       {/* Pending tool approvals — a persistent reminder above the session
           list. Clicking opens the approval modal for the front of the queue. */}
@@ -366,7 +345,7 @@ export function Sidebar({
         </div>
       </div>
 
-      {/* Marketplace entry — a prominent shortcut above the bottom controls. */}
+      {/* Marketplace entry — a prominent shortcut at the bottom. */}
       {!collapsed && (
         <div className="px-1 pb-1 shrink-0">
           <button
@@ -380,47 +359,6 @@ export function Sidebar({
           </button>
         </div>
       )}
-
-      {/* Bottom: Network + Theme + Settings */}
-      <div className="p-3 shrink-0 border-t border-subtle">
-        <div
-          className={`flex items-center ${
-            collapsed ? "justify-center" : "justify-between"
-          }`}
-        >
-          {!collapsed && (
-            <div className="flex items-center gap-2 text-xs text-secondary">
-              <StatusDot status={networkStatus} />
-              <span className="capitalize">{networkStatus}</span>
-            </div>
-          )}
-          {collapsed && <StatusDot status={networkStatus} />}
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() =>
-                setTheme(resolvedTheme === "dark" ? "light" : "dark")
-              }
-              className="p-1.5 rounded-md hover:bg-black/5 dark:hover:bg-white/5 text-secondary transition"
-              title="Toggle theme"
-              aria-label="Toggle theme"
-            >
-              {resolvedTheme === "dark" ? (
-                <Sun className="w-4 h-4" />
-              ) : (
-                <Moon className="w-4 h-4" />
-              )}
-            </button>
-            <button
-              onClick={onOpenSettings}
-              className="p-1.5 rounded-md hover:bg-black/5 dark:hover:bg-white/5 text-secondary transition"
-              title="Settings"
-              aria-label="Settings"
-            >
-              <Settings className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      </div>
     </aside>
   );
 }

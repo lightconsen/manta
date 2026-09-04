@@ -1,5 +1,4 @@
 import { useMemo, useState, useEffect, useCallback, useRef } from "react";
-import { Menu } from "lucide-react";
 import {
   AssistantRuntimeProvider,
   useLocalRuntime,
@@ -7,11 +6,12 @@ import {
 import {
   SyscityWebSocketTransport,
   setActiveTransport,
-  type NetworkStatus,
   type ChatMessage,
 } from "@/SyscityWebSocketTransport";
 import { cloudSubmitToken } from "@/lib/cloud";
 import { useChatStore } from "@/stores/chatStore";
+import { Titlebar } from "@/components/chrome/Titlebar";
+import { Statusbar } from "@/components/chrome/Statusbar";
 import { Sidebar } from "@/components/chat/Sidebar";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { WelcomeScreen } from "@/components/onboarding/WelcomeScreen";
@@ -135,7 +135,6 @@ function ChatApp() {
       has_heartbeat: boolean;
     }>
   >([]);
-  const [networkStatus, setNetworkStatus] = useState<NetworkStatus>("connecting");
   const [runningSessionIds, setRunningSessionIds] = useState<string[]>([]);
   const [sessionKey, setSessionKey] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -291,10 +290,11 @@ function ChatApp() {
     }
   }, [transport]);
 
-  // Network status
+  // Network status — lives in chatStore so Titlebar/Statusbar read it
+  // without prop drilling.
   useEffect(() => {
     return transport.onStatusChange((status) => {
-      setNetworkStatus(status);
+      useChatStore.getState().setNetworkStatus(status);
       if (status === "connected") {
         refreshSessions();
         refreshAgents();
@@ -730,10 +730,8 @@ function ChatApp() {
 
   return (
     <div
-      className="flex bg-page text-primary"
+      className="flex flex-col bg-page text-primary"
       style={{
-        paddingTop: "env(safe-area-inset-top)",
-        paddingBottom: "env(safe-area-inset-bottom)",
         // iOS WKWebView computes the layout viewport as safe-area-exclusive
         // (~759pt on iPhone 16) at rest, so 100%/100dvh leave a gap below the
         // composer. 100lvh resolves to the full screen (852pt), and shrinks
@@ -741,92 +739,83 @@ function ChatApp() {
         height: "100lvh",
       }}
     >
-      {/* Desktop: inline sidebar. Mobile: hidden, the drawer below replaces it. */}
-      <div className="hidden md:contents">
-        <Sidebar
-          collapsed={sidebarCollapsed}
-          onToggle={() => setSidebarCollapsed((c) => !c)}
-          sessions={sessionItems}
-          currentSessionId={transport.getSessionId()}
-          runningSessionIds={runningSessionIds}
-          onSwitchSession={handleSwitchSession}
-          onNewSession={handleNewSession}
-          agents={agents}
-          onCreateSessionWithAgent={handleCreateSessionWithAgent}
-          networkStatus={networkStatus}
-          onOpenSettings={() => openSettings("general")}
-          onOpenMarketplace={openMarketplace}
-          pendingApprovals={pendingApprovals.length}
-          onShowApprovals={() => {}}
-          onRenameSession={handleRenameSession}
-          onDeleteSession={handleDeleteSession}
-          onPinSession={handlePinSession}
-        />
-      </div>
+      {/* Row 1: app titlebar (macOS overlay: traffic lights + drag region). */}
+      <Titlebar
+        isMobile={isMobile}
+        showHamburger={isMobile && !mobileNavOpen}
+        onOpenMobileNav={() => setMobileNavOpen(true)}
+        onOpenSettings={() => openSettings("general")}
+      />
 
-      {/* Mobile: hamburger opens the navigation drawer. */}
-      {isMobile && !mobileNavOpen && (
-        <button
-          className="fixed left-3 z-40 md:hidden p-2 rounded-lg bg-page/80 backdrop-blur-sm border border-subtle text-secondary"
-          style={{ top: "calc(0.75rem + env(safe-area-inset-top))" }}
-          onClick={() => setMobileNavOpen(true)}
-          aria-label="Open navigation"
-        >
-          <Menu size={20} />
-        </button>
-      )}
-
-      {/* Mobile navigation drawer. */}
-      {isMobile && mobileNavOpen && (
-        <div className="fixed inset-0 z-50 md:hidden">
-          <div
-            className="absolute inset-0 bg-black/40"
-            onClick={() => setMobileNavOpen(false)}
+      {/* Row 2: sidebar + main content. */}
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+        {/* Desktop: inline sidebar. Mobile: hidden, the drawer below replaces it. */}
+        <div className="hidden md:contents">
+          <Sidebar
+            collapsed={sidebarCollapsed}
+            onToggle={() => setSidebarCollapsed((c) => !c)}
+            sessions={sessionItems}
+            currentSessionId={transport.getSessionId()}
+            runningSessionIds={runningSessionIds}
+            onSwitchSession={handleSwitchSession}
+            onNewSession={handleNewSession}
+            agents={agents}
+            onCreateSessionWithAgent={handleCreateSessionWithAgent}
+            onOpenMarketplace={openMarketplace}
+            pendingApprovals={pendingApprovals.length}
+            onShowApprovals={() => {}}
+            onRenameSession={handleRenameSession}
+            onDeleteSession={handleDeleteSession}
+            onPinSession={handlePinSession}
           />
-          <div
-            className="absolute inset-y-0 left-0 w-72 max-w-[85vw] bg-sidebar shadow-xl"
-            style={{
-              paddingTop: "env(safe-area-inset-top)",
-              paddingBottom: "env(safe-area-inset-bottom)",
-            }}
-          >
-            <Sidebar
-              collapsed={false}
-              onToggle={() => setMobileNavOpen(false)}
-              sessions={sessionItems}
-              currentSessionId={transport.getSessionId()}
-              runningSessionIds={runningSessionIds}
-              onSwitchSession={(id) => {
-                handleSwitchSession(id);
-                setMobileNavOpen(false);
-              }}
-              onNewSession={() => {
-                handleNewSession();
-                setMobileNavOpen(false);
-              }}
-              agents={agents}
-              onCreateSessionWithAgent={(id) => {
-                handleCreateSessionWithAgent(id);
-                setMobileNavOpen(false);
-              }}
-              networkStatus={networkStatus}
-              onOpenSettings={() => {
-                openSettings("general");
-                setMobileNavOpen(false);
-              }}
-              onOpenMarketplace={() => {
-                openMarketplace();
-                setMobileNavOpen(false);
-              }}
-              onRenameSession={handleRenameSession}
-              onDeleteSession={handleDeleteSession}
-              onPinSession={handlePinSession}
-            />
-          </div>
         </div>
-      )}
 
-      <main className="flex-1 flex flex-col overflow-hidden">
+        {/* Mobile navigation drawer. */}
+        {isMobile && mobileNavOpen && (
+          <div className="fixed inset-0 z-50 md:hidden">
+            <div
+              className="absolute inset-0 bg-black/40"
+              onClick={() => setMobileNavOpen(false)}
+            />
+            <div
+              className="absolute inset-y-0 left-0 w-72 max-w-[85vw] bg-sidebar shadow-xl"
+              style={{
+                paddingTop: "env(safe-area-inset-top)",
+                paddingBottom: "env(safe-area-inset-bottom)",
+              }}
+            >
+              <Sidebar
+                collapsed={false}
+                onToggle={() => setMobileNavOpen(false)}
+                sessions={sessionItems}
+                currentSessionId={transport.getSessionId()}
+                runningSessionIds={runningSessionIds}
+                onSwitchSession={(id) => {
+                  handleSwitchSession(id);
+                  setMobileNavOpen(false);
+                }}
+                onNewSession={() => {
+                  handleNewSession();
+                  setMobileNavOpen(false);
+                }}
+                agents={agents}
+                onCreateSessionWithAgent={(id) => {
+                  handleCreateSessionWithAgent(id);
+                  setMobileNavOpen(false);
+                }}
+                onOpenMarketplace={() => {
+                  openMarketplace();
+                  setMobileNavOpen(false);
+                }}
+                onRenameSession={handleRenameSession}
+                onDeleteSession={handleDeleteSession}
+                onPinSession={handlePinSession}
+              />
+            </div>
+          </div>
+        )}
+
+        <main className="flex-1 min-w-0 flex flex-col overflow-hidden">
         {/* New-release banner; the settings General tab shows the full controls. */}
         {!settingsOpen && !marketplaceOpen && <UpdateBanner />}
         {/* First-login cloud guidance (shown once after a successful login). */}
@@ -914,6 +903,10 @@ function ChatApp() {
           </>
         )}
       </main>
+      </div>
+
+      {/* Row 3: statusbar (connection/version + run/model). */}
+      <Statusbar transport={transport} />
 
       {/* Mobile: document preview takes the whole screen instead of a split. */}
       {isMobile && previewDocument && (

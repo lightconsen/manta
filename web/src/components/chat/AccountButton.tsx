@@ -12,24 +12,25 @@ const LOGIN_TIMEOUT_MS = 180_000;
 const POLL_MS = 1_500;
 
 /**
- * Persistent account/login entry in the sidebar, rendered as a full-width
- * row (like "+ New session"), placed below the logo bar.
+ * Account/login entry. Two variants:
+ * - "row" (default): full-width sidebar row (like "+ New session").
+ * - "icon": compact icon button for the Titlebar right cluster.
  *
  * Sign-in opens the cloud OAuth in a **new tab** (popup flow) so the app
- * never navigates away: the row shows "Signing in…" while the popup runs,
- * the popup notifies back via postMessage and the row also polls
+ * never navigates away: the control shows "Signing in…" while the popup
+ * runs, the popup notifies back via postMessage and the control also polls
  * `/api/v1/status` as the reliable fallback, flipping to the avatar once the
  * session token is stored. Times out (60s) and resets if the user abandons
  * the popup.
  *
  * - cloud disabled → hidden entirely (matches the rest of the UI).
- * - signed out    → `[👤] Sign in` row.
- * - pending       → `[⏳] Signing in…` row.
- * - signed in     → `[avatar] name` row that opens an account menu (name/email
- *   + sign out). The menu is a portal so the sidebar's overflow-x-hidden
- *   never clips it, opening below the row.
+ * - signed out    → sign-in row/icon.
+ * - pending       → spinner row/icon.
+ * - signed in     → avatar (+"name" on the row variant) that opens an
+ *   account menu (name/email + sign out). The menu is a portal so
+ *   overflow-x-hidden containers never clip it, opening below the control.
  */
-export function AccountButton() {
+export function AccountButton({ variant = "row" }: { variant?: "row" | "icon" }) {
   const [status, setStatus] = useState<CloudStatus | null>(null);
   const [loginPending, setLoginPending] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -148,6 +149,80 @@ export function AccountButton() {
   const rowCls =
     "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition " +
     "text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04]";
+  const iconCls =
+    "flex items-center justify-center w-7 h-7 rounded-md transition " +
+    "text-secondary hover:bg-black/5 dark:hover:bg-white/5";
+
+  if (variant === "icon") {
+    if (loginPending) {
+      return (
+        <button
+          disabled
+          className={`${iconCls} opacity-70 cursor-default`}
+          title="Signing in…"
+          aria-label="Signing in…"
+        >
+          <Loader2 className="w-4 h-4 animate-spin" />
+        </button>
+      );
+    }
+    if (!status.logged_in) {
+      return (
+        <button
+          onClick={beginLogin}
+          className={iconCls}
+          title="Sign in to Syscity Cloud"
+          aria-label="Sign in to Syscity Cloud"
+        >
+          <User className="w-4 h-4" />
+        </button>
+      );
+    }
+    return (
+      <>
+        <button
+          ref={btnRef}
+          onClick={toggleMenu}
+          className={`${iconCls} rounded-full`}
+          title={display || "Account"}
+          aria-label="Account"
+        >
+          <span className="w-6 h-6 rounded-full bg-primary-500 text-white text-xs font-semibold flex items-center justify-center">
+            {initial}
+          </span>
+        </button>
+        {menuOpen &&
+          menuPos &&
+          createPortal(
+            <div
+              ref={menuRef}
+              className="fixed z-50 w-56 rounded-lg border border-subtle bg-card shadow-xl p-2 text-xs"
+              style={{ top: menuPos.top, left: menuPos.left }}
+            >
+              <div className="px-2 py-1.5 text-primary font-medium truncate">
+                {display || "Signed in"}
+              </div>
+              {user?.email && (
+                <div className="px-2 pb-1.5 text-secondary truncate">{user.email}</div>
+              )}
+              <div className="my-1 border-t border-subtle" />
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  void cloudLogout();
+                  setStatus({ ...status, logged_in: false, user: null });
+                }}
+                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-secondary hover:bg-black/5 dark:hover:bg-white/5 hover:text-primary transition"
+              >
+                <LogOut size={12} /> Sign out
+              </button>
+            </div>,
+            document.body,
+          )}
+      </>
+    );
+  }
 
   if (loginPending) {
     return (
