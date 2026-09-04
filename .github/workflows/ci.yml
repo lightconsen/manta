@@ -79,6 +79,11 @@ jobs:
           chmod +x scripts/static-analysis.sh
           ./scripts/static-analysis.sh
 
+      - name: Gate integrity checks
+        run: |
+          chmod +x scripts/gate-integrity.sh
+          ./scripts/gate-integrity.sh --tree
+
       - name: Check build
         run: cargo check --all-features
 

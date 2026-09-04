@@ -33,6 +33,15 @@ if ! ./scripts/staged-checks.sh; then
     exit 1
 fi
 
+# Gate integrity: the eval gate's meaning must not be quietly changed to
+# make a failing version pass (lowered min_pass_rate, removed criteria).
+if ! ./scripts/gate-integrity.sh --staged; then
+    echo ""
+    echo "❌  Gate-integrity checks failed — commit rejected."
+    echo "    Emergency bypass: git commit --no-verify"
+    exit 1
+fi
+
 if ./scripts/audit.sh; then
     exit 0
 fi
