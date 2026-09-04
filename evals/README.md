@@ -77,7 +77,51 @@ syscity eval run ci_smoke --full --skill-breakdown
 
 # 收集失败 case 做 RCA
 syscity eval run ci_smoke --full --collect-badcases
+
+# 只重跑指定 task id（全量门禁失败后的廉价迭代；判定语义与全量一致）
+syscity eval run release_gate --full --trials 5 \
+  --only reg_factual_hallucination,edge_special_chars
 ```
+
+### 发布门禁迭代环（拆开 gate，避免全量重跑）
+
+流程：**全量 gate → 收集失败 task-id → 本地只跑失败项 → 干净后 CI 全量认证**。
+
+1. **全量 gate**（CI）：Actions → Eval Release Gate（`release_gate`，5 trials/任务）。
+   下载 artifact `eval-gate-<run>.zip`，从 `eval-gate-output.log` 提取失败 task-id。
+2. **本地复现失败子集**：
+   ```bash
+   syscity eval run release_gate --full --trials 5 \
+     --provider <p> --model <m> --judge-model <j> \
+     --only <失败 task-id，逗号分隔>
+   ```
+   `--only` 直接在原任务 YAML 上跑，judge/conditions/criteria 语义与全量完全一致；
+   此时 suite 判定是**子集** overall，只作方向性信号。
+3. **Fix loop**：对每个失败 task-id，读 `evals/badcases/<task>.yaml`
+   （含 critique / response / 工具轨迹）→ 先分类：**真行为缺口（修）／
+   judge-infra（记残余）／ trial 噪声（重跑确认）** → 按"当产品行为修根因"修复
+   → 重跑子集 → 直到子集 overall ≥85%（比全量门槛严格，留裕量）。
+4. **认证**：本地干净后，CI 全量 gate 认证 ≥0.85。
+
+**迭代纪律**（依据 HarnessDev 论文的实测数据，详见
+`docs/research/harnessdev-notes.md`）：
+
+- **子集只是方向性信号**：论文中小样本探针与全量评测的一致率仅约 50%。
+  不要拿子集里 ±1 个 trial 的摆动做决策，最终以 CI 全量为准。
+- **第二模型复测**：改动让子集 ≥85% 后，换一个执行模型（改 `--model`）
+  把子集再跑一遍，**仍过才 push**。防止"harness–模型耦合"造成的假提升
+  （论文案例：同一套 harness 换执行器后分数从 69.3 掉到 33.0）。
+- **不为单次 flaky trial 过拟合**：单 trial 失败优先重跑确认，
+  不为一例噪声扭曲 prompt。
+- **评测账本**：每次 `eval run` 结束自动向 `evals/ledger.md` 追加一行
+  （日期 / commit / suite / 执行模型 / judge / 模式 / 通过率 / 失败任务）。
+  判断"哪个版本最好"时对照账本，不要凭记忆——对话记忆撑不过上下文压缩，
+  文件和 git 历史才是持久层。
+- **成本轴**：Suite Summary 报告 Total tokens / Avg tokens per trial。
+  比较版本时同时看通过率与成本（论文：同任务族成本差 19 倍且与分数无关）。
+- **阈值纪律已机器化**：`scripts/gate-integrity.sh --staged` 在 pre-commit
+  拦截下调 `min_pass_rate`；CI 以 `--tree` 模式验证 release_gate ≥0.85
+  且 `src/`（eval 子系统外）没有硬编码 eval task-id。
 
 ---
 
