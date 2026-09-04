@@ -41,6 +41,12 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm build
+          # The site links to curl -sSL https://syscity.net/install.sh | bash and
+          # irm https://syscity.net/install.ps1 | iex. GitHub Pages serves the
+          # artifact root verbatim, so bake the one-line installers (canonical
+          # copies live in scripts/) into dist/ to satisfy those URLs.
+          cp ../scripts/install.sh dist/install.sh
+          cp ../scripts/install.ps1 dist/install.ps1
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
