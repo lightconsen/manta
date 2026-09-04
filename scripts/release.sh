@@ -16,8 +16,10 @@
 #   2. cargo test --all-features --lib (unless --skip-tests)
 #   3. Promote the CHANGELOG `## [Unreleased]` section to `## [X.Y.Z] - <date>`;
 #      if that section is empty, draft one from commit subjects since the
-#      previous tag (✨→Added, 🐛→Fixed, rest→Changed). Opens $EDITOR unless
-#      --no-edit or non-interactive.
+#      previous tag — via the LLM configured in scripts/.env (SYSCITY_* vars,
+#      gitignored; OpenAI- or Anthropic-compatible), falling back to mechanical
+#      ✨→Added / 🐛→Fixed / rest→Changed grouping when it's absent or fails.
+#      Opens $EDITOR unless --no-edit or non-interactive.
 #   4. Bump the version in Cargo.toml, desktop/Cargo.toml, web/package.json
 #      and refresh Cargo.lock
 #   5. Commit `🔖 chore(release): vX.Y.Z`, push main, create the tag and push it
@@ -55,6 +57,9 @@ while [ $# -gt 0 ]; do
       echo "  --tag <tag>   publish a custom tag without bumping/committing"
       echo "  --no-edit     skip opening an editor on CHANGELOG.md"
       echo "  --skip-tests  skip the pre-release test run"
+      echo ""
+      echo "  Draft release notes use the LLM configured in scripts/.env"
+      echo "  (SYSCITY_* vars) when present; falls back to mechanical grouping."
       exit 0
       ;;
     *)
@@ -162,11 +167,27 @@ if git rev-parse -q --verify "refs/tags/v$current" >/dev/null 2>&1; then
   fi
 fi
 
-source_note="$(python3 - "$next" "$release_date" "$current" "$added" "$fixed" "$changed" <<'PY'
+# Local LLM config for drafting release notes (gitignored, optional).
+# Exported so the python step below reads SYSCITY_* via os.environ.
+if [ -f scripts/.env ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source scripts/.env
+  set +a
+fi
+
+# Draft the section in python. The heredoc must stay OUTSIDE command
+# substitution: /bin/bash 3.2 (macOS shebang) mis-parses backticks inside
+# $(...) heredocs, and the LLM fence-stripping below uses them.
+notes_file="$(mktemp)"
+if python3 - "$next" "$release_date" "$current" "$added" "$fixed" "$changed" "$subjects" > "$notes_file" <<'PY'
+import json
+import os
 import re
 import sys
+import urllib.request
 
-next_ver, date, current, added, fixed, changed = sys.argv[1:7]
+next_ver, date, current, added, fixed, changed, subjects = sys.argv[1:8]
 path = "CHANGELOG.md"
 text = open(path, encoding="utf-8").read()
 
@@ -180,21 +201,90 @@ m = re.search(r"\n## \[", rest)
 body, tail = (rest[: m.start()], rest[m.start():]) if m else (rest, "")
 body = body.strip("\n")
 
+
+def llm_release_notes():
+    """Draft release notes via the SYSCITY_* provider config (scripts/.env).
+
+    Returns (model, text) on success; None when unconfigured, the request
+    fails, or the output is unusable (a warning goes to stderr on failure).
+    URL shapes mirror src/providers: OpenAI-compatible `{base}/chat/completions`
+    (base includes /v1), Anthropic-compatible `{base}/v1/messages`.
+    """
+    base = os.environ.get("SYSCITY_BASE_URL", "").strip().rstrip("/")
+    key = os.environ.get("SYSCITY_API_KEY", "").strip()
+    model = os.environ.get("SYSCITY_MODEL", "").strip()
+    if not (base and key and model and subjects.strip()):
+        return None
+    is_anthropic = os.environ.get("SYSCITY_IS_ANTHROPIC", "").strip().lower() in ("true", "1")
+    prompt = f"""You are drafting user-facing release notes for Syscity, version {next_ver} (previous release v{current}).
+
+Git commit subjects since v{current}:
+
+{subjects}
+
+Rewrite them as Keep-a-Changelog release notes:
+- Output ONLY the body: "### Added", "### Changed", "### Fixed" subsections in this order (omit empty ones), each followed by markdown bullets.
+- Group related commits into one bullet when they form a single user-visible change; phrase bullets as user-visible behavior, not commit-speak.
+- Drop release chores (🔖 version bumps) and CI-only churn unless it matters to users.
+- Write in the same language as the commit subjects.
+- Do not invent changes that are not implied by the subjects.
+- No preamble, no top-level "##" version header, no dates.
+"""
+    if is_anthropic:
+        url = base + "/v1/messages"
+        headers = {"x-api-key": key, "anthropic-version": "2023-06-01",
+                   "content-type": "application/json"}
+    else:
+        url = base + "/chat/completions"
+        headers = {"Authorization": "Bearer " + key,
+                   "content-type": "application/json"}
+    payload = {"model": model, "max_tokens": 2000, "temperature": 0.2,
+               "messages": [{"role": "user", "content": prompt}]}
+    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"),
+                                 headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = json.load(resp)
+    except Exception as exc:
+        print(f"⚠️  LLM draft failed ({exc}) — falling back to mechanical grouping",
+              file=sys.stderr)
+        return None
+    if is_anthropic:
+        out = "".join(block.get("text", "") for block in data.get("content", []))
+    else:
+        out = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    out = out.strip()
+    if out.startswith("```"):  # strip a wrapping markdown fence, if any
+        out = re.sub(r"^```[^\n]*\n", "", out)
+        out = re.sub(r"\n?```\s*$", "", out).strip()
+    if not out or "## [" in out or "###" not in out:
+        print("⚠️  LLM draft output unusable — falling back to mechanical grouping",
+              file=sys.stderr)
+        return None
+    return model, out
+
+
 if not body.strip():
-    parts = []
-    if added.strip():
-        parts.append("### Added\n\n" + added.strip())
-    if fixed.strip():
-        parts.append("### Fixed\n\n" + fixed.strip())
-    if changed.strip():
-        parts.append("### Changed\n\n" + changed.strip())
-    if not parts:
-        sys.exit(
-            "Nothing to release: the Unreleased section is empty and there are "
-            "no commits since v" + current
-        )
-    body = "\n\n".join(parts)
-    source = "Drafted release notes from commits since v" + current
+    llm = llm_release_notes()
+    if llm:
+        body = llm[1]
+        source = ("Drafted release notes with " + llm[0]
+                  + " (scripts/.env) from commits since v" + current)
+    else:
+        parts = []
+        if added.strip():
+            parts.append("### Added\n\n" + added.strip())
+        if fixed.strip():
+            parts.append("### Fixed\n\n" + fixed.strip())
+        if changed.strip():
+            parts.append("### Changed\n\n" + changed.strip())
+        if not parts:
+            sys.exit(
+                "Nothing to release: the Unreleased section is empty and there are "
+                "no commits since v" + current
+            )
+        body = "\n\n".join(parts)
+        source = "Drafted release notes from commits since v" + current
 else:
     source = "Promoted the Unreleased section to " + next_ver
 
@@ -202,7 +292,15 @@ section = f"## [{next_ver}] - {date}\n\n{body}\n"
 open(path, "w", encoding="utf-8").write(text[:start] + marker + "\n\n" + section + tail)
 print(source)
 PY
-)"
+then
+  source_note="$(cat "$notes_file")"
+else
+  source_note=""
+fi
+rm -f "$notes_file"
+if [ -z "$source_note" ]; then
+  exit 1
+fi
 
 if ! grep -q "^## \[$next\]" CHANGELOG.md; then
   echo "✗ $source_note" >&2
