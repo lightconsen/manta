@@ -45,6 +45,15 @@ pub struct PersistedGoalState {
     /// providers that do not echo usage.
     #[serde(default)]
     pub token_usage: Option<crate::agent::turns::TurnUsage>,
+    /// Message history of an in-flight round (mid-round snapshots only).
+    /// `None` for round-end and terminal checkpoints: resuming such a file
+    /// starts the round fresh (previous behavior), so any on-disk state
+    /// carrying `Some` is genuinely mid-round. Restoring re-sends the prefix
+    /// verbatim — OpenAI/DeepSeek passive prefix caching absorbs it;
+    /// Anthropic (no request-side cache control) re-prefills at full input
+    /// price.
+    #[serde(default)]
+    pub round_messages: Option<Vec<crate::providers::Message>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -187,6 +196,7 @@ pub fn to_persisted(
     blocked_reason: Option<crate::goal::event::BlockedReason>,
     last_handoff: Option<&crate::goal::handoff::RoundHandoff>,
     token_usage: Option<crate::agent::turns::TurnUsage>,
+    round_messages: Option<Vec<crate::providers::Message>>,
 ) -> PersistedGoalState {
     let now = Utc::now();
     PersistedGoalState {
@@ -204,6 +214,7 @@ pub fn to_persisted(
         blocked_reason,
         last_handoff: last_handoff.cloned(),
         token_usage,
+        round_messages,
         created_at: now,
         updated_at: now,
     }
@@ -277,6 +288,7 @@ mod tests {
             blocked_reason: None,
             last_handoff: None,
             token_usage: None,
+            round_messages: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -303,8 +315,17 @@ mod tests {
             },
         );
 
-        let state =
-            to_persisted("goal_1", "session_1", &plan, 3, &condition_history, None, None, None);
+        let state = to_persisted(
+            "goal_1",
+            "session_1",
+            &plan,
+            3,
+            &condition_history,
+            None,
+            None,
+            None,
+            None,
+        );
         assert_eq!(state.goal_id, "goal_1");
         assert_eq!(state.parent_session_id, "session_1");
         assert_eq!(state.round, 3);
@@ -429,7 +450,7 @@ mod tests {
             evidence: vec![],
         };
         let plan = GoalPlan::new("d");
-        let state = to_persisted("g", "s", &plan, 3, &[], None, Some(&handoff), None);
+        let state = to_persisted("g", "s", &plan, 3, &[], None, Some(&handoff), None, None);
         assert_eq!(state.last_handoff.as_ref().unwrap(), &handoff);
         let json = serde_json::to_string(&state).unwrap();
         let restored: PersistedGoalState = serde_json::from_str(&json).unwrap();
@@ -494,9 +515,54 @@ mod tests {
             ..Default::default()
         };
         let plan = GoalPlan::new("d");
-        let state = to_persisted("g", "s", &plan, 2, &[], None, None, Some(usage));
+        let state = to_persisted("g", "s", &plan, 2, &[], None, None, Some(usage), None);
         let json = serde_json::to_string(&state).unwrap();
         let restored: PersistedGoalState = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.token_usage, Some(usage));
+    }
+
+    #[test]
+    fn test_round_messages_roundtrip_and_default() {
+        use crate::providers::{FunctionCall, Message, ToolCall};
+
+        // Old files without round_messages load with None.
+        let json = serde_json::json!({
+            "goal_id": "goal_old",
+            "parent_session_id": "session_1",
+            "plan": {"description": "d", "conditions": [], "max_rounds": 5},
+            "round": 1,
+            "condition_history": [],
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z"
+        });
+        let state: PersistedGoalState = serde_json::from_value(json).unwrap();
+        assert!(state.round_messages.is_none());
+
+        // A mid-round snapshot carrying all four message shapes round-trips
+        // through serialization, including tool_call ids and roles.
+        let messages = vec![
+            Message::system("system prompt"),
+            Message::user("round feedback"),
+            Message::assistant("calling tool").with_tool_calls(vec![ToolCall {
+                id: "call_1".to_string(),
+                call_type: "function".to_string(),
+                function: FunctionCall {
+                    name: "some_tool".to_string(),
+                    arguments: "{}".to_string(),
+                },
+                index: None,
+                result: None,
+            }]),
+            Message::tool("tool output", "call_1"),
+        ];
+        let plan = GoalPlan::new("d");
+        let state = to_persisted("g", "s", &plan, 1, &[], None, None, None, Some(messages.clone()));
+        let json = serde_json::to_string(&state).unwrap();
+        let restored: PersistedGoalState = serde_json::from_str(&json).unwrap();
+        let restored_msgs = restored.round_messages.expect("round_messages persisted");
+        assert_eq!(restored_msgs.len(), 4);
+        assert_eq!(restored_msgs[3].role, crate::providers::Role::Tool);
+        assert_eq!(restored_msgs[3].tool_call_id.as_deref(), Some("call_1"));
+        assert_eq!(restored_msgs[2].tool_calls.as_ref().unwrap()[0].id, "call_1");
     }
 }

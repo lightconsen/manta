@@ -172,6 +172,10 @@ plan、当前 round、condition history、累计 token 花销，以及（fresh-c
 通过校验的 handoff。写入是原子的：先写 `{file}.tmp` 再 `rename` 落盘，进程在写盘中途
 崩溃只会留下上一轮的完好 checkpoint，不会截断现有文件。
 
+**轮内恢复**：每轮内每完成一次工具迭代还会追加一次 mid-round 快照（携带当轮消息历史），
+崩溃/停机后 `/goal resume` 从恢复的消息前缀**续跑当轮**而不是重头再来；轮末与终态
+checkpoint 会清掉该字段。
+
 **重启后不再自动恢复**：gateway 启动时只记录 `N persisted goal(s) suspended`，这些
 *suspended* goal 出现在 `/goal list` 中（含 round/max_rounds 和 blocked reason），需要显式
 `/goal resume <id>` 才会重新拉起 runner。

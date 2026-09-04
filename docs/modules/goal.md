@@ -87,6 +87,29 @@ terminal outcome — so the chat history keeps a durable record of how the goal
 ended even after the live WebSocket events are gone. Reporting only: token
 budgets are not enforced.
 
+### Mid-Round Resume
+
+Beyond round-level checkpoints, the runner snapshots the in-flight round's
+message history (`round_messages`) into the checkpoint after every tool
+iteration. A crash or gateway shutdown mid-round therefore resumes the round
+from its restored prefix instead of restarting it; round-end and terminal
+checkpoints write `round_messages: None`, so an on-disk `Some` always means
+genuinely mid-round. Snapshots are only taken after a complete
+assistant→tool-results group, so the restored prefix is always wire-valid.
+
+Cost model (from the mid-round resume spike): the resumed round re-sends the
+full prefix verbatim — the same shape as every ordinary tool iteration, since
+the loop already re-sends full history per call. OpenAI/DeepSeek passive
+prefix caching absorbs it (byte-identical prefix ⇒ cache hits); Anthropic has
+no request-side `cache_control` in this codebase, so restore re-prefills at
+full input price there. Enabling Anthropic cache breakpoints is deliberately
+out of scope.
+
+Design note: `Agent::restore_threads` was considered as the wiring point and
+rejected — it is turn-oriented (user/assistant text pairs only, tool calls
+not reconstructible) and currently has no callers. Checkpoint-embedded
+messages keep tool_call ids intact and replay byte-identical requests.
+
 ## Key Types
 
 ```rust
@@ -134,6 +157,8 @@ pub struct PersistedGoalState {
 - Fresh-context (Ralph) loop with validated structured handoff between rounds
 - Human-readable round notes under `<workspace>/goals/<goal-id>/round-N.md`
 - Per-round checkpointing with restart suspension and explicit `/goal resume`
+- Mid-round snapshots: an interrupted round resumes from its restored message
+  history instead of restarting
 - Atomic checkpoint writes (tmp + rename); runners/relays registered in the
   `TaskRegistry` and drained on shutdown with abort (crash-equivalent)
   semantics

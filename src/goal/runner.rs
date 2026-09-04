@@ -128,6 +128,9 @@ pub struct GoalRunner {
     /// Cumulative executor token spend across all LLM calls of this goal
     /// (cost axis: report efficiency alongside the verdict).
     token_usage: crate::agent::turns::TurnUsage,
+    /// In-flight round message history: consumed once at round entry when
+    /// resuming a mid-round checkpoint; `None` means "build the round fresh".
+    round_messages: Option<Vec<Message>>,
 }
 
 #[derive(Debug, Clone)]
@@ -161,6 +164,7 @@ impl GoalRunner {
             store: None,
             last_handoff: None,
             token_usage: Default::default(),
+            round_messages: None,
         }
     }
 
@@ -192,6 +196,14 @@ impl GoalRunner {
         if let Some(u) = usage {
             self.token_usage = u;
         }
+        self
+    }
+
+    /// Restore an in-flight round's message history from a mid-round
+    /// checkpoint so the resumed run continues the round instead of
+    /// restarting it. Consumed by the first round entry.
+    pub fn with_round_messages(mut self, messages: Option<Vec<Message>>) -> Self {
+        self.round_messages = messages;
         self
     }
 
@@ -519,12 +531,6 @@ impl GoalRunner {
     /// Repeats (LLM → tools → LLM → …) up to [`MAX_TOOL_ITERATIONS`]
     /// iterations.
     async fn run_agent_round(&mut self) -> Result<()> {
-        // Build system prompt describing the goal and available tools.
-        let system_prompt = self.build_agent_system_prompt();
-
-        // Build the user message with current progress / feedback.
-        let user_message = self.build_feedback();
-
         // Get tool definitions from the registry.
         let tool_defs: Vec<ToolDefinition> = self
             .tools
@@ -536,10 +542,27 @@ impl GoalRunner {
             })
             .collect();
 
-        let mut messages = vec![
-            Message::system(&system_prompt),
-            Message::user(&user_message),
-        ];
+        // Take a mid-round resume context if a mid-round checkpoint was
+        // restored; otherwise build the round from scratch (system prompt +
+        // current progress feedback). `take()` makes this one-shot: later
+        // rounds always build fresh.
+        let mut messages = match self.round_messages.take() {
+            Some(restored) => {
+                tracing::info!(
+                    "[goal {}] Round {} resumed mid-round from {} message(s)",
+                    self.id,
+                    self.round,
+                    restored.len()
+                );
+                restored
+            }
+            None => vec![
+                // Build system prompt describing the goal and available tools.
+                Message::system(self.build_agent_system_prompt()),
+                // Build the user message with current progress / feedback.
+                Message::user(self.build_feedback()),
+            ],
+        };
 
         // Owned so the borrow lives independently of `self` (the round may
         // mutate self, e.g. to accumulate token usage).
@@ -628,6 +651,11 @@ impl GoalRunner {
 
                 messages.push(Message::tool(truncate_tool_output(&result_str), &tc.id));
             }
+
+            // Mid-round snapshot: the prefix always ends with a complete
+            // assistant→tool group here, so a crash resumes the round instead
+            // of restarting it.
+            self.save_midround_checkpoint(&messages).await;
         }
 
         tracing::info!("[goal {}] Agent round {} completed", self.id, self.round);
@@ -676,9 +704,6 @@ impl GoalRunner {
     async fn run_fresh_round(
         &mut self,
     ) -> std::result::Result<Option<RoundHandoff>, FreshRoundFailure> {
-        let system_prompt = self.build_fresh_system_prompt();
-        let user_message = self.build_fresh_feedback();
-
         let tool_defs: Vec<ToolDefinition> = self
             .tools
             .get_definitions()
@@ -689,11 +714,25 @@ impl GoalRunner {
             })
             .collect();
 
-        // Fresh by construction: nothing accumulates across rounds.
-        let mut messages = vec![
-            Message::system(&system_prompt),
-            Message::user(&user_message),
-        ];
+        // Take a mid-round resume context if a mid-round checkpoint was
+        // restored; otherwise build the round from scratch. Fresh by
+        // construction across rounds: nothing accumulates except through
+        // this one-shot resume seam.
+        let mut messages = match self.round_messages.take() {
+            Some(restored) => {
+                tracing::info!(
+                    "[goal {}] Round {} resumed mid-round from {} message(s)",
+                    self.id,
+                    self.round,
+                    restored.len()
+                );
+                restored
+            }
+            None => vec![
+                Message::system(self.build_fresh_system_prompt()),
+                Message::user(self.build_fresh_feedback()),
+            ],
+        };
 
         // Owned so the borrow lives independently of `self` (the round may
         // mutate self, e.g. to accumulate token usage).
@@ -772,6 +811,11 @@ impl GoalRunner {
 
                 messages.push(Message::tool(truncate_tool_output(&result_str), &tc.id));
             }
+
+            // Mid-round snapshot: the prefix always ends with a complete
+            // assistant→tool group here, so a crash resumes the round instead
+            // of restarting it.
+            self.save_midround_checkpoint(&messages).await;
         }
 
         // Iteration cap exhausted without a plain-text closing reply: feed the
@@ -921,6 +965,10 @@ Schema rules (strictly enforced; violations fail the whole round):
     }
 
     /// Save a checkpoint of the current goal state to the persistence store.
+    ///
+    /// Round-end semantics: `round_messages` is written as `None`, clearing
+    /// any mid-round snapshot so an on-disk `Some` always means genuinely
+    /// mid-round.
     async fn save_checkpoint(&self) {
         if let Some(ref store) = self.store {
             let store_guard = store.read().await;
@@ -933,6 +981,7 @@ Schema rules (strictly enforced; violations fail the whole round):
                 None,
                 self.last_handoff.as_ref(),
                 self.reported_usage(),
+                None,
             );
             if let Err(e) = store_guard.save(&state).await {
                 tracing::warn!("[goal {}] Failed to save checkpoint: {}", self.id, e);
@@ -956,6 +1005,9 @@ Schema rules (strictly enforced; violations fail the whole round):
 
     /// Save the final checkpoint with its blocking reason, keeping the file
     /// so the cause survives and the goal can be resumed deliberately.
+    ///
+    /// Like [`Self::save_checkpoint`], writes `round_messages: None` — a
+    /// blocked goal resumes by starting its round fresh.
     async fn save_terminal(&self, reason: crate::goal::BlockedReason) {
         if let Some(ref store) = self.store {
             let store_guard = store.read().await;
@@ -968,9 +1020,33 @@ Schema rules (strictly enforced; violations fail the whole round):
                 Some(reason),
                 self.last_handoff.as_ref(),
                 self.reported_usage(),
+                None,
             );
             if let Err(e) = store_guard.save(&state).await {
                 tracing::warn!("[goal {}] Failed to save terminal state: {}", self.id, e);
+            }
+        }
+    }
+
+    /// Snapshot the in-flight round's message history so a crash resumes
+    /// mid-round instead of restarting the round. Best-effort: failures only
+    /// warn and never affect the goal.
+    async fn save_midround_checkpoint(&self, messages: &[Message]) {
+        if let Some(ref store) = self.store {
+            let store_guard = store.read().await;
+            let state = persist::to_persisted(
+                &self.id,
+                &self.parent_session_id,
+                &self.plan,
+                self.round,
+                &self.condition_history,
+                None,
+                self.last_handoff.as_ref(),
+                self.reported_usage(),
+                Some(messages.to_vec()),
+            );
+            if let Err(e) = store_guard.save(&state).await {
+                tracing::warn!("[goal {}] Failed to save mid-round checkpoint: {}", self.id, e);
             }
         }
     }
@@ -1190,6 +1266,152 @@ mod tests {
             "evidence": evidence,
         });
         format!("Work done this round.\n\n```handoff\n{}\n```\n", obj)
+    }
+
+    fn tool_call_request(id: &str) -> Message {
+        Message::assistant("calling tool").with_tool_calls(vec![crate::providers::ToolCall {
+            id: id.to_string(),
+            call_type: "function".to_string(),
+            function: crate::providers::FunctionCall {
+                name: "nonexistent_tool".to_string(),
+                arguments: "{}".to_string(),
+            },
+            index: None,
+            result: None,
+        }])
+    }
+
+    #[tokio::test]
+    async fn test_midround_checkpoint_snapshot_and_resume_continues_round() {
+        use crate::providers::Role;
+
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let store_dir = temp_dir("midround");
+        let store = Arc::new(tokio::sync::RwLock::new(GoalStore::with_dir(store_dir.clone())));
+
+        let mut plan = GoalPlan::new("resume mid-round");
+        plan.model_override = Some("test-model".to_string());
+        plan.max_rounds = 1;
+        plan = plan.with_condition(GoalCondition::ExitCode {
+            command: "false".to_string(),
+            expected: Some(0),
+        });
+
+        // Iteration 0 requests a tool call (snapshot fires after the tool
+        // results land); iteration 1 closes the round with plain text.
+        let mock = Arc::new(
+            MockProvider::new()
+                .with_responses(vec![tool_call_request("call_1"), Message::assistant("done")]),
+        );
+        let router = make_mock_router(mock).await;
+        let mut runner = GoalRunner::new("g", "s", plan.clone(), make_tools(), router, tx.clone())
+            .with_store(store.clone())
+            .with_progress(1, vec![]);
+
+        // Round in flight: the mid-round checkpoint must carry the message
+        // history ending with a complete assistant→tool group.
+        runner.run_agent_round().await.unwrap();
+        let persisted = store.read().await;
+        let states = persisted.load_all().await;
+        drop(persisted);
+        assert_eq!(states.len(), 1);
+        let snapshot = states[0]
+            .round_messages
+            .as_ref()
+            .expect("mid-round snapshot present");
+        assert_eq!(snapshot.len(), 4);
+        assert_eq!(snapshot[0].role, Role::System);
+        assert_eq!(snapshot[1].role, Role::User);
+        assert_eq!(snapshot[2].role, Role::Assistant);
+        assert_eq!(snapshot[3].role, Role::Tool);
+        assert_eq!(snapshot[3].tool_call_id.as_deref(), Some("call_1"));
+        assert!(states[0].token_usage.is_some(), "usage accumulates mid-round");
+
+        // Resume: a fresh runner continues the SAME round from the restored
+        // history — no re-added system+user prefix, and the round-end
+        // checkpoint clears round_messages.
+        let saved_messages = states[0].round_messages.clone();
+        let mock2 =
+            Arc::new(MockProvider::new().with_responses(vec![Message::assistant("resumed final")]));
+        let router2 = make_mock_router(mock2.clone()).await;
+        let runner2 = GoalRunner::new("g", "s", plan, make_tools(), router2, tx)
+            .with_store(store.clone())
+            .with_progress(states[0].round, vec![])
+            .with_round_messages(saved_messages)
+            .with_token_usage(states[0].token_usage);
+        runner2.run().await;
+
+        let history = mock2.history();
+        assert_eq!(history.len(), 1, "one completion on the resumed round");
+        let msgs = &history[0].messages;
+        assert_eq!(msgs.len(), 4, "restored prefix sent verbatim");
+        assert_eq!(msgs.iter().filter(|m| m.role == Role::User).count(), 1);
+        assert_eq!(msgs[3].role, Role::Tool);
+
+        // MaxRounds policy stop keeps the terminal checkpoint — cleared.
+        let persisted = GoalStore::with_dir(store_dir.clone()).load_all().await;
+        assert_eq!(persisted.len(), 1);
+        assert!(persisted[0].round_messages.is_none(), "round-end clears");
+        assert!(persisted[0].blocked_reason.is_some());
+
+        let _ = tokio::fs::remove_dir_all(&store_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_fresh_mode_midround_snapshot_and_resume_keeps_handoff_contract() {
+        use crate::providers::Role;
+
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let store_dir = temp_dir("midround_fresh");
+        let store = Arc::new(tokio::sync::RwLock::new(GoalStore::with_dir(store_dir.clone())));
+
+        let mut plan = GoalPlan::new("fresh mid-round");
+        plan.model_override = Some("test-model".to_string());
+        plan.max_rounds = 1;
+        plan.fresh_context = true;
+        plan = plan.with_condition(GoalCondition::ExitCode {
+            command: "false".to_string(),
+            expected: Some(0),
+        });
+
+        let mock = Arc::new(MockProvider::new().with_responses(vec![
+            tool_call_request("call_1"),
+            Message::assistant(handoff_reply("continue", "partial work", &["keep going"], &[])),
+        ]));
+        let router = make_mock_router(mock).await;
+        let mut runner = GoalRunner::new("g", "s", plan.clone(), make_tools(), router, tx.clone())
+            .with_store(store.clone())
+            .with_progress(1, vec![]);
+
+        let handoff = runner.run_fresh_round().await.unwrap().expect("handoff");
+        assert_eq!(handoff.status, crate::goal::handoff::HandoffStatus::Continue);
+
+        let states = store.read().await.load_all().await;
+        assert_eq!(states.len(), 1);
+        let snapshot = states[0]
+            .round_messages
+            .as_ref()
+            .expect("mid-round snapshot");
+        assert_eq!(snapshot.len(), 4);
+        assert!(snapshot[0].content.contains("ONE round"), "fresh system prompt persisted");
+
+        // Resume mid-round; the round still ends with a valid handoff.
+        let mock2 = Arc::new(MockProvider::new().with_responses(vec![Message::assistant(
+            handoff_reply("continue", "resumed work", &["next"], &[]),
+        )]));
+        let router2 = make_mock_router(mock2.clone()).await;
+        let mut runner2 = GoalRunner::new("g", "s", plan, make_tools(), router2, tx)
+            .with_store(store)
+            .with_progress(states[0].round, vec![])
+            .with_round_messages(states[0].round_messages.clone());
+        let resumed_handoff = runner2.run_fresh_round().await.unwrap().expect("handoff");
+        assert_eq!(resumed_handoff.summary, "resumed work");
+
+        let msgs = &mock2.history()[0].messages;
+        assert_eq!(msgs.len(), 4);
+        assert_eq!(msgs.iter().filter(|m| m.role == Role::User).count(), 1);
+
+        let _ = tokio::fs::remove_dir_all(&store_dir).await;
     }
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {

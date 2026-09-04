@@ -207,6 +207,9 @@ pub(crate) async fn spawn_goal_runner_with_store(
     // in-process — a restart must not silently drop the only inter-round
     // state.
     .with_handoff(persisted.last_handoff.clone())
+    // Mid-round resume: continue the interrupted round from its restored
+    // message history instead of restarting the round from scratch.
+    .with_round_messages(persisted.round_messages.clone())
     // Cost axis: keep counting from the persisted cumulative total.
     .with_token_usage(token_usage);
     if let Some(store) = store {
@@ -233,10 +236,10 @@ mod tests {
     use crate::model_router::ModelRouterConfig;
     use crate::providers::mock::MockProvider;
 
-    async fn make_mock_router() -> Arc<crate::model_router::ModelRouter> {
+    async fn make_mock_router(mock: MockProvider) -> Arc<crate::model_router::ModelRouter> {
         let router = crate::model_router::ModelRouter::new(ModelRouterConfig::default());
         router
-            .add_provider_instance("mock", Arc::new(MockProvider::new()))
+            .add_provider_instance("mock", Arc::new(mock))
             .await
             .unwrap();
         router
@@ -268,6 +271,7 @@ mod tests {
             blocked_reason: None,
             last_handoff: None,
             token_usage: None,
+            round_messages: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -278,7 +282,7 @@ mod tests {
         let mut state =
             crate::gateway::state_tests::make_test_state(crate::gateway::GatewayConfig::default())
                 .await;
-        state.infra.model_router = make_mock_router().await;
+        state.infra.model_router = make_mock_router(MockProvider::new()).await;
         let state = Arc::new(state);
 
         let dir = std::env::temp_dir().join(format!("goal_spawn_{}", uuid::Uuid::new_v4()));
@@ -388,5 +392,93 @@ mod tests {
             .find(|m| m.2.contains("completed in 3 round(s)"))
             .expect("done outcome written back");
         assert!(done.2.contains("Tokens: 120."));
+    }
+
+    #[tokio::test]
+    async fn spawn_resumes_midround_messages_end_to_end() {
+        use crate::providers::{FunctionCall, Message, Role, ToolCall};
+
+        let mut state =
+            crate::gateway::state_tests::make_test_state(crate::gateway::GatewayConfig::default())
+                .await;
+        // The callback distinguishes a mid-round resume (restored prefix has
+        // >2 messages) from a fresh round rebuild (system+user only).
+        let mock = MockProvider::new().with_callback(|messages| {
+            if messages.len() > 2 {
+                Message::assistant("resumed final")
+            } else {
+                Message::assistant("fresh start")
+            }
+        });
+        let mock_handle = mock.clone();
+        state.infra.model_router = make_mock_router(mock).await;
+        let state = Arc::new(state);
+
+        let dir = std::env::temp_dir().join(format!("goal_spawn_{}", uuid::Uuid::new_v4()));
+        let store = Arc::new(tokio::sync::RwLock::new(crate::goal::persist::GoalStore::with_dir(
+            dir.clone(),
+        )));
+
+        let mut persisted = persisted_sample("goal_mid", "sess_mid");
+        persisted.plan = crate::goal::GoalPlan::new("resume mid-round")
+            .with_condition(GoalCondition::ExitCode {
+                command: "false".to_string(),
+                expected: Some(0),
+            })
+            .with_max_rounds(1)
+            .with_model("test-model");
+        persisted.round = 1;
+        persisted.round_messages = Some(vec![
+            Message::system("system prompt"),
+            Message::user("round feedback"),
+            Message::assistant("calling tool").with_tool_calls(vec![ToolCall {
+                id: "call_1".to_string(),
+                call_type: "function".to_string(),
+                function: FunctionCall {
+                    name: "some_tool".to_string(),
+                    arguments: "{}".to_string(),
+                },
+                index: None,
+                result: None,
+            }]),
+            Message::tool("tool output", "call_1"),
+        ]);
+
+        spawn_goal_runner_with_store(&state, &persisted, Some(store.clone())).await;
+
+        // Wait for the resumed round's first completion.
+        for _ in 0..200 {
+            if mock_handle.call_count() >= 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let history = mock_handle.history();
+        assert_eq!(history.len(), 1, "resumed round made exactly one call");
+        let msgs = &history[0].messages;
+        assert_eq!(msgs.len(), 4, "restored prefix reached the provider");
+        assert_eq!(msgs.iter().filter(|m| m.role == Role::User).count(), 1);
+        assert_eq!(msgs[3].role, Role::Tool);
+
+        // The goal terminates (max_rounds 1, condition always fails); the
+        // terminal checkpoint must have cleared round_messages.
+        for _ in 0..200 {
+            if store.read().await.load_all().await.is_empty() {
+                break;
+            }
+            let loaded = store.read().await.load_all().await;
+            if loaded.iter().all(|s| s.round_messages.is_none()) {
+                break;
+            }
+            drop(loaded);
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let final_states = store.read().await.load_all().await;
+        assert!(
+            final_states.iter().all(|s| s.round_messages.is_none()),
+            "terminal checkpoint clears round_messages"
+        );
+
+        let _ = tokio::fs::remove_dir_all(&dir).await;
     }
 }
