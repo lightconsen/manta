@@ -1,198 +1,231 @@
 #!/bin/bash
 # Syscity Release Script
+# Bumps the version, updates the CHANGELOG, and publishes a release tag.
 #
 # Usage:
-#   ./release.sh              # Auto-increment patch version (e.g. 0.1.1 -> 0.1.2)
-#   ./release.sh --minor      # Increment minor version (e.g. 0.1.1 -> 0.2.0)
-#   ./release.sh --major      # Increment major version (e.g. 0.1.1 -> 1.0.0)
-#   ./release.sh --tag v1.2.3 # Use custom tag (skips version bump)
+#   ./scripts/release.sh                # patch bump (default): 0.3.1 → 0.3.2
+#   ./scripts/release.sh --patch        # patch bump:   0.3.1 → 0.3.2
+#   ./scripts/release.sh --minor        # minor bump:   0.3.1 → 0.4.0
+#   ./scripts/release.sh --major        # major bump:   0.3.1 → 1.0.0
+#   ./scripts/release.sh --tag v1.2.3   # custom tag (no bump / changelog / commit)
+#   --no-edit                           # don't open an editor on CHANGELOG.md
+#   --skip-tests                        # skip the pre-release cargo test run
 #
-# Workflow:
-#   1. Bump version in Cargo.toml files
-#   2. Commit version bump
-#   3. Push commit to main
-#   4. Create and push tag
+# Release flow (bump modes):
+#   1. Preconditions: clean tree, on main, in sync with origin/main, target tag free
+#   2. cargo test --all-features --lib (unless --skip-tests)
+#   3. Promote the CHANGELOG `## [Unreleased]` section to `## [X.Y.Z] - <date>`;
+#      if that section is empty, draft one from commit subjects since the
+#      previous tag (✨→Added, 🐛→Fixed, rest→Changed). Opens $EDITOR unless
+#      --no-edit or non-interactive.
+#   4. Bump the version in Cargo.toml, desktop/Cargo.toml, web/package.json
+#      and refresh Cargo.lock
+#   5. Commit `🔖 chore(release): vX.Y.Z`, push main, create the tag and push it
+#      (pushing the tag triggers the Release workflow that builds artifacts)
 
-set -e
+set -euo pipefail
 
-# Navigate to project root (in case script is run from scripts/)
+BUMP=""
+CUSTOM_TAG=""
+NO_EDIT=false
+SKIP_TESTS=false
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --patch|--minor|--major)
+      if [ -n "$BUMP" ] && [ "$BUMP" != "${1#--}" ]; then
+        echo "✗ Pick only one of --patch/--minor/--major" >&2
+        exit 1
+      fi
+      BUMP="${1#--}"
+      ;;
+    --tag)
+      CUSTOM_TAG="${2:-}"
+      [ -n "$CUSTOM_TAG" ] || { echo "✗ --tag requires a value" >&2; exit 1; }
+      shift
+      ;;
+    --no-edit) NO_EDIT=true ;;
+    --skip-tests) SKIP_TESTS=true ;;
+    -h|--help)
+      echo "Usage: ./scripts/release.sh [--patch|--minor|--major|--tag <tag>] [--no-edit] [--skip-tests]"
+      echo ""
+      echo "  --patch       bump the patch version (default): 0.3.1 → 0.3.2"
+      echo "  --minor       bump the minor version:           0.3.1 → 0.4.0"
+      echo "  --major       bump the major version:           0.3.1 → 1.0.0"
+      echo "  --tag <tag>   publish a custom tag without bumping/committing"
+      echo "  --no-edit     skip opening an editor on CHANGELOG.md"
+      echo "  --skip-tests  skip the pre-release test run"
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+BUMP="${BUMP:-patch}"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-
-# Parse arguments
-BUMP="patch"
-CUSTOM_TAG=""
-
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --patch)
-            BUMP="patch"
-            shift
-            ;;
-        --minor)
-            BUMP="minor"
-            shift
-            ;;
-        --major)
-            BUMP="major"
-            shift
-            ;;
-        --tag)
-            CUSTOM_TAG="$2"
-            shift 2
-            ;;
-        -h|--help)
-            echo "Usage: $0 [--patch|--minor|--major|--tag <tag_name>]"
-            echo ""
-            echo "Options:"
-            echo "  --patch       Increment patch version (default)  e.g. 0.1.1 -> 0.1.2"
-            echo "  --minor       Increment minor version            e.g. 0.1.1 -> 0.2.0"
-            echo "  --major       Increment major version            e.g. 0.1.1 -> 1.0.0"
-            echo "  --tag <tag>   Use a custom tag, skip version bump"
-            echo "  -h, --help    Show this help message"
-            exit 0
-            ;;
-        *)
-            echo -e "${RED}Unknown option: $1${NC}"
-            echo "Use '$0 --help' for usage."
-            exit 1
-            ;;
-    esac
-done
-
-# Check if we are in a git repository
-if ! git rev-parse --git-dir > /dev/null 2>&1; then
-    echo -e "${RED}Error: Not in a git repository.${NC}"
-    exit 1
+echo "🧭 Checking preconditions..."
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+  echo "✗ Not in a git repository" >&2
+  exit 1
 fi
-
-# Check if we are on main branch
-CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-if [ "$CURRENT_BRANCH" != "main" ]; then
-    echo -e "${RED}Error: You are on branch '$CURRENT_BRANCH'.${NC}"
-    echo "Releases must be created from the 'main' branch."
-    echo "Run: git checkout main && git pull origin main"
-    exit 1
-fi
-
-# Check working tree is clean (except for Cargo.toml changes we will make)
 if ! git diff-index --quiet HEAD --; then
-    echo -e "${RED}Error: You have uncommitted changes.${NC}"
-    git status --short
-    echo "Please commit or stash them before releasing."
-    exit 1
+  echo "✗ Uncommitted changes to tracked files — commit or stash first" >&2
+  git status --short >&2
+  exit 1
+fi
+branch="$(git rev-parse --abbrev-ref HEAD)"
+if [ "$branch" != "main" ]; then
+  echo "✗ Releases are cut from main (currently on $branch)" >&2
+  exit 1
+fi
+git fetch -q origin main
+if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+  echo "✗ main is out of sync with origin/main — push/pull first" >&2
+  exit 1
 fi
 
-# Pull latest to avoid conflicts
-echo "Fetching latest from origin..."
-git pull origin main
-
-# Determine tag and version
-if [ -n "$CUSTOM_TAG" ]; then
-    TAG="$CUSTOM_TAG"
-    echo "Using custom tag: $TAG"
-else
-    # Read current version from root Cargo.toml
-    CURRENT_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-    if [ -z "$CURRENT_VERSION" ]; then
-        echo -e "${RED}Error: Could not read version from Cargo.toml.${NC}"
-        exit 1
-    fi
-
-    # Parse version components
-    MAJOR=$(echo "$CURRENT_VERSION" | cut -d. -f1)
-    MINOR=$(echo "$CURRENT_VERSION" | cut -d. -f2)
-    PATCH=$(echo "$CURRENT_VERSION" | cut -d. -f3)
-
-    # Bump version
-    case "$BUMP" in
-        major)
-            MAJOR=$((MAJOR + 1))
-            MINOR=0
-            PATCH=0
-            ;;
-        minor)
-            MINOR=$((MINOR + 1))
-            PATCH=0
-            ;;
-        patch)
-            PATCH=$((PATCH + 1))
-            ;;
-    esac
-
-    NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-    TAG="v${NEW_VERSION}"
-    echo "Bumping version: ${CURRENT_VERSION} -> ${NEW_VERSION}"
-fi
-
-# Validate tag format
-if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
-    echo -e "${YELLOW}Warning: Tag '$TAG' does not follow semver with 'v' prefix.${NC}"
-    read -p "Continue anyway? (y/N) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exit 1
-    fi
-fi
-
-# Check if tag already exists locally
-if git rev-parse "$TAG" > /dev/null 2>&1; then
-    echo -e "${RED}Error: Tag '$TAG' already exists locally.${NC}"
-    exit 1
-fi
-
-# Check if tag already exists on remote
-git fetch --tags origin > /dev/null 2>&1
-if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
-    echo -e "${RED}Error: Tag '$TAG' already exists on remote.${NC}"
-    exit 1
-fi
-
-# If not using custom tag, bump versions in Cargo.toml files
 if [ -z "$CUSTOM_TAG" ]; then
-    echo "Updating version in Cargo.toml files..."
+  current="$(grep -m1 '^version = ' Cargo.toml | cut -d '"' -f2)"
+  desktop_current="$(grep -m1 '^version = ' desktop/Cargo.toml | cut -d '"' -f2)"
+  web_current="$(grep -m1 '"version"' web/package.json | sed 's/.*"version": *"\([^"]*\)".*/\1/')"
+  if [ "$current" != "$desktop_current" ] || [ "$current" != "$web_current" ]; then
+    echo "✗ Version files disagree: Cargo.toml=$current desktop=$desktop_current web=$web_current" >&2
+    exit 1
+  fi
 
-    # Update root Cargo.toml
-    sed -i.bak "s/^version = \"${CURRENT_VERSION}\"/version = \"${NEW_VERSION}\"/" Cargo.toml
-    rm -f Cargo.toml.bak
-
-    # Update desktop Cargo.toml
-    if [ -f "desktop/Cargo.toml" ]; then
-        sed -i.bak "s/^version = \"${CURRENT_VERSION}\"/version = \"${NEW_VERSION}\"/" desktop/Cargo.toml
-        rm -f desktop/Cargo.toml.bak
-    fi
-
-    # Stage version changes
-    git add Cargo.toml
-    if [ -f "desktop/Cargo.toml" ]; then
-        git add desktop/Cargo.toml
-    fi
-
-    # Commit version bump
-    echo "Committing version bump..."
-    git commit -m "chore(release): bump version to ${NEW_VERSION}"
+  IFS='.' read -r MA MI PA <<< "$current"
+  case "$BUMP" in
+    major) MA=$((MA + 1)); MI=0; PA=0 ;;
+    minor) MI=$((MI + 1)); PA=0 ;;
+    patch) PA=$((PA + 1)) ;;
+  esac
+  next="$MA.$MI.$PA"
+  TAG="v$next"
+  echo "🚀 Releasing $current → $next"
+else
+  TAG="$CUSTOM_TAG"
+  echo "🚀 Publishing custom tag: $TAG"
+  if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    printf "⚠️  Tag '%s' is not plain semver with a v prefix. Continue? (y/N) " "$TAG"
+    read -r -n 1 reply
+    echo
+    case "$reply" in
+      y|Y) ;;
+      *) exit 1 ;;
+    esac
+  fi
 fi
 
-# Push main branch
-echo "Pushing main branch..."
-git push origin main
+if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null 2>&1; then
+  echo "✗ Tag $TAG already exists locally" >&2
+  exit 1
+fi
+if git ls-remote --tags origin "refs/tags/$TAG" | grep -qF "refs/tags/$TAG"; then
+  echo "✗ Tag $TAG already exists on origin" >&2
+  exit 1
+fi
 
-# Create and push tag
-echo "Creating tag $TAG..."
+if [ -z "$CUSTOM_TAG" ] && [ "$SKIP_TESTS" = false ]; then
+  echo "🧪 Running cargo test --all-features --lib ..."
+  cargo test -q --all-features --lib
+fi
+
+if [ -n "$CUSTOM_TAG" ]; then
+  git tag "$TAG"
+  git push -q origin "$TAG"
+  echo "✅ Published $TAG"
+  echo "   The Release workflow is building artifacts — track it with:"
+  echo "     gh run watch \$(gh run list --workflow=release.yml --limit 1 --json databaseId -q '.[0].databaseId')"
+  exit 0
+fi
+
+echo "📝 Updating CHANGELOG.md..."
+release_date="$(date +%F)"
+added=""
+fixed=""
+changed=""
+if git rev-parse -q --verify "refs/tags/v$current" >/dev/null 2>&1; then
+  subjects="$(git log "v$current..HEAD" --pretty=%s)"
+  # Only pipe non-empty subjects: `echo ""` emits an empty line and the
+  # exclusion grep (-Ev) would pass it through, producing a phantom "- "
+  # bullet that defeats the "Nothing to release" guard below.
+  if [ -n "$subjects" ]; then
+    added="$(echo "$subjects" | grep '^✨' | sed 's/^[^ ]* //' | sed 's/^/- /' || true)"
+    fixed="$(echo "$subjects" | grep '^🐛' | sed 's/^[^ ]* //' | sed 's/^/- /' || true)"
+    changed="$(echo "$subjects" | grep -Ev '^(✨|🐛|🔖)' | sed 's/^[^ ]* //' | sed 's/^/- /' || true)"
+  fi
+fi
+
+source_note="$(python3 - "$next" "$release_date" "$current" "$added" "$fixed" "$changed" <<'PY'
+import re
+import sys
+
+next_ver, date, current, added, fixed, changed = sys.argv[1:7]
+path = "CHANGELOG.md"
+text = open(path, encoding="utf-8").read()
+
+marker = "## [Unreleased]"
+try:
+    start = text.index(marker)
+except ValueError:
+    sys.exit("CHANGELOG.md has no ## [Unreleased] section")
+rest = text[start + len(marker):]
+m = re.search(r"\n## \[", rest)
+body, tail = (rest[: m.start()], rest[m.start():]) if m else (rest, "")
+body = body.strip("\n")
+
+if not body.strip():
+    parts = []
+    if added.strip():
+        parts.append("### Added\n\n" + added.strip())
+    if fixed.strip():
+        parts.append("### Fixed\n\n" + fixed.strip())
+    if changed.strip():
+        parts.append("### Changed\n\n" + changed.strip())
+    if not parts:
+        sys.exit(
+            "Nothing to release: the Unreleased section is empty and there are "
+            "no commits since v" + current
+        )
+    body = "\n\n".join(parts)
+    source = "Drafted release notes from commits since v" + current
+else:
+    source = "Promoted the Unreleased section to " + next_ver
+
+section = f"## [{next_ver}] - {date}\n\n{body}\n"
+open(path, "w", encoding="utf-8").write(text[:start] + marker + "\n\n" + section + tail)
+print(source)
+PY
+)"
+
+if ! grep -q "^## \[$next\]" CHANGELOG.md; then
+  echo "✗ $source_note" >&2
+  exit 1
+fi
+echo "   $source_note"
+
+if [ "$NO_EDIT" = false ] && [ -t 0 ]; then
+  echo "✏️  Review CHANGELOG.md (${EDITOR:-vi})..."
+  "${EDITOR:-vi}" CHANGELOG.md
+fi
+
+echo "🔢 Bumping versions to $next..."
+perl -pi -e 's/^version = "[^"]*"/version = "'"$next"'"/' Cargo.toml desktop/Cargo.toml
+perl -pi -e 's/("version":\s*)"[^"]*"/$1"'"$next"'"/' web/package.json
+cargo check -q  # refresh Cargo.lock + catch compile breakage before publishing
+
+git add CHANGELOG.md Cargo.toml Cargo.lock desktop/Cargo.toml web/package.json
+git commit -m "🔖 chore(release): $TAG"
+git push -q origin main
 git tag "$TAG"
+git push -q origin "$TAG"
 
-echo "Pushing tag to origin..."
-git push origin "$TAG"
-
-echo ""
-echo -e "${GREEN}Release tag '$TAG' pushed successfully!${NC}"
-echo ""
-echo "GitHub Actions will now build and publish the release."
-echo "Track progress at:"
-echo "  https://github.com/$(git remote get-url origin | sed 's/.*github.com[\/:]//' | sed 's/\.git$//')/actions"
+echo "✅ Released $TAG"
+echo "   The Release workflow is building artifacts — track it with:"
+echo "     gh run watch \$(gh run list --workflow=release.yml --limit 1 --json databaseId -q '.[0].databaseId')"
