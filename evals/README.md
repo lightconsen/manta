@@ -295,6 +295,34 @@ tasks:
           expect: retry
 ```
 
+### 产物契约（honest status）
+
+每个 trial 在临时目录 `eval_<task_id>_<trial>/` 产出真实执行痕迹，GoalCondition
+通过 `${trial_dir}` 引用它们 —— **这些文件是判分载荷，不是日志**：
+
+| 文件 | 内容 |
+|---|---|
+| `response.txt` | agent 最终回复全文 |
+| `tools.json` | 全部工具调用记录 |
+| `eval_trace.log` | 逐 turn 工具调用 dump（可 grep） |
+| `turn_N/` | 每 turn 的 `response.txt` / `tools.json` |
+
+与 HarnessDev 论文的产物契约对齐（`docs/research/harnessdev-notes.md`）：
+
+| 论文字段 | 本项目对应 |
+|---|---|
+| `result.json` honest status（success/partial/failed） | `TrialResult.passed` 及其分项 `conditions_passed` / `critique_passed` / `skill_passed`；`ScoringOutput.verdict`（Pass/Fail/InsufficientInfo）+ `score` |
+| `trajectory.jsonl` | `tools.json` + `eval_trace.log`；持久层：review JSON 的 `trajectory` 字段、badcase YAML 的 `rca_result.evidence_chain` |
+| `response.md` | `response.txt`；持久层：badcase YAML / review JSON 的 `response` 字段 |
+
+**显式契约条款**：
+
+- **计划/空产物报成完成 = 失败**。agent 只复述计划、或以空/不可用产物声称
+  完成，judge 必须给 Fail（faithfulness violation），不得用 InsufficientInfo
+  掩盖编造的"完成"。
+- **空轨迹 ≠ agent 失败**：trajectory 为空的 trial 按 infra 故障处理
+  （跳过 judge），不计为 agent 的 0 分——两类失败不要混淆。
+
 ---
 
 ## 六、快速验证清单

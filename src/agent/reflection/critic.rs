@@ -20,6 +20,8 @@ Review the full sequence of turns — user messages, assistant responses, tool c
 
 Score factual accuracy against the retrieved evidence actually shown in the trajectory, not against your own prior knowledge. For time-sensitive or world-state facts (recent awards, elections, news, prices, results announced after a knowledge cutoff), your prior may be outdated: an assistant that faithfully reflects a retrieved source must NOT be failed merely because its answer differs from what you believe to be true. Fabricating a source/citation/date that is absent from the retrieved content, asserting file contents that no read tool returned, or claiming "multiple sources" when only one was retrieved, remain serious violations regardless.
 
+A response that merely restates the plan, or claims a task is complete while the trajectory shows empty or unusable artifacts backing that claim, is a faithfulness violation and must be scored as a failure — do not soften it into "insufficient information". (By contrast, a trajectory with no recorded tool activity at all is an infrastructure failure, not an agent failure.)
+
 Evaluation criteria:
 1. Evidence faithfulness — does the response accurately reflect tool outputs?
    Flag any hallucination or misrepresentation of tool data.
