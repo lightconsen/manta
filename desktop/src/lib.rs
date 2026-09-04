@@ -10,8 +10,6 @@ use tokio::sync::Mutex;
 mod connection;
 use connection::{ConnectionConfig, ConnectionMode};
 
-const VERSION: &str = syscity::VERSION;
-
 /// A writer that duplicates output to both stdout and a log file.
 ///
 /// This is used so that release builds (where stdout is disconnected)
@@ -167,6 +165,14 @@ fn get_api_url(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> String {
 #[tauri::command]
 fn get_connection() -> ConnectionConfig {
     connection::load_connection()
+}
+
+/// Tauri command: compile-time OS ("macos"|"windows"|"linux"|"ios"|"android").
+/// The frontend shell uses it to pick the titlebar variant (macOS overlay
+/// inset + drag region vs plain header on other platforms / in browsers).
+#[tauri::command]
+fn get_platform() -> String {
+    std::env::consts::OS.to_string()
 }
 
 /// Tauri command: persist connection settings.
@@ -415,6 +421,7 @@ pub fn run() {
         reveal_in_folder,
         check_for_updates,
         get_connection,
+        get_platform,
         save_connection,
         test_remote_gateway
     ]);
@@ -424,6 +431,7 @@ pub fn run() {
         reveal_in_folder,
         get_gateway_token,
         get_connection,
+        get_platform,
         save_connection,
         test_remote_gateway
     ]);
@@ -432,11 +440,6 @@ pub fn run() {
         .setup(move |app| {
             let handle = app.handle().clone();
             let state = app_state_for_setup.clone();
-
-            // Set native macOS window subtitle (must be on main thread).
-            if let Some(window) = app.get_webview_window("main") {
-                set_window_subtitle(&window, &format!("v{VERSION} · Your AI Assistant"));
-            }
 
             // Spawn the Syscity Gateway in a background task. The connection
             // mode (from ~/.syscity/client.toml) decides: remote mode connects
@@ -572,23 +575,6 @@ async fn find_available_port(host: &str, start: u16, max_attempts: u16) -> Optio
         }
     }
     None
-}
-
-/// Set the native macOS window subtitle (two-line title bar).
-/// Only available on macOS 14+. No-op on other platforms.
-#[allow(unused_variables)]
-fn set_window_subtitle(window: &tauri::WebviewWindow, subtitle: &str) {
-    #[cfg(target_os = "macos")]
-    {
-        use objc2_app_kit::NSWindow;
-        use objc2_foundation::NSString;
-
-        if let Ok(ptr) = window.ns_window() {
-            let ns_window: &NSWindow = unsafe { &*ptr.cast::<NSWindow>() };
-            let ns_subtitle = NSString::from_str(subtitle);
-            ns_window.setSubtitle(&ns_subtitle);
-        }
-    }
 }
 
 /// Read the configured gateway port from `~/.syscity/config.toml`
