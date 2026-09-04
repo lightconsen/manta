@@ -40,7 +40,8 @@ cd syscity
 ```
 
 `build.sh` builds the web frontend (`web/` → `dist/`) then compiles the release
-binary. To build only the frontend: `./scripts/build.sh --front`.
+binary — with cloud features included by default. To build only the frontend:
+`./scripts/build.sh --front`; to build without cloud: `./scripts/build.sh --nocloud`.
 
 To build just the Rust binary without the web bundle:
 ```bash
@@ -64,7 +65,8 @@ all channels plus browser, vision, and local embeddings.
 | `hot-reload` | ✓ | Config/plugin hot-reload via file watching |
 | `vector-db` / `pgvector` / `sqlite-vec` | — / — / ✓ | Vector memory backends (`sqlite-vec` is the default persistent backend) |
 | `keyring` | — | OS keyring (macOS Keychain / Windows DPAPI / Linux Secret Service) as the primary secret store; default builds use 0600 AES-GCM encrypted files only and never touch the keychain |
-| `intel-macos` | — | Release profile for Intel Macs: default features minus `vision` (ONNX Runtime ships no prebuilt `x86_64-apple-darwin` library). Build with `--no-default-features --features intel-macos` |
+| `cloud` | — | Syscity Cloud integration (login + cloud LLM/search/KB/connectors). Compiled into release artifacts and `./scripts/build.sh` (runtime opt-out: `syscity start --nocloud`); default `cargo build` excludes it (§2.7). Build in with `--features cloud` |
+| `intel-macos` | — | Release profile for Intel Macs: default features minus `vision` (ONNX Runtime ships no prebuilt `x86_64-apple-darwin` library), plus `cloud`. Build with `--no-default-features --features intel-macos` |
 | `mobile` | — | Pruned Android/iOS profile: `webchat` + `plugins` + `embedded-assets` + `sqlite-vec` with bundled SQLite; no channels, embeddings, vision, browser, or keyring. Build with `--no-default-features --features mobile` |
 
 Build with a custom feature set:

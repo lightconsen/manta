@@ -3,24 +3,24 @@
 # Builds web terminal, cleans Rust artifacts, and builds release binary
 #
 # Usage:
-#   ./build.sh           Build frontend + backend (full)
-#   ./build.sh --front   Build frontend only
-#   ./build.sh --cloud   Also enable the cloud Cargo feature (off by default)
-#   (--front --cloud together is rejected: cloud only applies to the full build)
+#   ./build.sh              Build frontend + backend (full, with cloud features)
+#   ./build.sh --front      Build frontend only
+#   ./build.sh --nocloud    Full build without the cloud Cargo feature
+#   (--front --nocloud together is rejected: the flag only applies to the full build)
 
 set -e  # Exit on error
 
 FRONT_ONLY=false
-CLOUD=false
+CLOUD=true
 for arg in "$@"; do
   case "$arg" in
     --front) FRONT_ONLY=true ;;
-    --cloud) CLOUD=true ;;
+    --nocloud) CLOUD=false ;;
     -h|--help)
       echo "Usage:"
-      echo "  ./build.sh             Build frontend + backend (full)"
-      echo "  ./build.sh --front     Build frontend only"
-      echo "  ./build.sh --cloud     Include the cloud Cargo feature (off by default)"
+      echo "  ./build.sh              Build frontend + backend (full, with cloud features)"
+      echo "  ./build.sh --front      Build frontend only"
+      echo "  ./build.sh --nocloud    Build without the cloud Cargo feature"
       exit 0
       ;;
     *)
@@ -30,8 +30,8 @@ for arg in "$@"; do
   esac
 done
 
-if [ "$FRONT_ONLY" = true ] && [ "$CLOUD" = true ]; then
-  echo "--cloud 只在完整构建时生效，不能与 --front 组合" >&2
+if [ "$FRONT_ONLY" = true ] && [ "$CLOUD" = false ]; then
+  echo "--nocloud 只在完整构建时生效，不能与 --front 组合" >&2
   echo "   （前端构建不涉及 Rust features；要去掉 --front 再试）" >&2
   exit 1
 fi
@@ -64,8 +64,10 @@ cargo clean
 echo "🔨 Building release binary..."
 CARGO_ARGS=(build --release)
 if [ "$CLOUD" = true ]; then
-  echo "   (with cloud feature)"
+  echo "   (with cloud features)"
   CARGO_ARGS+=(--features cloud)
+else
+  echo "   (without cloud features)"
 fi
 cargo "${CARGO_ARGS[@]}"
 
