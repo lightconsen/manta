@@ -21,13 +21,15 @@ serde_json = "1.0"
 toml = "0.8"
 rand = "0.8"
 
-# Desktop builds use syscity's default features; mobile builds use the
-# pruned `mobile` profile (no channels / local-embeddings / vision / browser,
-# bundled SQLite, embedded SPA assets); Intel macOS (x86_64-apple-darwin)
-# uses the pruned `intel-macos` profile (default minus `vision`) because ort
-# ships no prebuilt library for that target. The dep must live in target
-# tables — cargo features are additive, so a shared [dependencies] entry
-# would force default features onto every target.
+# Desktop builds use syscity's default features plus `cloud` (release
+# artifacts ship cloud — matches the CLI release builds' `--all-features`);
+# mobile builds use the pruned `mobile` profile (no channels /
+# local-embeddings / vision / browser, bundled SQLite, embedded SPA assets);
+# Intel macOS (x86_64-apple-darwin) uses the pruned `intel-macos` profile
+# (default minus `vision`, plus `cloud`) because ort ships no prebuilt
+# library for that target. The dep must live in target tables — cargo
+# features are additive, so a shared [dependencies] entry would force default
+# features onto every target.
 #
 # NOTE: target tables can only use *built-in* cfgs — custom aliases like
 # syscity's `mobile_os` (emitted by its build.rs) do not exist at dependency
@@ -38,7 +40,7 @@ rand = "0.8"
 # unify across *all* matching target tables, so if it matched there too, the
 # default set (incl. `vision`) would be added back alongside `intel-macos`.
 [target.'cfg(not(any(target_os = "android", target_os = "ios", all(target_os = "macos", target_arch = "x86_64"))))'.dependencies]
-syscity = { path = ".." }
+syscity = { path = "..", features = ["cloud"] }
 
 [target.'cfg(all(target_os = "macos", target_arch = "x86_64"))'.dependencies]
 syscity = { path = "..", default-features = false, features = ["intel-macos"] }

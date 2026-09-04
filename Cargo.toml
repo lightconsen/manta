@@ -295,15 +295,17 @@ embedded-assets = ["dep:rust-embed"]
 # keyring-primary-with-file-fallback routing.
 keyring = ["dep:keyring"]
 
-# Intel macOS (x86_64-apple-darwin) profile — default features minus `vision`.
+# Intel macOS (x86_64-apple-darwin) profile — default features minus `vision`,
+# plus `cloud` (release artifacts ship cloud; matches release.yml's
+# `--all-features` builds on the other targets).
 # ort (ONNX Runtime) ships no prebuilt library for this target and compiling it
 # from source in CI is not viable, so the ONNX-based OCR/UI detection feature is
 # dropped rather than blocking the whole Intel Mac build.
 # Build with: cargo build --no-default-features --features intel-macos
 intel-macos = [
-    "telegram", "discord", "slack", "whatsapp", "qq", "feishu", "signal",
-    "imessage", "webchat", "wechatmp", "plugins", "hot-reload", "local-embeddings",
-    "browser", "sqlite-vec",
+    "cloud", "telegram", "discord", "slack", "whatsapp", "qq", "feishu",
+    "signal", "imessage", "webchat", "wechatmp", "plugins", "hot-reload",
+    "local-embeddings", "browser", "sqlite-vec",
 ]
 
 # Mobile profile (Android/iOS) — pruned, sandbox-safe feature set.
