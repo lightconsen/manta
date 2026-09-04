@@ -113,6 +113,9 @@ syscity eval run release_gate --full --trials 5 \
   （论文案例：同一套 harness 换执行器后分数从 69.3 掉到 33.0）。
 - **不为单次 flaky trial 过拟合**：单 trial 失败优先重跑确认，
   不为一例噪声扭曲 prompt。
+- **管线成功 ≠ 任务成功**：trial 管线跑通（`response.txt`/`eval_trace.log`
+  都产出）仍可能 score=0 —— GoalCondition 读的是环境/仓库**终态**，不要被
+  "跑通了"误导，也不要把真失败误分类为 judge-infra。
 - **评测账本**：每次 `eval run` 结束自动向 `evals/ledger.md` 追加一行
   （日期 / commit / suite / 执行模型 / judge / 模式 / 通过率 / 失败任务）。
   判断"哪个版本最好"时对照账本，不要凭记忆——对话记忆撑不过上下文压缩，

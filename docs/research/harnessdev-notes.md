@@ -54,6 +54,20 @@
 8. **防作弊清单进 CI**。论文的 prohibited behavior（禁硬编码任务 ID/答案/期望 patch、禁读 grader、禁篡改评测产物、禁 TODO 占位、禁退化成 one-shot）被做成逐任务审计，违规直接记 0。对应我们的纪律"不降阈值、不改维度凑数"——可以考虑在 CI 加等价检查（例如：gate 相关改动不得同时修改评测 YAML 与通过阈值），把纪律从约定变成机器可执行。
 9. **成本轴进 gate 报表**。19 倍成本差与分数无关，提示我们 gate 除了通过率，应同时报 **每任务 token/成本**，让"高分但极贵"的版本显形（对商业化定价也直接有用：专业版/企业版的配额设计需要这个数据）。
 
-## 四、一句话总结
+## 四、落地追踪（2026-09-04）
+
+| # | 借鉴项 | 状态 |
+|---|---|---|
+| 1 | S/checkpoint：`/goal` 真正的 save/load/resume | ✅ round 级 checkpoint 硬化（`1005dd0`：原子写 + TaskRegistry 排空）+ **轮内恢复**（轮内消息入 checkpoint，resume 续跑当轮；`restore_threads` 经 spike 判定不是正确接线点） |
+| 2 | 得分只看环境终态；`adapter_status=success 仍可能 score=0` | ✅ 写进 `evals/README.md`（迭代纪律 bullet + 产物契约节） |
+| 3 | 固定执行器 / 第二模型复测 | ✅ 迭代环 recipe（`388ea3c`） |
+| 4 | 小样本探针纪律（`--only` 子集 ≥85% bar） | ✅ 迭代环 recipe（`388ea3c`） |
+| 5 | 评测账本落盘 `evals/ledger.md` | ✅ 自动追加（`43b7d25`） |
+| 6 | 诚实状态 + 产物契约（字段对齐 result.json / trajectory.jsonl / response.md） | ✅ `evals/README.md` 产物契约节 + judge prompt 显式条款（计划/空产物报成完成 = Fail） |
+| 7 | Evolution 先分类再动刀（一个失败桶一个根因修复） | ✅ 迭代环 recipe（`388ea3c`） |
+| 8 | 防作弊清单进 CI（硬编码答案 / TODO 占位 / 读 grader 的机器检查） | ⛔ **不做** — `58c9c85` 已机检"阈值/评测 YAML 不可同改"这一最高风险面；judge 层已覆盖编造检测；其余项机器化的边际收益递减 |
+| 9 | 成本轴进 gate 报表 | ✅ TrialResult/Suite Summary token 上报（`43b7d25`），goal 侧（`1005dd0`） |
+
+## 五、一句话总结
 
 **HarnessDev 证明了：agent 的分数是"模型 × 基础设施"的乘积，单独评测任何一边都会误判；而基础设施的进化必须靠隔离归因、落盘账本和统计纪律，而不是靠对着小样本聚合分反复采样。** 这正是我们 `docs/harness.md` 闭环设计的方向，论文额外指出了两个补强点：**真·状态/检查点恢复**，和**评测账本落盘**。
