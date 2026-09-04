@@ -67,6 +67,10 @@ pub enum GoalEvent {
         total_rounds: usize,
         all_passed: bool,
         summary: String,
+        /// Cumulative executor token spend (cost axis) — `None` when no
+        /// provider echoed usage. Additive; existing consumers ignore it.
+        #[serde(default)]
+        token_usage: Option<crate::agent::turns::TurnUsage>,
     },
     /// Goal aborted (max rounds, loop detected, cancelled, error).
     #[serde(rename = "goal.aborted")]
@@ -78,5 +82,9 @@ pub enum GoalEvent {
         /// existing consumers.
         #[serde(default)]
         blocked_reason: Option<BlockedReason>,
+        /// Cumulative executor token spend (cost axis) — `None` when no
+        /// provider echoed usage. Additive; existing consumers ignore it.
+        #[serde(default)]
+        token_usage: Option<crate::agent::turns::TurnUsage>,
     },
 }

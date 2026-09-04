@@ -236,25 +236,10 @@ pub(super) async fn handle_goal(
     let sid = session_id.unwrap_or_else(|| "unknown".to_string());
 
     // Create event channel between GoalRunner and gateway.
-    let (goal_tx, mut goal_rx) = tokio::sync::mpsc::unbounded_channel();
-    let event_tx = state.events.tx.clone();
-    let gid = goal_id.clone();
-    let s_for_relay = sid.clone();
+    let (goal_tx, goal_rx) = tokio::sync::mpsc::unbounded_channel();
 
-    // Spawn event relay: GoalEvent → GatewayEvent.
-    tokio::spawn(async move {
-        while let Some(goal_event) = goal_rx.recv().await {
-            let gw_event = crate::gateway::GatewayEvent::GoalProgress {
-                goal_id: gid.clone(),
-                session_id: s_for_relay.clone(),
-                event: goal_event,
-            };
-            if let Err(e) = event_tx.send(gw_event) {
-                warn!("[goal] Failed to broadcast event: {}", e);
-                break;
-            }
-        }
-    });
+    // Event relay: GoalEvent → GatewayEvent (registered for shutdown drain).
+    crate::gateway::goal_spawn::spawn_goal_relay(state, &goal_id, sid.clone(), goal_rx).await;
 
     // Create goal store for persistence (checkpoint after each round).
     let goal_store = crate::goal::persist::shared_store();
@@ -275,15 +260,9 @@ pub(super) async fn handle_goal(
         cancellers.insert(goal_id.clone(), cancel_token);
     }
 
-    // Spawn GoalRunner as background task — remove cancellers entry when done.
-    let gid2 = goal_id.clone();
-    let cancellers = state.agents.goal_cancellers.clone();
-    tokio::spawn(async move {
-        runner.run().await;
-        // Clean up cancellers entry on completion.
-        let mut c = cancellers.write().await;
-        c.remove(&gid2);
-    });
+    // Spawn GoalRunner as a registered background task; the cancellers entry
+    // is removed when the runner exits on its own.
+    crate::gateway::goal_spawn::spawn_registered_runner(state, &goal_id, runner).await;
 
     WsResponse::ok(
         &req.id,

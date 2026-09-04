@@ -40,6 +40,11 @@ pub struct PersistedGoalState {
     /// would have had in-process.
     #[serde(default)]
     pub last_handoff: Option<crate::goal::handoff::RoundHandoff>,
+    /// Cumulative executor token spend across the goal's LLM calls (cost
+    /// axis). `None` for checkpoints written before this field existed or by
+    /// providers that do not echo usage.
+    #[serde(default)]
+    pub token_usage: Option<crate::agent::turns::TurnUsage>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -94,18 +99,40 @@ impl GoalStore {
     }
 
     /// Save a goal's state to disk.
+    ///
+    /// The write is atomic: serialise to `path.tmp`, then `rename` over
+    /// `path`. A crash mid-write (including a shutdown abort during
+    /// `save_checkpoint`) leaves the previous checkpoint intact instead of
+    /// truncating it — the same convention as the cron job store.
     pub async fn save(&self, state: &PersistedGoalState) -> crate::Result<()> {
         self.ensure_dir().await?;
         let path = self.state_path(&state.goal_id);
         let json = serde_json::to_string_pretty(state).map_err(|e| {
             crate::error::SyscityError::Internal(format!("Failed to serialize goal state: {}", e))
         })?;
-        tokio::fs::write(&path, &json)
-            .await
-            .map_err(|e| crate::error::SyscityError::Storage {
-                context: format!("Failed to write goal state: {:?}", path),
+        let mut tmp_path = path.clone();
+        let mut tmp_name = path
+            .file_name()
+            .map(|n| n.to_os_string())
+            .unwrap_or_default();
+        tmp_name.push(".tmp");
+        tmp_path.set_file_name(tmp_name);
+
+        tokio::fs::write(&tmp_path, &json).await.map_err(|e| {
+            crate::error::SyscityError::Storage {
+                context: format!("Failed to write goal state tmp file: {:?}", tmp_path),
                 details: e.to_string(),
-            })?;
+            }
+        })?;
+
+        tokio::fs::rename(&tmp_path, &path).await.map_err(|e| {
+            // Best-effort cleanup of the stale tmp file; ignore the result.
+            let _ = std::fs::remove_file(&tmp_path);
+            crate::error::SyscityError::Storage {
+                context: format!("Failed to finalize goal state: {:?}", path),
+                details: e.to_string(),
+            }
+        })?;
         Ok(())
     }
 
@@ -150,6 +177,7 @@ impl GoalStore {
 }
 
 /// Convert runner's internal state to a persisted checkpoint.
+#[allow(clippy::too_many_arguments)]
 pub fn to_persisted(
     goal_id: &str,
     parent_session_id: &str,
@@ -158,6 +186,7 @@ pub fn to_persisted(
     condition_history: &[crate::goal::runner::RoundResult],
     blocked_reason: Option<crate::goal::event::BlockedReason>,
     last_handoff: Option<&crate::goal::handoff::RoundHandoff>,
+    token_usage: Option<crate::agent::turns::TurnUsage>,
 ) -> PersistedGoalState {
     let now = Utc::now();
     PersistedGoalState {
@@ -174,6 +203,7 @@ pub fn to_persisted(
             .collect(),
         blocked_reason,
         last_handoff: last_handoff.cloned(),
+        token_usage,
         created_at: now,
         updated_at: now,
     }
@@ -182,7 +212,13 @@ pub fn to_persisted(
 /// Convert a persisted goal state into parameters for recreating a GoalRunner.
 pub fn to_runner_params(
     state: &PersistedGoalState,
-) -> (String, String, GoalPlan, Vec<crate::goal::runner::RoundResult>) {
+) -> (
+    String,
+    String,
+    GoalPlan,
+    Vec<crate::goal::runner::RoundResult>,
+    Option<crate::agent::turns::TurnUsage>,
+) {
     let condition_history: Vec<crate::goal::runner::RoundResult> = state
         .condition_history
         .iter()
@@ -197,6 +233,7 @@ pub fn to_runner_params(
         state.parent_session_id.clone(),
         state.plan.clone(),
         condition_history,
+        state.token_usage,
     )
 }
 
@@ -239,6 +276,7 @@ mod tests {
             }],
             blocked_reason: None,
             last_handoff: None,
+            token_usage: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -265,13 +303,14 @@ mod tests {
             },
         );
 
-        let state = to_persisted("goal_1", "session_1", &plan, 3, &condition_history, None, None);
+        let state =
+            to_persisted("goal_1", "session_1", &plan, 3, &condition_history, None, None, None);
         assert_eq!(state.goal_id, "goal_1");
         assert_eq!(state.parent_session_id, "session_1");
         assert_eq!(state.round, 3);
         assert_eq!(state.condition_history.len(), 1);
 
-        let (gid, pid, restored_plan, restored_history) = to_runner_params(&state);
+        let (gid, pid, restored_plan, restored_history, _usage) = to_runner_params(&state);
         assert_eq!(gid, "goal_1");
         assert_eq!(pid, "session_1");
         assert_eq!(restored_plan.description, "test");
@@ -390,7 +429,7 @@ mod tests {
             evidence: vec![],
         };
         let plan = GoalPlan::new("d");
-        let state = to_persisted("g", "s", &plan, 3, &[], None, Some(&handoff));
+        let state = to_persisted("g", "s", &plan, 3, &[], None, Some(&handoff), None);
         assert_eq!(state.last_handoff.as_ref().unwrap(), &handoff);
         let json = serde_json::to_string(&state).unwrap();
         let restored: PersistedGoalState = serde_json::from_str(&json).unwrap();
@@ -401,5 +440,63 @@ mod tests {
     fn test_goals_dir_ends_with_goals() {
         let dir = goals_dir();
         assert!(dir.to_string_lossy().ends_with("goals"));
+    }
+
+    #[tokio::test]
+    async fn test_goal_store_save_is_atomic_no_tmp_residue() {
+        let dir = std::env::temp_dir().join(format!("goal_test_{}", uuid::Uuid::new_v4()));
+        let store = GoalStore::with_dir(dir.clone());
+
+        // Save twice so the rename path also covers overwriting an existing
+        // checkpoint; a crash mid-write must never truncate the live file.
+        store.save(&sample_state("goal_atomic_test")).await.unwrap();
+        let mut updated = sample_state("goal_atomic_test");
+        updated.round = 7;
+        store.save(&updated).await.unwrap();
+
+        let loaded = store.load_all().await;
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].round, 7);
+
+        // No .tmp residue left behind, and it must not be picked up as a
+        // goal checkpoint.
+        let mut entries = tokio::fs::read_dir(&dir).await.unwrap();
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            assert!(!name.ends_with(".tmp"), "stale tmp file left: {name}");
+        }
+
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[test]
+    fn test_token_usage_roundtrip_and_default() {
+        use crate::agent::turns::TurnUsage;
+
+        // Old files without token_usage load with None.
+        let json = serde_json::json!({
+            "goal_id": "goal_old",
+            "parent_session_id": "session_1",
+            "plan": {"description": "d", "conditions": [], "max_rounds": 5},
+            "round": 1,
+            "condition_history": [],
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z"
+        });
+        let state: PersistedGoalState = serde_json::from_value(json).unwrap();
+        assert!(state.token_usage.is_none());
+
+        // A checkpoint carrying usage round-trips through serialization.
+        let usage = TurnUsage {
+            prompt_tokens: 1_000,
+            completion_tokens: 250,
+            total_tokens: 1_250,
+            ..Default::default()
+        };
+        let plan = GoalPlan::new("d");
+        let state = to_persisted("g", "s", &plan, 2, &[], None, None, Some(usage));
+        let json = serde_json::to_string(&state).unwrap();
+        let restored: PersistedGoalState = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.token_usage, Some(usage));
     }
 }

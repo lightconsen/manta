@@ -851,6 +851,23 @@ pub(crate) async fn stop_gateway(
         let _ = handle.await;
     }
 
+    // 2b. Abort running goal runners and their event relays ("goal:{id}" /
+    // "goal-relay:{id}"). Shutdown must NOT take the cooperative-cancel
+    // path: /goal cancel deletes the checkpoint (the user explicitly
+    // discards the goal), while shutdown is crash-equivalent — the last
+    // round checkpoint survives and the goal shows up as suspended after
+    // restart.
+    let goal_handles = state
+        .task_registry
+        .remove_matching_join_or_abort("goal")
+        .await;
+    for handle in &goal_handles {
+        handle.abort();
+    }
+    for handle in goal_handles {
+        let _ = handle.await;
+    }
+
     // 3. Stop configured channels.
     // Abort channel background tasks first so the channel stop() calls do not
     // race with gateway-owned inbound/outbound bridges.

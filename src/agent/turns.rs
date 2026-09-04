@@ -35,7 +35,7 @@ pub struct ToolCallRecord {
 }
 
 /// Token consumption for a single turn's LLM interactions.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TurnUsage {
     /// Tokens consumed by the prompt(s).
     pub prompt_tokens: u32,

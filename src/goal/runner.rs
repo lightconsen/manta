@@ -125,6 +125,9 @@ pub struct GoalRunner {
     store: Option<crate::goal::persist::SharedGoalStore>,
     /// Last validated structured handoff (fresh-context mode only).
     last_handoff: Option<RoundHandoff>,
+    /// Cumulative executor token spend across all LLM calls of this goal
+    /// (cost axis: report efficiency alongside the verdict).
+    token_usage: crate::agent::turns::TurnUsage,
 }
 
 #[derive(Debug, Clone)]
@@ -157,6 +160,7 @@ impl GoalRunner {
             event_tx,
             store: None,
             last_handoff: None,
+            token_usage: Default::default(),
         }
     }
 
@@ -179,6 +183,15 @@ impl GoalRunner {
     /// persisted fresh-context goal).
     pub fn with_handoff(mut self, handoff: Option<RoundHandoff>) -> Self {
         self.last_handoff = handoff;
+        self
+    }
+
+    /// Restore the cumulative token usage from a persisted checkpoint so a
+    /// resumed goal keeps counting from where it left off.
+    pub fn with_token_usage(mut self, usage: Option<crate::agent::turns::TurnUsage>) -> Self {
+        if let Some(u) = usage {
+            self.token_usage = u;
+        }
         self
     }
 
@@ -236,6 +249,7 @@ impl GoalRunner {
                         code: crate::goal::BlockedReasonCode::Cancelled,
                         message: "cancelled by user".to_string(),
                     }),
+                    token_usage: self.reported_usage(),
                 });
                 self.cleanup_store().await;
                 return;
@@ -327,6 +341,7 @@ impl GoalRunner {
                                 code: crate::goal::BlockedReasonCode::AgentError,
                                 message: msg,
                             }),
+                            token_usage: self.reported_usage(),
                         });
                         self.cleanup_store().await;
                         return;
@@ -342,6 +357,7 @@ impl GoalRunner {
                         code: crate::goal::BlockedReasonCode::AgentError,
                         message: e.to_string(),
                     }),
+                    token_usage: self.reported_usage(),
                 });
                 self.cleanup_store().await;
                 return;
@@ -374,6 +390,7 @@ impl GoalRunner {
                     total_rounds: self.round,
                     all_passed: true,
                     summary,
+                    token_usage: self.reported_usage(),
                 });
                 // Clean up persisted state on successful completion.
                 if let Some(ref store) = self.store {
@@ -398,6 +415,7 @@ impl GoalRunner {
                         code: crate::goal::BlockedReasonCode::Cancelled,
                         message: "cancelled by user".to_string(),
                     }),
+                    token_usage: self.reported_usage(),
                 });
                 self.cleanup_store().await;
                 return;
@@ -462,6 +480,7 @@ impl GoalRunner {
                     round: self.round,
                     results,
                     blocked_reason: Some(reason.clone()),
+                    token_usage: self.reported_usage(),
                 });
                 // Policy stop: keep the checkpoint with the reason so the
                 // cause survives and a human can resume deliberately.
@@ -487,6 +506,7 @@ impl GoalRunner {
             round: self.plan.max_rounds,
             results,
             blocked_reason: Some(reason.clone()),
+            token_usage: self.reported_usage(),
         });
         // Policy stop: keep the checkpoint with the reason (see above).
         self.save_terminal(reason).await;
@@ -498,7 +518,7 @@ impl GoalRunner {
     /// LLM via the model router, and executes any tool calls the LLM makes.
     /// Repeats (LLM → tools → LLM → …) up to [`MAX_TOOL_ITERATIONS`]
     /// iterations.
-    async fn run_agent_round(&self) -> Result<()> {
+    async fn run_agent_round(&mut self) -> Result<()> {
         // Build system prompt describing the goal and available tools.
         let system_prompt = self.build_agent_system_prompt();
 
@@ -521,12 +541,17 @@ impl GoalRunner {
             Message::user(&user_message),
         ];
 
-        let model = self.model_override.as_deref().unwrap_or("default");
+        // Owned so the borrow lives independently of `self` (the round may
+        // mutate self, e.g. to accumulate token usage).
+        let model = self
+            .model_override
+            .clone()
+            .unwrap_or_else(|| "default".to_string());
 
         // Create a tool context for tool execution.
         let tool_ctx = ToolContext::new("goal_runner", &self.id)
             .with_workspace_root(crate::dirs::workspace_data_dir())
-            .with_model_name(model.to_string())
+            .with_model_name(model.clone())
             .with_provider_name("model_router");
 
         for iteration in 0..MAX_TOOL_ITERATIONS {
@@ -542,7 +567,7 @@ impl GoalRunner {
 
             let response = self
                 .model_router
-                .complete(model, messages.clone(), Some(tool_defs.clone()))
+                .complete(&model, messages.clone(), Some(tool_defs.clone()))
                 .await
                 .map_err(|e| {
                     crate::error::SyscityError::Internal(format!(
@@ -550,6 +575,7 @@ impl GoalRunner {
                         self.round, e
                     ))
                 })?;
+            self.accumulate_usage(&response.usage);
 
             let has_tool_calls = response
                 .message
@@ -669,11 +695,16 @@ impl GoalRunner {
             Message::user(&user_message),
         ];
 
-        let model = self.model_override.as_deref().unwrap_or("default");
+        // Owned so the borrow lives independently of `self` (the round may
+        // mutate self, e.g. to accumulate token usage).
+        let model = self
+            .model_override
+            .clone()
+            .unwrap_or_else(|| "default".to_string());
 
         let tool_ctx = ToolContext::new("goal_runner", &self.id)
             .with_workspace_root(crate::dirs::workspace_data_dir())
-            .with_model_name(model.to_string())
+            .with_model_name(model.clone())
             .with_provider_name("model_router");
 
         let mut final_content: Option<String> = None;
@@ -690,9 +721,10 @@ impl GoalRunner {
 
             let response = self
                 .model_router
-                .complete(model, messages.clone(), Some(tool_defs.clone()))
+                .complete(&model, messages.clone(), Some(tool_defs.clone()))
                 .await
                 .map_err(classify_completion_error)?;
+            self.accumulate_usage(&response.usage);
 
             let has_tool_calls = response
                 .message
@@ -860,6 +892,34 @@ Schema rules (strictly enforced; violations fail the whole round):
         lines.join("\n")
     }
 
+    /// Fold one LLM call's usage into the goal's cumulative total (cost
+    /// axis). The total is derived as prompt + completion (providers report
+    /// it inconsistently — some echo 0); providers that do not echo usage
+    /// simply contribute nothing.
+    fn accumulate_usage(&mut self, usage: &Option<crate::providers::Usage>) {
+        if let Some(u) = usage {
+            self.token_usage.prompt_tokens = self
+                .token_usage
+                .prompt_tokens
+                .saturating_add(u.prompt_tokens);
+            self.token_usage.completion_tokens = self
+                .token_usage
+                .completion_tokens
+                .saturating_add(u.completion_tokens);
+            self.token_usage.total_tokens = self
+                .token_usage
+                .prompt_tokens
+                .saturating_add(self.token_usage.completion_tokens);
+        }
+    }
+
+    /// The goal's cumulative usage, reported only when at least one provider
+    /// echoed real numbers — mirrors the eval harness convention of not
+    /// presenting an all-zero measurement as data.
+    fn reported_usage(&self) -> Option<crate::agent::turns::TurnUsage> {
+        (self.token_usage.total_tokens > 0).then_some(self.token_usage)
+    }
+
     /// Save a checkpoint of the current goal state to the persistence store.
     async fn save_checkpoint(&self) {
         if let Some(ref store) = self.store {
@@ -872,6 +932,7 @@ Schema rules (strictly enforced; violations fail the whole round):
                 &self.condition_history,
                 None,
                 self.last_handoff.as_ref(),
+                self.reported_usage(),
             );
             if let Err(e) = store_guard.save(&state).await {
                 tracing::warn!("[goal {}] Failed to save checkpoint: {}", self.id, e);
@@ -888,6 +949,7 @@ Schema rules (strictly enforced; violations fail the whole round):
             round: self.round,
             results: Vec::new(),
             blocked_reason: Some(reason.clone()),
+            token_usage: self.reported_usage(),
         });
         self.save_terminal(reason).await;
     }
@@ -905,6 +967,7 @@ Schema rules (strictly enforced; violations fail the whole round):
                 &self.condition_history,
                 Some(reason),
                 self.last_handoff.as_ref(),
+                self.reported_usage(),
             );
             if let Err(e) = store_guard.save(&state).await {
                 tracing::warn!("[goal {}] Failed to save terminal state: {}", self.id, e);
@@ -1079,6 +1142,43 @@ mod tests {
             ))
             .await;
         Arc::new(router)
+    }
+
+    #[tokio::test]
+    async fn test_token_usage_accumulates_into_events_and_checkpoint() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let store_dir = temp_dir("token_usage");
+        let store = Arc::new(tokio::sync::RwLock::new(GoalStore::with_dir(store_dir.clone())));
+        let router = make_mock_router(Arc::new(MockProvider::new())).await;
+
+        let mut plan = GoalPlan::new("count tokens");
+        plan.model_override = Some("test-model".to_string());
+        plan.max_rounds = 1;
+        plan = plan.with_condition(crate::goal::GoalCondition::ExitCode {
+            command: "false".to_string(),
+            expected: Some(0),
+        });
+
+        let runner = GoalRunner::new("g", "s", plan, make_tools(), router, tx).with_store(store);
+        runner.run().await;
+
+        let events = drain_events(&mut rx);
+        let usage = match events.last().expect("at least one event") {
+            GoalEvent::Aborted { token_usage, .. } => {
+                token_usage.clone().expect("usage reported on abort")
+            }
+            other => panic!("expected Aborted, got {:?}", other),
+        };
+        assert!(usage.prompt_tokens > 0, "mock echoes prompt usage");
+        assert_eq!(usage.total_tokens, usage.prompt_tokens + usage.completion_tokens);
+
+        // MaxRounds is a policy stop: the terminal checkpoint survives and
+        // must carry the same cumulative usage.
+        let persisted = GoalStore::with_dir(store_dir.clone()).load_all().await;
+        assert_eq!(persisted.len(), 1);
+        assert_eq!(persisted[0].token_usage, Some(usage));
+
+        let _ = tokio::fs::remove_dir_all(&store_dir).await;
     }
 
     /// A final assistant reply carrying a valid handoff block.
