@@ -135,6 +135,7 @@ pub async fn run_suite(
     // failure can be re-run cheaply on just the failing tasks. Judge,
     // conditions and criteria come from the original task YAML unchanged, so
     // the subset verdict is faithful to the full suite.
+    let only_count = only_tasks.as_ref().map_or(0, |ids| ids.len());
     if let Some(ids) = only_tasks {
         if !ids.is_empty() {
             let wanted: HashSet<&str> = ids.iter().map(String::as_str).collect();
@@ -288,6 +289,19 @@ pub async fn run_suite(
 
     // ── Step 6: Create Critic (only if at least one task has criteria) ──────
     let has_criteria = suite.tasks.iter().any(|t| t.criteria.is_some());
+    // Ledger labels: executor and judge identities for the eval ledger row.
+    let executor_label = format!("{}/{}", provider_type, model.as_deref().unwrap_or("default"));
+    let judge_label = if has_criteria {
+        match &judge.model {
+            Some(m) => match &judge.provider {
+                Some(p) => format!("{}/{}", p, m),
+                None => m.clone(),
+            },
+            None => "self".to_string(),
+        }
+    } else {
+        "none".to_string()
+    };
     let critic = if has_criteria {
         // Judge separation: a different provider needs its own resolved
         // provider; model-only overrides reuse the agent's provider with
@@ -411,6 +425,11 @@ pub async fn run_suite(
     let mut all_passed = true;
     let mut total_trials = 0usize;
     let mut total_passed = 0usize;
+    // Cost axis (suite level) and ledger inputs.
+    let mut suite_prompt_tokens: u64 = 0;
+    let mut suite_completion_tokens: u64 = 0;
+    let mut trials_with_usage = 0usize;
+    let mut ledger_failed_tasks: Vec<String> = Vec::new();
 
     for task in &tasks_to_run {
         println!("── Task: {} — {} ──", task.id, task.description);
@@ -499,11 +518,25 @@ pub async fn run_suite(
 
                 total_trials += summary.total_trials;
                 total_passed += (summary.pass_rate * summary.total_trials as f64).round() as usize;
+
+                // Cost axis: accumulate executor-token spend across trials.
+                for trial in &summary.per_trial {
+                    if let Some(tu) = &trial.token_usage {
+                        suite_prompt_tokens += u64::from(tu.prompt_tokens);
+                        suite_completion_tokens += u64::from(tu.completion_tokens);
+                        trials_with_usage += 1;
+                    }
+                }
+                // Ledger: record tasks that did not pass every trial.
+                if summary.pass_rate < 1.0 {
+                    ledger_failed_tasks.push(task.id.clone());
+                }
             }
             Err(e) => {
                 println!(" failed\n");
                 warn!("Task '{}' failed: {}", task.id, e);
                 all_passed = false;
+                ledger_failed_tasks.push(task.id.clone());
             }
         }
         println!();
@@ -526,6 +559,35 @@ pub async fn run_suite(
     println!("  Total passed:      {}", total_passed);
     println!("  Min required:      {:.0}%", suite.min_pass_rate * 100.0);
     println!("  Result:            {}", if gate_passed { "PASS" } else { "FAIL" });
+    if trials_with_usage > 0 {
+        let suite_total_tokens = suite_prompt_tokens + suite_completion_tokens;
+        println!(
+            "  Total tokens:      {} ({} prompt + {} completion, {} trials)",
+            suite_total_tokens, suite_prompt_tokens, suite_completion_tokens, trials_with_usage
+        );
+        println!("  Avg tokens/trial:  {}", suite_total_tokens / trials_with_usage as u64);
+    }
+
+    // ── Ledger: durable record of this run (best-effort) ─────────────────
+    let run_mode = if only_count > 0 {
+        format!("only:{}", only_count)
+    } else if effective_sampling_rate < 1.0 {
+        format!("sampled:{:.0}%", effective_sampling_rate * 100.0)
+    } else {
+        "full".to_string()
+    };
+    append_eval_ledger(
+        &evals_dir,
+        &suite.name,
+        &executor_label,
+        &judge_label,
+        &run_mode,
+        total_passed,
+        total_trials,
+        overall_pass_rate,
+        gate_passed,
+        &ledger_failed_tasks,
+    );
 
     // ── Step 10: Shutdown ──────────────────────────────────────────────────
     agent.shutdown().await?;
@@ -588,6 +650,79 @@ pub async fn run_governed_badcase_suite(
     );
 
     run_suite(config, suite, opts, selection).await
+}
+
+/// Append one row to `{evals_dir}/ledger.md` — the durable eval ledger.
+///
+/// Every completed suite run records commit, suite, executor/judge models,
+/// run mode, pass counts, and failing tasks. Files and git history survive
+/// context compaction and CI log expiry; conversation memory does not.
+/// Best-effort: a write failure only warns and never fails the run.
+#[allow(clippy::too_many_arguments)]
+fn append_eval_ledger(
+    evals_dir: &std::path::Path,
+    suite_name: &str,
+    executor: &str,
+    judge: &str,
+    mode: &str,
+    passed: usize,
+    total: usize,
+    pass_rate: f64,
+    gate_passed: bool,
+    failed_tasks: &[String],
+) {
+    let path = evals_dir.join("ledger.md");
+    let date = chrono::Local::now().format("%Y-%m-%d %H:%M");
+    let commit = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "-".to_string());
+    let failed = if failed_tasks.is_empty() {
+        "-".to_string()
+    } else {
+        let joined = failed_tasks.join(", ");
+        if joined.chars().count() > 160 {
+            joined.chars().take(159).collect::<String>() + "…"
+        } else {
+            joined
+        }
+    };
+    let row = format!(
+        "| {} | {} | {} | {} | {} | {} | {}/{} | {:.1}% | {} | {} |\n",
+        date,
+        commit,
+        suite_name,
+        executor,
+        judge,
+        mode,
+        passed,
+        total,
+        pass_rate * 100.0,
+        if gate_passed { "PASS" } else { "FAIL" },
+        failed
+    );
+    let write = (|| -> std::io::Result<()> {
+        if !path.exists() {
+            std::fs::write(
+                &path,
+                "# Eval Ledger\n\n\
+                 Durable record of eval suite runs — one row per completed\n\
+                 `syscity eval run` (appended automatically, best-effort).\n\n\
+                 | Date | Commit | Suite | Executor | Judge | Mode | Passed | Rate | Gate | Failed tasks |\n\
+                 |------|--------|-------|----------|-------|------|--------|------|------|--------------|\n",
+            )?;
+        }
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new().append(true).open(&path)?;
+        f.write_all(row.as_bytes())
+    })();
+    if let Err(e) = write {
+        warn!("Failed to append eval ledger row: {}", e);
+    }
 }
 
 /// Find and parse the config file as `GatewayConfig`.
@@ -698,4 +833,73 @@ fn eval_search_providers(
     }
 
     vec![SearchProvider::DuckDuckGo]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_append_eval_ledger_creates_and_appends() {
+        let dir = std::env::temp_dir().join(format!(
+            "syscity-ledger-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp ledger dir");
+
+        append_eval_ledger(
+            &dir,
+            "unit_suite",
+            "deepseek/deepseek-v4-pro",
+            "deepseek/deepseek-v4-flash",
+            "full",
+            8,
+            10,
+            0.8,
+            true,
+            &["task_a".to_string(), "task_b".to_string()],
+        );
+        append_eval_ledger(
+            &dir,
+            "unit_suite",
+            "deepseek/deepseek-v4-pro",
+            "self",
+            "only:2",
+            2,
+            2,
+            1.0,
+            true,
+            &[],
+        );
+
+        let content = std::fs::read_to_string(dir.join("ledger.md")).expect("ledger written");
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert_eq!(
+            content.matches("# Eval Ledger").count(),
+            1,
+            "header must be written exactly once"
+        );
+        // Header/separator rows never mention the suite name, so this
+        // selects exactly the appended data rows.
+        let data_rows: Vec<&str> = content
+            .lines()
+            .filter(|l| l.contains("unit_suite"))
+            .collect();
+        assert_eq!(data_rows.len(), 2, "one row per run: {content}");
+        assert!(data_rows[0].contains("unit_suite"));
+        assert!(data_rows[0].contains("deepseek/deepseek-v4-pro"));
+        assert!(data_rows[0].contains("full"));
+        assert!(data_rows[0].contains("8/10"));
+        assert!(data_rows[0].contains("80.0%"));
+        assert!(data_rows[0].contains("PASS"));
+        assert!(data_rows[0].contains("task_a, task_b"));
+        assert!(data_rows[1].contains("only:2"));
+        assert!(data_rows[1].contains("2/2"));
+        assert!(data_rows[1].contains("100.0%"));
+    }
 }

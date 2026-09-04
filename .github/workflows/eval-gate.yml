@@ -89,7 +89,7 @@ jobs:
             echo
             echo '- Suite summary:'
             echo '```'
-            grep -A5 'Suite Summary' eval-gate-output.log || tail -20 eval-gate-output.log
+            grep -A9 'Suite Summary' eval-gate-output.log || tail -20 eval-gate-output.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
         env:

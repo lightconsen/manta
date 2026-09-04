@@ -779,6 +779,10 @@ impl EvalHarness {
             all_tool_calls.clone() // fallback to outgoing stubs
         };
 
+        // Cost axis: attribute the trial's executor-token spend to the
+        // result so gate reports expose efficiency alongside pass rate.
+        let token_usage = turns.as_deref().and_then(Self::usage_from_turns);
+
         // ── Step 7: Skill evaluation (§02 / §04) ───────────────────────
         let (skill_results, skill_passed) = self
             .evaluate_skills(&real_tool_calls, &final_response)
@@ -862,7 +866,7 @@ impl EvalHarness {
             trial_index: trial,
             response: final_response,
             tool_calls: real_tool_calls,
-            token_usage: None,
+            token_usage,
             duration_ms: elapsed.as_millis() as u64,
             condition_results,
             conditions_passed,
@@ -930,6 +934,29 @@ impl EvalHarness {
                 })
             })
             .collect()
+    }
+
+    /// Aggregate token usage across all captured turns (cost axis).
+    ///
+    /// Each recorded [`Turn`] carries the engine-side usage for its LLM
+    /// rounds; the trial's total is the sum across turns. Returns `None`
+    /// when no turn reported usage (e.g. the provider did not echo usage).
+    fn usage_from_turns(turns: &[Turn]) -> Option<TurnUsage> {
+        let mut prompt = 0u64;
+        let mut completion = 0u64;
+        let mut seen = false;
+        for turn in turns {
+            if let Some(u) = &turn.token_usage {
+                prompt += u64::from(u.prompt_tokens);
+                completion += u64::from(u.completion_tokens);
+                seen = true;
+            }
+        }
+        seen.then(|| TurnUsage {
+            prompt_tokens: prompt.min(u64::from(u32::MAX)) as u32,
+            completion_tokens: completion.min(u64::from(u32::MAX)) as u32,
+            total_tokens: (prompt + completion).min(u64::from(u32::MAX)) as u32,
+        })
     }
 
     /// Collect tool calls from OutgoingMessage.
@@ -1108,6 +1135,37 @@ mod tests {
         assert_eq!(s.pass_rate, 0.5);
         assert!(s.at_least_once_success);
         assert!(!s.continuous_success);
+    }
+
+    #[test]
+    fn test_usage_from_turns_sums_and_skips_missing() {
+        let mut t0 = Turn::new(0, "a");
+        t0.token_usage = Some(crate::agent::turns::TurnUsage {
+            prompt_tokens: 100,
+            completion_tokens: 40,
+            total_tokens: 140,
+            ..Default::default()
+        });
+        let t1 = Turn::new(1, "b"); // turn with no recorded usage
+        let mut t2 = Turn::new(2, "c");
+        t2.token_usage = Some(crate::agent::turns::TurnUsage {
+            prompt_tokens: 60,
+            completion_tokens: 20,
+            total_tokens: 80,
+            ..Default::default()
+        });
+
+        let usage = EvalHarness::usage_from_turns(&[t0, t1, t2]).expect("usage present");
+        assert_eq!(usage.prompt_tokens, 160);
+        assert_eq!(usage.completion_tokens, 60);
+        assert_eq!(usage.total_tokens, 220);
+    }
+
+    #[test]
+    fn test_usage_from_turns_none_when_no_usage() {
+        assert!(EvalHarness::usage_from_turns(&[]).is_none());
+        let turns = vec![Turn::new(0, "a"), Turn::new(1, "b")];
+        assert!(EvalHarness::usage_from_turns(&turns).is_none());
     }
 
     fn make_dummy() -> TrialResult {
