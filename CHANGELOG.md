@@ -11,6 +11,26 @@ if no section matches, the release falls back to auto-generated notes.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-04
+
+### Highlights
+
+- **Cloud features on by default in shipped builds, with a `--nocloud` opt-out**: release artifacts (CLI + desktop) and `./scripts/build.sh` compile the `cloud` feature by default; `syscity start --nocloud` disables cloud at runtime (propagated through background start and self-update restarts). Source `cargo build` still contains no cloud code (§2.7).
+
+### Added
+
+- `/goal` durability: round-level checkpoint hardening (atomic writes, TaskRegistry drain on shutdown), mid-round resume (an in-flight round continues from its checkpointed messages instead of restarting), per-goal token accounting, terminal outcome write-back to the parent session, and a `syscity goal list/resume/cancel` CLI
+- Eval: suite token cost reported in TrialResult/Suite Summary, auto-appended eval ledger (`evals/ledger.md`), release-gate iteration loop recipe, and machine-enforced gate integrity (pre-commit + CI checks against threshold tampering)
+
+### Changed
+
+- `./scripts/build.sh` defaults to cloud features; `--nocloud` opts out and the old `--cloud` flag is removed
+
+### Fixed
+
+- A `[cloud]` config section without an explicit `enabled` key silently disabled cloud (serde `bool` default); it now shares the env-aware on-by-default value
+- CI: publish one-line installers to GitHub Pages
+
 ## [0.3.0] - 2026-09-02
 
 ### Highlights

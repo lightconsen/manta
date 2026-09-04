@@ -7978,7 +7978,7 @@ dependencies = [
 
 [[package]]
 name = "syscity"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -8088,7 +8088,7 @@ dependencies = [
 
 [[package]]
 name = "syscity-desktop"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "async-trait",
  "objc2-app-kit",
