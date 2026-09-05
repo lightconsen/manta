@@ -137,7 +137,7 @@ export function BackupSyncPanel({ agents }: { agents: KbAgent[] }) {
       const transport = getActiveTransport();
       if (!transport) throw new Error("No gateway connection");
       const r = (await transport.cloudKbPush(collection)) as PushResult;
-      setPushNotes((prev) => ({ ...prev, [collection]: resultSummary(r, `${r.pushed} pushed`) }));
+      setPushNotes((prev) => ({ ...prev, [collection]: resultSummary(r, "Pushed") }));
       await load();
     } catch (e) {
       setPushNotes((prev) => ({
@@ -157,7 +157,7 @@ export function BackupSyncPanel({ agents }: { agents: KbAgent[] }) {
       const transport = getActiveTransport();
       if (!transport) throw new Error("No gateway connection");
       const r = (await transport.cloudKbPull({ cloud_kb_id: kb.id, agent_id: agentId })) as PullResult;
-      setPullNotes((prev) => ({ ...prev, [kb.id]: resultSummary(r, `${r.pulled} restored`) }));
+      setPullNotes((prev) => ({ ...prev, [kb.id]: resultSummary(r, "Restored") }));
       await load();
     } catch (e) {
       setPullNotes((prev) => ({
