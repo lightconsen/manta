@@ -9,6 +9,8 @@ interface TitlebarProps {
   isMobile: boolean;
   /** Show the hamburger (mobile drawer trigger). */
   showHamburger: boolean;
+  /** Mirror the sidebar width so the left cluster starts at its right edge. */
+  sidebarCollapsed: boolean;
   onOpenMobileNav: () => void;
   onOpenSettings: () => void;
 }
@@ -19,24 +21,30 @@ const iconBtnCls =
 /**
  * App-wide top bar (hermes-desktop-style shell chrome):
  *
- *   [traffic lights] [left cluster] ...... center drag region ...... [right cluster]
+ *   [sidebar-width zone] [agent identity] ...... center drag region ...... [right cluster]
  *
- * - tauri-macos: the native traffic lights overlay the bar (titleBarStyle
- *   Overlay); the root carries data-tauri-drag-region="deep" so the whole bar
- *   drags the window (interactive elements are excluded by Tauri's drag
- *   script) and double-click toggles zoom. Left padding clears the lights.
+ * - The leading zone mirrors the sidebar's width (w-64 expanded / w-16
+ *   collapsed, same 300ms transition), so the agent identity strip's left
+ *   edge tracks the sidebar's right edge on md+ — the titlebar "follows"
+ *   the pane split below it. On macOS the native traffic lights overlay
+ *   this empty zone (titleBarStyle Overlay), so it doubles as the light
+ *   clearance; the root therefore carries no left padding.
+ * - tauri-macos: the root carries data-tauri-drag-region="deep" so the whole
+ *   bar drags the window (interactive elements are excluded by Tauri's drag
+ *   script) and double-click toggles zoom.
  * - every other platform (Windows/Linux desktop, browser, mobile): plain
- *   header strip, native titlebar untouched.
+ *   header strip, native titlebar untouched. Below md the mirror zone
+ *   disappears and the hamburger + logo lead the bar instead.
  *
- * Hosts the global controls moved out of the sidebar bottom row (network dot,
- * theme, settings, account) and the agent identity strip moved out of the
- * chat header.
+ * Hosts the global controls (network dot, theme, settings, account) and the
+ * agent identity strip.
  */
 export function Titlebar({
   isMobile,
   showHamburger,
   onOpenMobileNav,
   onOpenSettings,
+  sidebarCollapsed,
 }: TitlebarProps) {
   const platform = usePlatform();
   const networkStatus = useChatStore((s) => s.networkStatus);
@@ -48,9 +56,7 @@ export function Titlebar({
 
   return (
     <div
-      className={`h-11 shrink-0 flex items-center bg-sidebar border-b border-subtle px-2 ${
-        isMac ? "pl-[72px]" : ""
-      }`}
+      className="h-11 shrink-0 flex items-center bg-sidebar border-b border-subtle pr-2 pl-2 md:pl-0"
       style={
         showSafeAreaTop
           ? { paddingTop: "env(safe-area-inset-top)" }
@@ -58,21 +64,31 @@ export function Titlebar({
       }
       data-tauri-drag-region={isMac ? "deep" : undefined}
     >
-      {/* Left cluster */}
+      {/* Mobile hamburger (drawer trigger) */}
+      {showHamburger && (
+        <button
+          className="md:hidden p-2 -ml-1 rounded-lg text-secondary hover:bg-black/5 dark:hover:bg-white/5 transition"
+          onClick={onOpenMobileNav}
+          aria-label="Open navigation"
+        >
+          <Menu size={18} />
+        </button>
+      )}
+
+      {/* Sidebar-width mirror zone: keeps the identity strip flush with the
+          sidebar's right edge; hosts the macOS traffic lights. */}
+      <div
+        className={`hidden md:block shrink-0 h-full transition-all duration-300 ${
+          sidebarCollapsed ? "w-16" : "w-64"
+        }`}
+      />
+
+      {/* Left cluster — starts exactly at the sidebar's right edge */}
       <div className="flex items-center gap-2 min-w-0">
-        {showHamburger && (
-          <button
-            className="md:hidden p-2 -ml-1 rounded-lg text-secondary hover:bg-black/5 dark:hover:bg-white/5 transition"
-            onClick={onOpenMobileNav}
-            aria-label="Open navigation"
-          >
-            <Menu size={18} />
-          </button>
-        )}
         <img
           src="/syscity.png"
           alt="Syscity"
-          className="w-5 h-5 shrink-0"
+          className="w-5 h-5 shrink-0 md:hidden"
           draggable={false}
         />
         {currentAgent ? (
@@ -83,12 +99,14 @@ export function Titlebar({
             <span className="font-medium truncate">
               {currentAgent.display_name}
             </span>
-            <span className="text-[10px] text-secondary/50 truncate">
-              ({currentAgent.id})
-            </span>
+            {!currentAgent.display_name.includes(currentAgent.id) && (
+              <span className="text-[10px] text-secondary/50 truncate">
+                ({currentAgent.id})
+              </span>
+            )}
           </div>
         ) : (
-          <span className="text-sm font-semibold text-primary whitespace-nowrap">
+          <span className="md:hidden text-sm font-semibold text-primary whitespace-nowrap">
             Syscity
           </span>
         )}

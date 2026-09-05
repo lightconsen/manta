@@ -743,6 +743,7 @@ function ChatApp() {
       <Titlebar
         isMobile={isMobile}
         showHamburger={isMobile && !mobileNavOpen}
+        sidebarCollapsed={sidebarCollapsed}
         onOpenMobileNav={() => setMobileNavOpen(true)}
         onOpenSettings={() => openSettings("general")}
       />
