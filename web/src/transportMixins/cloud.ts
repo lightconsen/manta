@@ -29,21 +29,39 @@ export function install(proto: typeof SyscityWebSocketTransport.prototype): void
   proto.cloudKbDelete = async function (this: SyscityWebSocketTransport, kbId: string): Promise<{ ok: boolean }> {
     return (await this.sendRequestAndWait("cloud.kb.delete", { kb_id: kbId })) as { ok: boolean };
   };
-  proto.cloudKbUpload = async function (
-    this: SyscityWebSocketTransport,
-    kbId: string,
-    filename: string,
-    contentBase64: string,
-    mime?: string
-  ): Promise<unknown> {
-    return this.sendRequestAndWait("cloud.kb.upload", { kb_id: kbId, filename, content_base64: contentBase64, mime });
+  // KB backup & sync — the cloud stores local collection snapshots; push/pull
+  // walk many documents, so they need far more than the 5 s default timeout.
+  proto.cloudKbDocs = async function (this: SyscityWebSocketTransport, kbId: string): Promise<unknown> {
+    return this.sendRequestAndWait("cloud.kb.docs", { kb_id: kbId });
   };
-  proto.cloudKbQuery = async function (
+  proto.cloudKbPush = async function (this: SyscityWebSocketTransport, collection: string) {
+    return (await this.sendRequestAndWait("cloud.kb.push", { collection }, 300_000)) as {
+      collection: string;
+      cloud_kb_id: string;
+      cloud_kb_name: string;
+      total: number;
+      pushed: number;
+      unchanged: number;
+      skipped_url: number;
+      skipped_external: number;
+      too_large: number;
+      failed: number;
+      errors: string[];
+    };
+  };
+  proto.cloudKbPull = async function (
     this: SyscityWebSocketTransport,
-    kbId: string,
-    query: string,
-    topK = 5
-  ): Promise<unknown> {
-    return this.sendRequestAndWait("cloud.kb.query", { kb_id: kbId, query, top_k: topK });
+    params: { collection: string } | { cloud_kb_id: string; agent_id: string }
+  ) {
+    return (await this.sendRequestAndWait("cloud.kb.pull", params, 300_000)) as {
+      collection: string;
+      agent_id: string;
+      cloud_kb_id: string;
+      total: number;
+      pulled: number;
+      unchanged: number;
+      failed: number;
+      errors: string[];
+    };
   };
 }

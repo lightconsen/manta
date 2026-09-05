@@ -1854,8 +1854,38 @@ export interface SyscityWebSocketTransport {
   cloudKbList(): Promise<unknown>;
   cloudKbCreate(name: string): Promise<unknown>;
   cloudKbDelete(kbId: string): Promise<{ ok: boolean }>;
-  cloudKbUpload(kbId: string, filename: string, contentBase64: string, mime?: string): Promise<unknown>;
-  cloudKbQuery(kbId: string, query: string, topK?: number): Promise<unknown>;
+  cloudKbDocs(kbId: string): Promise<unknown>;
+  /** Back up one local collection (`kb-{agent_id}`) to the cloud. Long-running
+   * (one upload per changed document) — 5 min WS timeout. */
+  cloudKbPush(
+    collection: string
+  ): Promise<{
+    collection: string;
+    cloud_kb_id: string;
+    cloud_kb_name: string;
+    total: number;
+    pushed: number;
+    unchanged: number;
+    skipped_url: number;
+    skipped_external: number;
+    too_large: number;
+    failed: number;
+    errors: string[];
+  }>;
+  /** Restore a cloud backup into a local agent collection. Long-running —
+   * 5 min WS timeout. */
+  cloudKbPull(
+    params: { collection: string } | { cloud_kb_id: string; agent_id: string }
+  ): Promise<{
+    collection: string;
+    agent_id: string;
+    cloud_kb_id: string;
+    total: number;
+    pulled: number;
+    unchanged: number;
+    failed: number;
+    errors: string[];
+  }>;
   getConfig(): Promise<Record<string, unknown>>;
   setConfig(path: string, value: unknown): Promise<boolean>;
   listCrons(): Promise<{ jobs: Array<Record<string, unknown>>; count: number }>;

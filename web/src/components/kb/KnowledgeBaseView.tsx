@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { X } from "lucide-react";
 import { LocalKbPanel } from "./LocalKbPanel";
-import { CloudKbPanel } from "./CloudKbPanel";
+import { BackupSyncPanel } from "./BackupSyncPanel";
 
 export interface KbAgent {
   id: string;
@@ -14,9 +14,10 @@ export interface KbAgent {
 /** Full-screen Knowledge Base page (replaces the chat area when opened from
  * the sidebar). Two tabs: Local — per-agent collections served by the
  * engine's embedded RAG (`kb-{agent_id}`, immediately retrievable by that
- * agent); Cloud — knowledge bases hosted by Syscity Cloud. */
+ * agent); Backup — back up those collections to Syscity Cloud and restore
+ * them on any device (cloud is storage only, never a retrieval path). */
 export function KnowledgeBaseView({ agents, onClose }: { agents: KbAgent[]; onClose: () => void }) {
-  const [tab, setTab] = useState<"local" | "cloud">("local");
+  const [tab, setTab] = useState<"local" | "backup">("local");
 
   const tabCls = (active: boolean) =>
     `px-3 py-1.5 rounded-lg text-sm font-medium transition ${
@@ -43,13 +44,13 @@ export function KnowledgeBaseView({ agents, onClose }: { agents: KbAgent[]; onCl
           <button className={tabCls(tab === "local")} onClick={() => setTab("local")}>
             Local
           </button>
-          <button className={tabCls(tab === "cloud")} onClick={() => setTab("cloud")}>
-            Cloud
+          <button className={tabCls(tab === "backup")} onClick={() => setTab("backup")}>
+            Backup
           </button>
         </div>
       </div>
       <div className="flex-1 overflow-y-auto px-4 md:px-5 py-4">
-        {tab === "local" ? <LocalKbPanel agents={agents} /> : <CloudKbPanel />}
+        {tab === "local" ? <LocalKbPanel agents={agents} /> : <BackupSyncPanel agents={agents} />}
       </div>
     </div>
   );
