@@ -7,7 +7,7 @@ import { MarketplaceSettings } from "@/components/settings/MarketplaceSettings";
  * page (own header + back to chat). `initialType` pre-filters the catalog
  * (connector/skill/expert). `onSummonExpert` is forwarded so summoning an
  * expert opens a new session with its agent. */
-export function MarketplaceView({
+export function ExtensionsView({
   initialType,
   onClose,
   onSummonExpert,

@@ -23,7 +23,7 @@ import { DocumentPreviewPanel } from "@/components/shared/DocumentPreviewPanel";
 import { WorkspacePanel } from "@/components/workspace/WorkspacePanel";
 import { UpdateBanner } from "@/components/update/UpdateBanner";
 import { CloudEnabledBanner } from "@/components/update/CloudEnabledBanner";
-import { MarketplaceView } from "@/components/marketplace/MarketplaceView";
+import { ExtensionsView } from "@/components/marketplace/ExtensionsView";
 import { AskModal, type AskPrompt } from "@/components/ask/AskModal";
 import { ApprovalModal } from "@/components/approval/ApprovalModal";
 import type { ApprovalPrompt } from "@/components/approval/ApprovalModal";
@@ -827,7 +827,7 @@ function ChatApp() {
         {/* First-login cloud guidance (shown once after a successful login). */}
         {!settingsOpen && !marketplaceOpen && <CloudEnabledBanner />}
         {marketplaceOpen ? (
-          <MarketplaceView
+          <ExtensionsView
             initialType={marketplaceType}
             onClose={() => setMarketplaceOpen(false)}
             onSummonExpert={handleCreateSessionWithAgent}
