@@ -25,9 +25,12 @@ export function CloudEnabledBanner() {
     <div className="shrink-0 px-4 py-2.5 border-b border-subtle bg-primary-50 dark:bg-primary-900/20 flex items-start gap-3">
       <Cloud className="w-4 h-4 text-primary-500 shrink-0 mt-0.5" />
       <div className="text-xs text-primary flex-1 min-w-0 leading-relaxed">
-        <span className="font-semibold">云端已启用</span> — 云端模型与联网搜索已自动可用；
-        设置页「市场」可浏览全部条目（含云端采购连接器），「云端」可查看积分/用量。
-        知识库文档可在云端控制台或对话中使用 <code className="text-[10px] px-1 py-0.5 rounded bg-black/5 dark:bg-white/10">cloud_kb</code> 上传。
+        <span className="font-semibold">Cloud enabled</span> — cloud models and
+        web search are available automatically. Browse the full catalog in
+        Settings → Extensions (incl. cloud procurement connectors); view
+        credits/usage under Cloud. Knowledge-base documents can be uploaded
+        from the cloud console or in chat via{" "}
+        <code className="text-[10px] px-1 py-0.5 rounded bg-black/5 dark:bg-white/10">Cloud KB</code>.
       </div>
       <button
         type="button"

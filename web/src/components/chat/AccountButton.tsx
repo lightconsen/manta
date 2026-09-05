@@ -5,7 +5,9 @@ import {
   cloudLoginUrl,
   cloudLogout,
   cloudStatus,
+  cloudSubscription,
   type CloudStatus,
+  type CloudSubscription,
 } from "@/lib/cloud";
 
 const LOGIN_TIMEOUT_MS = 180_000;
@@ -32,6 +34,7 @@ const POLL_MS = 1_500;
  */
 export function AccountButton({ variant = "row" }: { variant?: "row" | "icon" }) {
   const [status, setStatus] = useState<CloudStatus | null>(null);
+  const [sub, setSub] = useState<CloudSubscription | null>(null);
   const [loginPending, setLoginPending] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
@@ -132,18 +135,53 @@ export function AccountButton({ variant = "row" }: { variant?: "row" | "icon" })
 
   const user = status.user;
   const display = user?.name ?? user?.email ?? user?.id ?? "";
-  const initial = (display[0] ?? "?").toUpperCase();
+  const initial = display[0]?.toUpperCase();
+
+  // Avatar: cloud avatar_url when present, else the initial, else the
+  // Profile icon. `extra` layers variant-specific classes (e.g. shrink-0).
+  const avatarEl = (extra = "") =>
+    user?.avatar_url ? (
+      <img
+        src={user.avatar_url}
+        alt=""
+        referrerPolicy="no-referrer"
+        className={`w-6 h-6 rounded-full object-cover ${extra}`}
+      />
+    ) : initial ? (
+      <span
+        className={`w-6 h-6 rounded-full bg-primary-500 text-white text-xs font-semibold flex items-center justify-center ${extra}`}
+      >
+        {initial}
+      </span>
+    ) : (
+      <User className={`w-4 h-4 ${extra}`} />
+    );
 
   const toggleMenu = () => {
     if (menuOpen) {
       setMenuOpen(false);
       return;
     }
+    // Anchor below the button, clamped to the viewport: the titlebar button
+    // sits at the right edge, so an unclamped left would push the value
+    // column (plan/credits) off-screen.
+    const MENU_W = 224; // w-56
+    const MENU_H = 240; // estimated rendered height
     const r = btnRef.current?.getBoundingClientRect();
     if (r) {
-      setMenuPos({ top: r.bottom + 8, left: r.left });
+      const left = Math.max(8, Math.min(r.left, window.innerWidth - MENU_W - 8));
+      let top = r.bottom + 8;
+      if (top + MENU_H > window.innerHeight - 8) top = Math.max(8, r.top - MENU_H - 8);
+      setMenuPos({ top, left });
     }
     setMenuOpen(true);
+    // Fetch plan/balance lazily on first open; refresh each open while the
+    // menu is the only place it's shown.
+    void cloudSubscription()
+      .then(setSub)
+      .catch(() => {
+        /* transient — keep previous value */
+      });
   };
 
   const rowCls =
@@ -152,6 +190,68 @@ export function AccountButton({ variant = "row" }: { variant?: "row" | "icon" })
   const iconCls =
     "flex items-center justify-center w-7 h-7 rounded-md transition " +
     "text-secondary hover:bg-black/5 dark:hover:bg-white/5";
+
+  const signOut = () => {
+    setMenuOpen(false);
+    void cloudLogout();
+    setStatus({ ...status, logged_in: false, user: null });
+  };
+
+  // Shared account menu (identical for both variants): identity rows +
+  // plan/credits + sign out. Rendered through a portal so overflow-x-hidden
+  // containers never clip it.
+  const menuEl = (
+    <div
+      ref={menuRef}
+      className="fixed z-50 w-56 rounded-lg border border-subtle bg-card shadow-xl p-2 text-xs"
+      style={{ top: menuPos?.top ?? 0, left: menuPos?.left ?? 0 }}
+    >
+      <div className="px-2 py-1.5 flex items-center gap-2">
+        {user?.avatar_url ? (
+          <img
+            src={user.avatar_url}
+            alt=""
+            referrerPolicy="no-referrer"
+            className="w-8 h-8 rounded-full object-cover shrink-0"
+          />
+        ) : initial ? (
+          <span className="w-8 h-8 rounded-full bg-primary-500 text-white text-xs font-semibold flex items-center justify-center shrink-0">
+            {initial}
+          </span>
+        ) : null}
+        <div className="text-primary font-medium truncate">{display || "Signed in"}</div>
+      </div>
+      {user?.email && (
+        <div className="px-2 pb-1.5 text-secondary truncate">{user.email}</div>
+      )}
+      {user?.id && (
+        <div className="px-2 pb-1.5 text-secondary/70 truncate" title={user.id}>
+          {user.id}
+        </div>
+      )}
+      <div className="my-1 border-t border-subtle" />
+      <div className="px-2 py-1 flex items-center justify-between gap-2">
+        <span className="text-secondary">Plan</span>
+        <span className="text-primary truncate">
+          {sub ? `${sub.plan} plan` : "…"}
+        </span>
+      </div>
+      <div className="px-2 py-1 flex items-center justify-between gap-2">
+        <span className="text-secondary">Credits</span>
+        <span className="text-primary">
+          {sub ? sub.balance.toLocaleString() : "…"}
+        </span>
+      </div>
+      <div className="my-1 border-t border-subtle" />
+      <button
+        type="button"
+        onClick={signOut}
+        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-secondary hover:bg-black/5 dark:hover:bg-white/5 hover:text-primary transition"
+      >
+        <LogOut size={12} /> Sign out
+      </button>
+    </div>
+  );
 
   if (variant === "icon") {
     if (loginPending) {
@@ -183,43 +283,15 @@ export function AccountButton({ variant = "row" }: { variant?: "row" | "icon" })
         <button
           ref={btnRef}
           onClick={toggleMenu}
-          className={`${iconCls} rounded-full`}
+          className={iconCls}
           title={display || "Account"}
           aria-label="Account"
         >
-          <span className="w-6 h-6 rounded-full bg-primary-500 text-white text-xs font-semibold flex items-center justify-center">
-            {initial}
-          </span>
+          {avatarEl()}
         </button>
         {menuOpen &&
           menuPos &&
-          createPortal(
-            <div
-              ref={menuRef}
-              className="fixed z-50 w-56 rounded-lg border border-subtle bg-card shadow-xl p-2 text-xs"
-              style={{ top: menuPos.top, left: menuPos.left }}
-            >
-              <div className="px-2 py-1.5 text-primary font-medium truncate">
-                {display || "Signed in"}
-              </div>
-              {user?.email && (
-                <div className="px-2 pb-1.5 text-secondary truncate">{user.email}</div>
-              )}
-              <div className="my-1 border-t border-subtle" />
-              <button
-                type="button"
-                onClick={() => {
-                  setMenuOpen(false);
-                  void cloudLogout();
-                  setStatus({ ...status, logged_in: false, user: null });
-                }}
-                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-secondary hover:bg-black/5 dark:hover:bg-white/5 hover:text-primary transition"
-              >
-                <LogOut size={12} /> Sign out
-              </button>
-            </div>,
-            document.body,
-          )}
+          createPortal(menuEl, document.body)}
       </>
     );
   }
@@ -261,40 +333,12 @@ export function AccountButton({ variant = "row" }: { variant?: "row" | "icon" })
         title={display || "Account"}
         aria-label="Account"
       >
-        <span className="w-6 h-6 shrink-0 rounded-full bg-primary-500 text-white text-xs font-semibold flex items-center justify-center">
-          {initial}
-        </span>
+        {avatarEl("shrink-0")}
         <span className="truncate flex-1 text-left">{display || "Account"}</span>
       </button>
       {menuOpen &&
         menuPos &&
-        createPortal(
-          <div
-            ref={menuRef}
-            className="fixed z-50 w-56 rounded-lg border border-subtle bg-card shadow-xl p-2 text-xs"
-            style={{ top: menuPos.top, left: menuPos.left }}
-          >
-            <div className="px-2 py-1.5 text-primary font-medium truncate">
-              {display || "Signed in"}
-            </div>
-            {user?.email && (
-              <div className="px-2 pb-1.5 text-secondary truncate">{user.email}</div>
-            )}
-            <div className="my-1 border-t border-subtle" />
-            <button
-              type="button"
-              onClick={() => {
-                setMenuOpen(false);
-                void cloudLogout();
-                setStatus({ ...status, logged_in: false, user: null });
-              }}
-              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-secondary hover:bg-black/5 dark:hover:bg-white/5 hover:text-primary transition"
-            >
-              <LogOut size={12} /> Sign out
-            </button>
-          </div>,
-          document.body,
-        )}
+        createPortal(menuEl, document.body)}
     </>
   );
 }
