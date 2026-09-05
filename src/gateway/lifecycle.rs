@@ -1108,10 +1108,11 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
         .route("/favicon.ico", get(super::favicon_handler))
         // Cloud OAuth return URL (default `cloud.redirect_base`): serves the
         // SPA, whose App.tsx reads `#token=` here and persists it over WS
-        // (`cloud.token`).
+        // (`cloud.token`). Asset URLs are rewritten to absolute because the
+        // route is nested (see cloud_login_callback_html_handler).
         .route(
             "/cloud/login/callback",
-            get(super::web_terminal_html_handler),
+            get(super::cloud_login_callback_html_handler),
         )
         .route("/syscity.png", get(super::syscity_png_handler))
         .route("/manifest.webmanifest", get(super::manifest_handler))

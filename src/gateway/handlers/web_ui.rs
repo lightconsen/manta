@@ -4,17 +4,36 @@ use axum::{
     response::{Html, IntoResponse},
 };
 
-/// HTML handler for the web chat UI
-///
-/// Serves the built React app from embedded assets (or filesystem fallback).
-pub async fn web_terminal_html_handler() -> Html<String> {
-    let html = match crate::embed::get_asset_string("index.html") {
+/// The embedded SPA index.html with the version placeholder filled in.
+fn embedded_index_html() -> String {
+    match crate::embed::get_asset_string("index.html") {
         Some(html) => html,
         None => {
             "<h1>Syscity Chat UI</h1><p>Build not found. Run: cd web and pnpm build</p>".to_string()
         }
-    };
-    Html(html.replace("{VERSION}", crate::VERSION))
+    }
+    .replace("{VERSION}", crate::VERSION)
+}
+
+/// HTML handler for the web chat UI
+///
+/// Serves the built React app from embedded assets (or filesystem fallback).
+pub async fn web_terminal_html_handler() -> Html<String> {
+    Html(embedded_index_html())
+}
+
+/// HTML handler for the cloud OAuth return URL (`/cloud/login/callback`).
+///
+/// Same SPA as `/`, but with relative asset URLs rewritten to absolute: the
+/// vite build uses `base: './'`, so `./assets/*` only resolves at the site
+/// root — at this nested path the script/style tags would 404 and the SPA
+/// (which reads `#token=`) would never mount.
+pub async fn cloud_login_callback_html_handler() -> Html<String> {
+    Html(
+        embedded_index_html()
+            .replace("href=\"./", "href=\"/")
+            .replace("src=\"./", "src=\"/"),
+    )
 }
 
 /// Favicon handler — serves the syscity PNG favicon
@@ -87,6 +106,17 @@ mod tests {
             "serves html: {:.80}",
             html
         );
+    }
+
+    #[tokio::test]
+    async fn cloud_login_callback_rewrites_relative_assets() {
+        let (status, bytes) = body(cloud_login_callback_html_handler().await.into_response()).await;
+        assert_eq!(status, StatusCode::OK);
+        let html = String::from_utf8_lossy(&bytes);
+        // Relative asset refs (vite `base: './'`) must become absolute so the
+        // SPA mounts at this nested path.
+        assert!(!html.contains("href=\"./"), "relative href left: {:.200}", html);
+        assert!(!html.contains("src=\"./"), "relative src left: {:.200}", html);
     }
 
     #[tokio::test]
