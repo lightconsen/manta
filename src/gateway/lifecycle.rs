@@ -747,6 +747,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn build_router_serves_cloud_login_callback() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let state = state().await;
+        let app = build_router(state).await;
+
+        // The cloud OAuth return URL (default cloud.redirect_base) must serve
+        // the SPA so its App.tsx can read `#token=` and persist the session.
+        let req = Request::builder()
+            .uri("/cloud/login/callback")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let html = String::from_utf8_lossy(&body);
+        assert!(html.contains("<html") || html.contains("Syscity"));
+    }
+
+    #[tokio::test]
     async fn build_router_serves_web_ws_route() {
         use axum::body::Body;
         use axum::http::{Request, StatusCode};
@@ -1082,6 +1106,13 @@ pub(crate) async fn build_router(state: Arc<GatewayState>) -> Router {
     let frontend_router = Router::new()
         .route("/", get(super::web_terminal_html_handler))
         .route("/favicon.ico", get(super::favicon_handler))
+        // Cloud OAuth return URL (default `cloud.redirect_base`): serves the
+        // SPA, whose App.tsx reads `#token=` here and persists it over WS
+        // (`cloud.token`).
+        .route(
+            "/cloud/login/callback",
+            get(super::web_terminal_html_handler),
+        )
         .route("/syscity.png", get(super::syscity_png_handler))
         .route("/manifest.webmanifest", get(super::manifest_handler))
         .route("/registerSW.js", get(super::register_sw_handler))

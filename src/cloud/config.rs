@@ -53,9 +53,11 @@ fn default_redirect_base() -> String {
 }
 
 fn default_console_url() -> String {
-    // Assume the console SPA is served at the API host by default; dev setups
-    // override with SYSCITY_CLOUD_CONSOLE_URL (e.g. http://localhost:5173).
-    default_api_base()
+    // The console SPA (provider-chooser login page) is deployed at
+    // cloud.syscity.net — the API host (api.syscity.net) serves no HTML.
+    // Dev setups override with SYSCITY_CLOUD_CONSOLE_URL (e.g.
+    // http://localhost:5173).
+    "https://cloud.syscity.net".to_string()
 }
 
 impl Default for CloudConfig {
