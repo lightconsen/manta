@@ -1,5 +1,6 @@
 //! Cloud API client: OpenAI-compatible `/v1/*` + `/api/v1/*`, Bearer-authed.
 
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::cloud::config::CloudConfig;
@@ -11,6 +12,25 @@ pub struct CloudClient {
     http: reqwest::Client,
     api_base: String,
     token: String,
+}
+
+/// One document in a cloud KB backup (metadata only — bytes come via
+/// `kb_download_document`).
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+pub struct CloudKbDoc {
+    pub id: String,
+    pub filename: String,
+    #[serde(default)]
+    pub size: u64,
+    pub sha256: Option<String>,
+    #[serde(default)]
+    pub status: String,
+}
+
+/// Raw document bytes downloaded from a cloud KB backup.
+pub struct KbDownload {
+    pub bytes: Vec<u8>,
+    pub content_type: Option<String>,
 }
 
 impl CloudClient {
@@ -163,6 +183,68 @@ impl CloudClient {
         let url = format!("{}{}", self.api_base, path);
         let resp = self.auth(self.http.post(&url)).json(&body).send().await?;
         self.parse_response(resp, path).await
+    }
+
+    // --- KB backup/sync document endpoints (local KB → cloud storage) ---
+
+    /// GET /api/v1/kb/:id/documents — the KB's stored documents.
+    pub async fn kb_list_documents(&self, kb_id: &str) -> Result<Vec<CloudKbDoc>> {
+        let path = format!("/api/v1/kb/{kb_id}/documents");
+        let value = self.get_json(&path).await?;
+        let docs = value
+            .get("documents")
+            .and_then(|d| serde_json::from_value::<Vec<CloudKbDoc>>(d.clone()).ok())
+            .unwrap_or_default();
+        Ok(docs)
+    }
+
+    /// GET /api/v1/kb/:id/documents/:docId — download the stored bytes.
+    ///
+    /// Handled directly (not via `parse_response`): the payload is raw bytes,
+    /// not JSON.
+    pub async fn kb_download_document(&self, kb_id: &str, doc_id: &str) -> Result<KbDownload> {
+        let url = format!("{}/api/v1/kb/{kb_id}/documents/{doc_id}", self.api_base);
+        let resp = self.auth(self.http.get(&url)).send().await?;
+        let status = resp.status();
+        if !status.is_success() {
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                let _ = crate::cloud::session::clear_token().await;
+            }
+            let text = resp.text().await.unwrap_or_default();
+            return Err(SyscityError::Internal(format!(
+                "cloud GET /api/v1/kb/{kb_id}/documents/{doc_id} status {status}: {text}"
+            )));
+        }
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        let bytes = resp.bytes().await?;
+        Ok(KbDownload {
+            bytes: bytes.to_vec(),
+            content_type,
+        })
+    }
+
+    /// DELETE /api/v1/kb/:id/documents/:docId — delete one stored document.
+    ///
+    /// Handled directly (not via `parse_response`): the cloud answers `204`
+    /// with an empty body, which would fail JSON parsing.
+    pub async fn kb_delete_document(&self, kb_id: &str, doc_id: &str) -> Result<()> {
+        let url = format!("{}/api/v1/kb/{kb_id}/documents/{doc_id}", self.api_base);
+        let resp = self.auth(self.http.delete(&url)).send().await?;
+        let status = resp.status();
+        if !status.is_success() {
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                let _ = crate::cloud::session::clear_token().await;
+            }
+            let text = resp.text().await.unwrap_or_default();
+            return Err(SyscityError::Internal(format!(
+                "cloud DELETE /api/v1/kb/{kb_id}/documents/{doc_id} status {status}: {text}"
+            )));
+        }
+        Ok(())
     }
 
     /// Read a response: error on non-success status, else parse JSON.

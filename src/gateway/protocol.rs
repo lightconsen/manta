@@ -321,6 +321,7 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         | "kb.collections"
         | "kb.docs"
         | "cloud.kb.list"
+        | "cloud.kb.docs"
         | "cloud.kb.query" => Some(SCOPE_READ),
         "sessions.create"
         | "sessions.delete"
@@ -407,7 +408,9 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         | "kb.delete_doc"
         | "cloud.kb.create"
         | "cloud.kb.delete"
-        | "cloud.kb.upload" => Some(SCOPE_WRITE),
+        | "cloud.kb.upload"
+        | "cloud.kb.push"
+        | "cloud.kb.pull" => Some(SCOPE_WRITE),
         "acp.spawn"
         | "acp.terminate"
         | "acp.message"

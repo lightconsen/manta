@@ -20,8 +20,8 @@ use sqlx::Sqlite;
 use tracing::{info, warn};
 
 pub use loader::{
-    detect_mime, load_dir, load_file, load_kb_config, load_source, KnowledgeDocument,
-    KnowledgeSource, SourceType,
+    compute_checksum, detect_mime, load_dir, load_file, load_kb_config, load_source,
+    KnowledgeDocument, KnowledgeSource, SourceType,
 };
 pub use tracker::{
     delete_record as delete_tracker_record, get_collection_stats, get_record as get_tracker_record,

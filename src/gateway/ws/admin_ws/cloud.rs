@@ -152,7 +152,7 @@ pub(crate) async fn handle_cloud_logout(req: &WsRequest, _state: &Arc<GatewaySta
 
 /// Shared gate: enabled + token, else `cloud_unavailable`.
 #[cfg(feature = "cloud")]
-async fn cloud_kb_client(
+pub(crate) async fn cloud_kb_client(
     req: &WsRequest,
     state: &Arc<GatewayState>,
 ) -> Result<crate::cloud::client::CloudClient, WsResponse> {
