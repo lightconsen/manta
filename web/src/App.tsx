@@ -84,7 +84,12 @@ function ChatAppInner({ transport }: { transport: SyscityWebSocketTransport }) {
 
     // Retry loading history when connection is established
     const unsubStatus = transport.onStatusChange((status) => {
-      if (status === "connected" && transport.getMessages().length === 0) {
+      if (
+        status === "connected" &&
+        transport.getMessages().length === 0 &&
+        // Welcome page armed: don't pull the previous session's history into it
+        !transport.isPendingNewSession()
+      ) {
         doLoad();
       }
     });
@@ -557,17 +562,11 @@ function ChatApp() {
   const handleNewSession = useCallback(() => {
     setSettingsOpen(false);
     setMarketplaceOpen(false);
-    // Don't create a new session if the current one already has no messages
-    if (transport.getMessages().length === 0) {
-      transport.setMessages([]);
-      setSessionKey((k) => k + 1);
-      return;
-    }
-    transport.createSession();
-    transport.setMessages([]);
-    setSessionKey((k) => k + 1);
-    refreshSessions();
-  }, [transport, refreshSessions]);
+    // New Session is a page toggle: show the welcome state without creating
+    // anything. The real session is created lazily on the first message sent
+    // from the welcome page (transport.run() consumes the pending flag).
+    transport.armNewSession();
+  }, [transport]);
 
   const handleCreateSessionWithAgent = useCallback(
     async (agentId: string) => {

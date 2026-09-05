@@ -77,6 +77,9 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
   >();
   private currentStatus: NetworkStatus = "connecting";
   private messages: ChatMessage[] = [];
+  /** New Session welcome page armed: the next send creates the real session
+   *  first (deferred creation — no session exists until the first message). */
+  private pendingNewSession = false;
   private messagesListeners: Set<MessagesCallback> = new Set();
   private sessionListeners: Set<SessionCallback> = new Set();
   private runListeners: Set<(running: boolean) => void> = new Set();
@@ -408,7 +411,20 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
     return id;
   }
 
+  /** True while the New Session welcome page is showing (no session yet). */
+  isPendingNewSession(): boolean {
+    return this.pendingNewSession;
+  }
+
+  /** Arm the welcome page: clear the in-memory view without touching any
+   *  session. The real session is created on the first send (see run()). */
+  armNewSession(): void {
+    this.pendingNewSession = true;
+    this.setMessages([]);
+  }
+
   createSession(agentId?: string): string {
+    this.pendingNewSession = false;
     // Reuse an existing empty session if one exists
     const sessions = this.getLocalSessions();
     for (const sid of sessions) {
@@ -641,6 +657,7 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
   }
 
   switchSession(sessionId: string): void {
+    this.pendingNewSession = false;
     this.sessionId = sessionId;
     localStorage.setItem("syscity_session", this.sessionId);
     if (!this.subscribedSessions.includes(sessionId)) {
@@ -1202,6 +1219,16 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
       .map((c) => (c.type === "text" ? c.text : ""))
       .join("");
 
+    // Deferred session creation: the New Session welcome page arms this flag;
+    // create the real session now, before anything is persisted or sent —
+    // saveMessage() below writes to this.sessionId's history key, and the
+    // gateway dispatches frames sequentially so sessions.create lands before
+    // chat.send.
+    if (this.pendingNewSession) {
+      this.pendingNewSession = false;
+      this.createSession();
+    }
+
     const startTime = Date.now();
 
     const userMsg: ChatMessage = {
@@ -1222,23 +1249,9 @@ export class SyscityWebSocketTransport implements ChatModelAdapter {
         // Local commands: handled client-side without RPC
         if (LOCAL_COMMANDS.has(parsed.command)) {
           if (parsed.command === "new") {
-            this.createSession();
-            this.setMessages([]);
-            const cmdDuration = Date.now() - startTime;
-            const assistantMsg: ChatMessage = {
-              id: `a_${Date.now()}`,
-              role: "assistant",
-              content: "New session started.",
-              durationMs: cmdDuration,
-              toolCount: 0,
-            };
-            this.saveMessage(assistantMsg);
-            this.messages = [...this.messages, assistantMsg];
-            this.messagesListeners.forEach((cb) => cb(this.messages));
-            yield {
-              content: [makeTextPart("New session started.")],
-              status: { type: "complete", reason: "stop" },
-            };
+            // Same deferred flow as the sidebar New Session button: show the
+            // welcome page; the next send creates the real session.
+            this.armNewSession();
             return;
           }
           if (parsed.command === "clear") {

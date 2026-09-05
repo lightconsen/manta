@@ -12,6 +12,7 @@ import { getCommandCompletions, type CommandDef } from "@/slash-commands";
 import { useChatStore } from "@/stores/chatStore";
 import { Mic, Paperclip, Square, Send, ChevronDown } from "lucide-react";
 import { MessageSkeleton } from "@/components/ui/Skeleton";
+import { NewSessionWelcome } from "./NewSessionWelcome";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { useTextToSpeech } from "@/hooks/useTextToSpeech";
 import { resolveSpeechLang, useSpeechStore } from "@/stores/speechStore";
@@ -299,142 +300,143 @@ export function ChatContent({ transport }: ChatContentProps) {
     return "text-secondary hover:text-primary-600 dark:hover:text-primary-400 hover:bg-black/5 dark:hover:bg-white/5";
   };
 
+  const isEmpty = messages.length === 0;
+
+  // The composer is the chat area's own component; on the New Session welcome
+  // page it renders centered below the greeting (same instance, one branch).
+  const composerEl = (
+    <ComposerPrimitive.Root className="max-w-[var(--message-list-max-width)] mx-auto w-full">
+      <div className="relative flex flex-col rounded-2xl bg-card shadow-sm focus-within:ring-2 focus-within:ring-primary-500/20 transition">
+        {/* Command palette */}
+        {paletteOpen && (
+          <CommandPalette
+            commands={paletteCommands}
+            selectedIndex={paletteIndex}
+            onSelect={handleSelectCommand}
+          />
+        )}
+
+        {/* Multiline input */}
+        <ComposerPrimitive.Input
+          ref={inputRef}
+          onInput={handleInput}
+          onKeyDown={handleKeyDown}
+          className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm text-primary placeholder:text-secondary/60 focus:outline-none min-h-[60px] max-h-[200px]"
+          placeholder="Message Syscity..."
+          rows={1}
+          aria-label="Message input"
+        />
+
+        {/* Bottom toolbar */}
+        <div className="flex items-center justify-between px-2 pb-2 pt-1">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              title={micTitle}
+              aria-label={micTitle}
+              className={`p-2 rounded-lg transition ${micClass()}`}
+              onClick={toggleVoiceMode}
+              disabled={!voiceSupported}
+            >
+              <Mic className="w-5 h-5" />
+            </button>
+            <button
+              type="button"
+              title="Attach an image or file"
+              aria-label="Attach an image or file"
+              className="p-2 rounded-lg text-secondary hover:text-primary-600 dark:hover:text-primary-400 hover:bg-black/5 dark:hover:bg-white/5 transition"
+              onClick={() => alert("Attachments coming soon")}
+            >
+              <Paperclip className="w-5 h-5" />
+            </button>
+          </div>
+          <div className="flex items-center gap-1">
+            <ModelSelector transport={transport} />
+            {isRunning ? (
+              <button
+                type="button"
+                onClick={() => transport.abort(transport.getSessionId())}
+                title="Stop generating"
+                aria-label="Stop generating"
+                className="shrink-0 p-2 rounded-lg bg-red-500 hover:bg-red-600 text-white transition shadow-sm"
+              >
+                <Square className="w-4 h-4 fill-current" />
+              </button>
+            ) : (
+              <ComposerPrimitive.Send className="shrink-0 p-2 rounded-lg bg-gradient-to-r from-primary-500 to-primary-700 hover:from-primary-600 hover:to-primary-800 disabled:opacity-40 text-white transition shadow-sm">
+                <Send className="w-4 h-4" />
+              </ComposerPrimitive.Send>
+            )}
+          </div>
+        </div>
+      </div>
+    </ComposerPrimitive.Root>
+  );
+
   return (
     <ThreadPrimitive.Root className="flex-1 flex flex-col overflow-hidden relative">
-      {/* Scrollable message area */}
-      <div
-        ref={scrollRef}
-        className="flex-1 overflow-y-auto relative"
-        role="log"
-        aria-live="polite"
-      >
-        {messages.length === 0 && (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-center">
-              <img
-                src="/syscity.png"
-                alt="Syscity"
-                className="w-16 h-16 mx-auto mb-4"
-                draggable={false}
-              />
-              <p className="text-secondary text-sm">
-                Type your message or press / for commands
-              </p>
-            </div>
-          </div>
-        )}
-
-        {messages.length > 0 && (
-          <div style={{ height: `${totalHeight}px`, position: "relative" }}>
-            {isLoadingHistory && (
-              <div className="py-3 text-center text-secondary text-sm">
-                Loading older messages…
-              </div>
-            )}
-            {virtualItems.map((virtualItem) => (
-              <div
-                key={virtualItem.key}
-                ref={virtualizer.measureElement}
-                data-index={virtualItem.index}
-                style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  width: "100%",
-                  transform: `translateY(${virtualItem.start}px)`,
-                }}
-              >
-                <MessageBubble
-                  message={messages[virtualItem.index]}
-                  transport={transport}
-                  onEdit={(id, text) => transport.editUserMessage(id, text)}
-                />
-              </div>
-            ))}
-          </div>
-        )}
-        {isRunning && <MessageSkeleton />}
-      </div>
-
-      {showScrollButton && (
-        <button
-          type="button"
-          onClick={scrollToBottom}
-          aria-label="Scroll to bottom"
-          className="absolute bottom-28 left-1/2 -translate-x-1/2 p-2 rounded-full bg-primary-500 text-white shadow-lg hover:bg-primary-600 transition-opacity animate-bounce z-10"
-        >
-          <ChevronDown className="w-5 h-5" />
-        </button>
-      )}
-
-      <div className="bg-page px-4 py-3 shrink-0 relative">
-        <ComposerPrimitive.Root className="max-w-[var(--message-list-max-width)] mx-auto w-full">
-          <div className="relative flex flex-col rounded-2xl bg-card shadow-sm focus-within:ring-2 focus-within:ring-primary-500/20 transition">
-            {/* Command palette */}
-            {paletteOpen && (
-              <CommandPalette
-                commands={paletteCommands}
-                selectedIndex={paletteIndex}
-                onSelect={handleSelectCommand}
-              />
-            )}
-
-            {/* Multiline input */}
-            <ComposerPrimitive.Input
-              ref={inputRef}
-              onInput={handleInput}
-              onKeyDown={handleKeyDown}
-              className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm text-primary placeholder:text-secondary/60 focus:outline-none min-h-[60px] max-h-[200px]"
-              placeholder="Message Syscity..."
-              rows={1}
-              aria-label="Message input"
-            />
-
-            {/* Bottom toolbar */}
-            <div className="flex items-center justify-between px-2 pb-2 pt-1">
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  title={micTitle}
-                  aria-label={micTitle}
-                  className={`p-2 rounded-lg transition ${micClass()}`}
-                  onClick={toggleVoiceMode}
-                  disabled={!voiceSupported}
-                >
-                  <Mic className="w-5 h-5" />
-                </button>
-                <button
-                  type="button"
-                  title="Attach an image or file"
-                  aria-label="Attach an image or file"
-                  className="p-2 rounded-lg text-secondary hover:text-primary-600 dark:hover:text-primary-400 hover:bg-black/5 dark:hover:bg-white/5 transition"
-                  onClick={() => alert("Attachments coming soon")}
-                >
-                  <Paperclip className="w-5 h-5" />
-                </button>
-              </div>
-              <div className="flex items-center gap-1">
-                <ModelSelector transport={transport} />
-                {isRunning ? (
-                  <button
-                    type="button"
-                    onClick={() => transport.abort(transport.getSessionId())}
-                    title="Stop generating"
-                    aria-label="Stop generating"
-                    className="shrink-0 p-2 rounded-lg bg-red-500 hover:bg-red-600 text-white transition shadow-sm"
-                  >
-                    <Square className="w-4 h-4 fill-current" />
-                  </button>
-                ) : (
-                  <ComposerPrimitive.Send className="shrink-0 p-2 rounded-lg bg-gradient-to-r from-primary-500 to-primary-700 hover:from-primary-600 hover:to-primary-800 disabled:opacity-40 text-white transition shadow-sm">
-                    <Send className="w-4 h-4" />
-                  </ComposerPrimitive.Send>
+      {isEmpty ? (
+        /* New Session welcome page: greeting centered, composer right below.
+           The first message sent here lazily creates the real session. */
+        <div className="flex-1 flex flex-col items-center justify-center px-4 overflow-y-auto">
+          <NewSessionWelcome />
+          <div className="w-full mt-6">{composerEl}</div>
+        </div>
+      ) : (
+        <>
+          {/* Scrollable message area */}
+          <div
+            ref={scrollRef}
+            className="flex-1 overflow-y-auto relative"
+            role="log"
+            aria-live="polite"
+          >
+            {messages.length > 0 && (
+              <div style={{ height: `${totalHeight}px`, position: "relative" }}>
+                {isLoadingHistory && (
+                  <div className="py-3 text-center text-secondary text-sm">
+                    Loading older messages…
+                  </div>
                 )}
+                {virtualItems.map((virtualItem) => (
+                  <div
+                    key={virtualItem.key}
+                    ref={virtualizer.measureElement}
+                    data-index={virtualItem.index}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      transform: `translateY(${virtualItem.start}px)`,
+                    }}
+                  >
+                    <MessageBubble
+                      message={messages[virtualItem.index]}
+                      transport={transport}
+                      onEdit={(id, text) => transport.editUserMessage(id, text)}
+                    />
+                  </div>
+                ))}
               </div>
-            </div>
+            )}
+            {isRunning && <MessageSkeleton />}
           </div>
-        </ComposerPrimitive.Root>
-      </div>
+
+          {showScrollButton && (
+            <button
+              type="button"
+              onClick={scrollToBottom}
+              aria-label="Scroll to bottom"
+              className="absolute bottom-28 left-1/2 -translate-x-1/2 p-2 rounded-full bg-primary-500 text-white shadow-lg hover:bg-primary-600 transition-opacity animate-bounce z-10"
+            >
+              <ChevronDown className="w-5 h-5" />
+            </button>
+          )}
+
+          <div className="bg-page px-4 py-3 shrink-0 relative">{composerEl}</div>
+        </>
+      )}
     </ThreadPrimitive.Root>
   );
 }
