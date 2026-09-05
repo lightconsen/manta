@@ -1,7 +1,7 @@
 import {
   Menu,
   Settings,
-  FolderOpen,
+  PanelRight,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
@@ -178,7 +178,8 @@ export function Titlebar({
             }
             onClick={() => setWorkspacePanelOpen(!workspacePanelOpen)}
           >
-            <FolderOpen className="w-4 h-4" />
+            {/* Hermes-desktop-style "show right sidebar" glyph */}
+            <PanelRight className="w-4 h-4" />
           </button>
         )}
         <button onClick={onOpenSettings} className={iconBtnCls} title="Settings" aria-label="Settings">
