@@ -142,6 +142,8 @@ function ChatApp() {
   const [settingsTab, setSettingsTab] = useState("general");
   // Full-screen marketplace view (replaces the chat area).
   const [marketplaceOpen, setMarketplaceOpen] = useState(false);
+  // Pre-filter for the marketplace view (connector/skill/expert; null = all).
+  const [marketplaceType, setMarketplaceType] = useState<string | null>(null);
   // null = not yet checked / not connected; true = no LLM configured (Welcome).
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
   // null = not yet checked; true = identity wizard completed.
@@ -154,8 +156,10 @@ function ChatApp() {
     setSettingsOpen(true);
   };
 
-  /** Open the full-screen marketplace view (replaces the chat area). */
-  const openMarketplace = () => {
+  /** Open the full-screen marketplace view (replaces the chat area),
+   * optionally pre-filtered to one catalog type (connector/skill/expert). */
+  const openMarketplace = (type?: string) => {
+    setMarketplaceType(type ?? null);
     setSettingsOpen(false);
     setMarketplaceOpen(true);
   };
@@ -805,8 +809,8 @@ function ChatApp() {
                   handleCreateSessionWithAgent(id);
                   setMobileNavOpen(false);
                 }}
-                onOpenMarketplace={() => {
-                  openMarketplace();
+                onOpenMarketplace={(type) => {
+                  openMarketplace(type);
                   setMobileNavOpen(false);
                 }}
                 onRenameSession={handleRenameSession}
@@ -824,6 +828,7 @@ function ChatApp() {
         {!settingsOpen && !marketplaceOpen && <CloudEnabledBanner />}
         {marketplaceOpen ? (
           <MarketplaceView
+            initialType={marketplaceType}
             onClose={() => setMarketplaceOpen(false)}
             onSummonExpert={handleCreateSessionWithAgent}
           />

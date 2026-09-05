@@ -8,7 +8,9 @@ import {
   Pin,
   PinOff,
   Loader2,
-  Store,
+  Plug,
+  Package,
+  Brain,
 } from "lucide-react";
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 
@@ -42,8 +44,8 @@ interface SidebarProps {
   onNewSession: () => void;
   agents: AgentItem[];
   onCreateSessionWithAgent: (agentId: string) => void;
-  /** Open the marketplace directly (Settings → Marketplace tab). */
-  onOpenMarketplace: () => void;
+  /** Open the marketplace, optionally pre-filtered (connector/skill/expert). */
+  onOpenMarketplace: (type?: string) => void;
   onRenameSession?: (id: string, name: string) => void | Promise<void>;
   onDeleteSession?: (id: string) => void | Promise<void>;
   onPinSession?: (id: string, pinned: boolean) => void | Promise<void>;
@@ -239,6 +241,28 @@ export function Sidebar({
             <Plus className="w-4 h-4 shrink-0" />
             {!collapsed && <span>New Session</span>}
           </button>
+          {!collapsed && (
+            <div className="px-1 pb-1 shrink-0">
+              {(
+                [
+                  ["connector", <Plug className="w-4 h-4 shrink-0" />, "Connectors"],
+                  ["skill", <Package className="w-4 h-4 shrink-0" />, "Skills"],
+                  ["expert", <Brain className="w-4 h-4 shrink-0" />, "Experts"],
+                ] as const
+              ).map(([type, icon, label]) => (
+                <button
+                  key={type}
+                  onClick={() => onOpenMarketplace(type)}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
+                  title={`Browse ${label.toLowerCase()}`}
+                  aria-label={`Browse ${label}`}
+                >
+                  {icon}
+                  <span>{label}</span>
+                </button>
+              ))}
+            </div>
+          )}
           {!collapsed &&
             groups.map((group) => (
               <div key={group.label} className="mb-2">
@@ -346,20 +370,6 @@ export function Sidebar({
         </div>
       </div>
 
-      {/* Marketplace entry — a prominent shortcut at the bottom. */}
-      {!collapsed && (
-        <div className="px-1 pb-1 shrink-0">
-          <button
-            onClick={onOpenMarketplace}
-            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
-            title="Marketplace"
-            aria-label="Marketplace"
-          >
-            <Store className="w-4 h-4 shrink-0" />
-            <span>Marketplace</span>
-          </button>
-        </div>
-      )}
     </aside>
   );
 }

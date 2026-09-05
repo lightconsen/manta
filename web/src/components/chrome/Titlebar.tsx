@@ -165,10 +165,10 @@ export function Titlebar({
 
       {/* Right cluster (network dot + theme toggle live in the Statusbar) */}
       <div className="flex items-center gap-1 shrink-0">
+        <AccountButton variant="icon" />
         <button onClick={onOpenSettings} className={iconBtnCls} title="Settings" aria-label="Settings">
           <Settings className="w-4 h-4" />
         </button>
-        <AccountButton variant="icon" />
         {!isMobile && (
           <button
             type="button"

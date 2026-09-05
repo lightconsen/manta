@@ -3,12 +3,16 @@ import { MarketplaceSettings } from "@/components/settings/MarketplaceSettings";
 
 /** Full-screen marketplace view that replaces the chat area when opened from
  * the sidebar. Reuses the same MarketplaceSettings content as the settings
- * tab, but as its own page (own header + back to chat). `onSummonExpert` is
- * forwarded so summoning an expert opens a new session with its agent. */
+ * tab, but as its own page (own header + back to chat). `initialType` pre-
+ * filters the catalog (connector/skill/expert) so sidebar entries can open
+ * one section directly. `onSummonExpert` is forwarded so summoning an expert
+ * opens a new session with its agent. */
 export function MarketplaceView({
+  initialType,
   onClose,
   onSummonExpert,
 }: {
+  initialType?: string | null;
   onClose: () => void;
   onSummonExpert?: (agentId: string) => void;
 }) {
@@ -26,7 +30,7 @@ export function MarketplaceView({
         </button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 md:px-5 py-4">
-        <MarketplaceSettings onSummonExpert={onSummonExpert} />
+        <MarketplaceSettings initialType={initialType ?? undefined} onSummonExpert={onSummonExpert} />
       </div>
     </div>
   );

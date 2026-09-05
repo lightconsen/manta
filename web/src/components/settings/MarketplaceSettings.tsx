@@ -51,15 +51,18 @@ const TYPE_ORDER = ["connector", "skill", "expert"];
  * needed, then opens a new session bound to the expert agent via
  * `onSummonExpert(agentId)`. */
 export function MarketplaceSettings({
+  initialType,
   onSummonExpert,
 }: {
+  /** Pre-select the type filter (connector/skill/expert). */
+  initialType?: string;
   onSummonExpert?: (agentId: string) => void;
 }) {
   const [data, setData] = useState<CatalogResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [typeFilter, setTypeFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState(initialType ?? "all");
 
   const load = useCallback(async () => {
     setLoading(true);
