@@ -1,4 +1,11 @@
-import { Menu, Sun, Moon, Settings } from "lucide-react";
+import {
+  Menu,
+  Sun,
+  Moon,
+  Settings,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
 import { useChatStore } from "@/stores/chatStore";
 import { useThemeStore } from "@/stores/themeStore";
 import { usePlatform } from "@/hooks/usePlatform";
@@ -11,6 +18,8 @@ interface TitlebarProps {
   showHamburger: boolean;
   /** Mirror the sidebar width so the left cluster starts at its right edge. */
   sidebarCollapsed: boolean;
+  /** Collapse/expand the sidebar (toggle lives in the leading zone). */
+  onToggleSidebar: () => void;
   onOpenMobileNav: () => void;
   onOpenSettings: () => void;
 }
@@ -24,11 +33,14 @@ const iconBtnCls =
  *   [sidebar-width zone] [agent identity] ...... center drag region ...... [right cluster]
  *
  * - The leading zone mirrors the sidebar's width (w-64 expanded / w-16
- *   collapsed, same 300ms transition), so the agent identity strip's left
- *   edge tracks the sidebar's right edge on md+ — the titlebar "follows"
- *   the pane split below it. On macOS the native traffic lights overlay
- *   this empty zone (titleBarStyle Overlay), so it doubles as the light
- *   clearance; the root therefore carries no left padding.
+ *   collapsed, same 300ms transition) and hosts the sidebar's former
+ *   header on md+: logo + "Syscity" + the collapse toggle. The agent
+ *   identity strip's left edge therefore tracks the sidebar's right edge
+ *   — the titlebar "follows" the pane split below it. On macOS the
+ *   native traffic lights overlay this zone (titleBarStyle Overlay);
+ *   expanded content clears them with pl-[72px], and when collapsed the
+ *   zone is fully covered by the lights, so the toggle moves just after
+ *   it (the zone itself stays empty).
  * - tauri-macos: the root carries data-tauri-drag-region="deep" so the whole
  *   bar drags the window (interactive elements are excluded by Tauri's drag
  *   script) and double-click toggles zoom.
@@ -45,6 +57,7 @@ export function Titlebar({
   onOpenMobileNav,
   onOpenSettings,
   sidebarCollapsed,
+  onToggleSidebar,
 }: TitlebarProps) {
   const platform = usePlatform();
   const networkStatus = useChatStore((s) => s.networkStatus);
@@ -53,6 +66,21 @@ export function Titlebar({
 
   const isMac = platform === "tauri-macos";
   const showSafeAreaTop = platform === "tauri-mobile" || (isMobile && !isMac);
+
+  const collapseBtn = (
+    <button
+      onClick={onToggleSidebar}
+      className="p-1 rounded-md hover:bg-black/5 dark:hover:bg-white/5 text-secondary transition shrink-0"
+      title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+      aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+    >
+      {sidebarCollapsed ? (
+        <ChevronRight className="w-4 h-4" />
+      ) : (
+        <ChevronLeft className="w-4 h-4" />
+      )}
+    </button>
+  );
 
   return (
     <div
@@ -75,13 +103,34 @@ export function Titlebar({
         </button>
       )}
 
-      {/* Sidebar-width mirror zone: keeps the identity strip flush with the
-          sidebar's right edge; hosts the macOS traffic lights. */}
+      {/* Sidebar-width mirror zone: hosts the sidebar header (logo + name +
+          collapse toggle) on md+ and keeps the identity strip flush with the
+          sidebar's right edge; the macOS traffic lights overlay it. When
+          collapsed on macOS the lights fill the whole w-16 zone, so the
+          toggle renders just after it instead. */}
       <div
-        className={`hidden md:block shrink-0 h-full transition-all duration-300 ${
+        className={`hidden md:flex shrink-0 h-full items-center transition-all duration-300 ${
           sidebarCollapsed ? "w-16" : "w-64"
-        }`}
-      />
+        } ${sidebarCollapsed ? "justify-center" : isMac ? "pl-[72px]" : "pl-3"}`}
+      >
+        {!sidebarCollapsed && (
+          <>
+            <img
+              src="/syscity.png"
+              alt="Syscity"
+              className="w-6 h-6 shrink-0"
+              draggable={false}
+            />
+            <span className="text-sm font-semibold text-primary whitespace-nowrap">
+              Syscity
+            </span>
+            <div className="flex-1" />
+            {collapseBtn}
+          </>
+        )}
+        {sidebarCollapsed && !isMac && collapseBtn}
+      </div>
+      {sidebarCollapsed && isMac && collapseBtn}
 
       {/* Left cluster — starts exactly at the sidebar's right edge */}
       <div className="flex items-center gap-2 min-w-0">

@@ -744,6 +744,7 @@ function ChatApp() {
         isMobile={isMobile}
         showHamburger={isMobile && !mobileNavOpen}
         sidebarCollapsed={sidebarCollapsed}
+        onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
         onOpenMobileNav={() => setMobileNavOpen(true)}
         onOpenSettings={() => openSettings("general")}
       />

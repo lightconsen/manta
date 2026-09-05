@@ -176,8 +176,9 @@ export function Sidebar({
         collapsed ? "w-16" : "w-64"
       }`}
     >
-      {/* Top: Logo + Name + Collapse */}
-      <div className="h-14 flex items-center justify-between px-3 shrink-0">
+      {/* Top: Logo + Name + Collapse — mobile drawer only; on desktop the
+          header lives in the Titlebar's sidebar-width zone. */}
+      <div className="h-14 md:hidden flex items-center justify-between px-3 shrink-0">
         <div className="flex items-center gap-2 overflow-hidden">
           <img
             src="/syscity.png"
