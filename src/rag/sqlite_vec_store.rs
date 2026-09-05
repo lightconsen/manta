@@ -367,6 +367,41 @@ impl VectorStore for SqliteVecStore {
         Ok(result.rows_affected() as usize)
     }
 
+    async fn delete_by_source_in_collection(
+        &self,
+        collection: &str,
+        source_id: &str,
+    ) -> crate::Result<usize> {
+        // Delete the chunks first (the membership subquery is still intact in
+        // that same statement), then clean up the now-orphaned membership rows.
+        let result = sqlx::query(
+            "DELETE FROM vec_chunks WHERE source_id = ?1 AND id IN \
+             (SELECT chunk_id FROM vec_chunk_collections WHERE collection = ?2)",
+        )
+        .bind(source_id)
+        .bind(collection)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| crate::error::SyscityError::Storage {
+            context: "Failed to delete by source in collection".to_string(),
+            details: e.to_string(),
+        })?;
+
+        sqlx::query(
+            "DELETE FROM vec_chunk_collections WHERE collection = ?1 AND chunk_id NOT IN \
+             (SELECT id FROM vec_chunks)",
+        )
+        .bind(collection)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| crate::error::SyscityError::Storage {
+            context: "Failed to clean chunk collections after scoped source delete".to_string(),
+            details: e.to_string(),
+        })?;
+
+        Ok(result.rows_affected() as usize)
+    }
+
     async fn delete_by_collection(&self, collection: &str) -> crate::Result<usize> {
         // Delete from vec_chunks for chunks belonging to this collection.
         let result = sqlx::query(

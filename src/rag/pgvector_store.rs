@@ -241,6 +241,27 @@ impl VectorStore for PgVectorStore {
         Ok(result.rows_affected() as usize)
     }
 
+    async fn delete_by_source_in_collection(
+        &self,
+        collection: &str,
+        source_id: &str,
+    ) -> crate::Result<usize> {
+        let sql = format!(
+            "DELETE FROM {} WHERE collection = $1 AND source_id = $2",
+            Self::quote_identifier(&self.table)
+        );
+        let result = sqlx::query(&sql)
+            .bind(collection)
+            .bind(source_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| crate::error::SyscityError::Storage {
+                context: "Failed to delete by source in collection".to_string(),
+                details: e.to_string(),
+            })?;
+        Ok(result.rows_affected() as usize)
+    }
+
     async fn delete_by_collection(&self, collection: &str) -> crate::Result<usize> {
         let sql =
             format!("DELETE FROM {} WHERE collection = $1", Self::quote_identifier(&self.table));

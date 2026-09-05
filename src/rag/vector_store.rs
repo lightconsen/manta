@@ -38,6 +38,18 @@ pub trait VectorStore: Send + Sync {
     /// Delete chunks by source ID
     async fn delete_by_source(&self, source_id: &str) -> crate::Result<usize>;
 
+    /// Delete chunks belonging to `source_id` **within a single collection**.
+    ///
+    /// Unlike [`VectorStore::delete_by_source`] (which is store-wide), this
+    /// only removes vectors tagged with `collection`. The same document stem
+    /// can be ingested into several per-agent collections (`kb-{agent_id}`);
+    /// deleting it in one must not touch the others.
+    async fn delete_by_source_in_collection(
+        &self,
+        collection: &str,
+        source_id: &str,
+    ) -> crate::Result<usize>;
+
     /// Delete all chunks in a collection.
     async fn delete_by_collection(&self, collection: &str) -> crate::Result<usize>;
 
@@ -165,6 +177,30 @@ impl VectorStore for MemoryVectorStore {
             chunks.remove(id);
         }
         // Clean up the FIFO order queue to prevent orphaned entries from accumulating.
+        if !to_remove.is_empty() {
+            let mut order = self.order.write().await;
+            order.retain(|id| !to_remove.contains(id));
+        }
+
+        Ok(count)
+    }
+
+    async fn delete_by_source_in_collection(
+        &self,
+        collection: &str,
+        source_id: &str,
+    ) -> crate::Result<usize> {
+        let mut chunks = self.chunks.write().await;
+        let to_remove: Vec<String> = chunks
+            .values()
+            .filter(|c| c.source_id == source_id && c.collection.as_deref() == Some(collection))
+            .map(|c| c.id.clone())
+            .collect();
+
+        let count = to_remove.len();
+        for id in &to_remove {
+            chunks.remove(id);
+        }
         if !to_remove.is_empty() {
             let mut order = self.order.write().await;
             order.retain(|id| !to_remove.contains(id));
@@ -306,6 +342,37 @@ mod tests {
 
         let stats = store.stats().await.unwrap();
         assert_eq!(stats.total_vectors, 1);
+    }
+
+    #[tokio::test]
+    async fn test_memory_vector_store_delete_by_source_in_collection() {
+        let store = MemoryVectorStore::new(2);
+        // Same source stem in two collections + one other doc.
+        for (id, coll) in [("c1", Some("kb-a")), ("c2", Some("kb-b")), ("c3", None)] {
+            store
+                .store_chunk(EmbeddedChunk {
+                    id: id.to_string(),
+                    source_id: "readme".to_string(),
+                    text: "x".to_string(),
+                    embedding: vec![1.0, 0.0],
+                    position: 0,
+                    total_chunks: 1,
+                    collection: coll.map(str::to_string),
+                    metadata: None,
+                })
+                .await
+                .unwrap();
+        }
+
+        // Deleting "readme" in kb-a must leave kb-b's and unscoped chunks.
+        let deleted = store
+            .delete_by_source_in_collection("kb-a", "readme")
+            .await
+            .unwrap();
+        assert_eq!(deleted, 1);
+
+        let stats = store.stats().await.unwrap();
+        assert_eq!(stats.total_vectors, 2);
     }
 
     #[tokio::test]

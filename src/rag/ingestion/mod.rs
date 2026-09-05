@@ -396,9 +396,13 @@ impl KnowledgeBaseManager {
         doc_id: Option<&str>,
     ) -> crate::Result<DeleteReport> {
         if let Some(did) = doc_id {
-            // Delete specific document — need to clean vector store chunks
-            // We delete by source_id which maps to doc_id
-            let deleted = self.vector_store.delete_by_source(did).await?;
+            // Delete specific document — clean the vector store chunks scoped
+            // to this collection (source_id maps to doc_id; the same stem can
+            // exist in other per-agent collections and must survive).
+            let deleted = self
+                .vector_store
+                .delete_by_source_in_collection(collection, did)
+                .await?;
             delete_tracker_record(&self.pool, collection, did).await?;
             Ok(DeleteReport {
                 collection: collection.to_string(),
