@@ -142,7 +142,7 @@ export function MarketplaceSettings({
   return (
     <div className="space-y-5">
       <Section
-        title="Marketplace"
+        title="Extensions"
         right={
           <button
             onClick={load}
@@ -180,7 +180,7 @@ export function MarketplaceSettings({
         ) : entries.length === 0 ? (
           <p className="text-sm text-secondary py-4">
             {data && !data.synced
-              ? "Catalog is empty. Enable cloud mode and sign in to load the marketplace."
+              ? "Catalog is empty. Enable cloud mode and sign in to load extensions."
               : "No entries in this category yet."}
           </p>
         ) : (

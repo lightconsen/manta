@@ -8,9 +8,7 @@ import {
   Pin,
   PinOff,
   Loader2,
-  Plug,
-  Package,
-  Brain,
+  Puzzle,
 } from "lucide-react";
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 
@@ -44,7 +42,8 @@ interface SidebarProps {
   onNewSession: () => void;
   agents: AgentItem[];
   onCreateSessionWithAgent: (agentId: string) => void;
-  /** Open the marketplace, optionally pre-filtered (connector/skill/expert). */
+  /** Open the Extensions (marketplace) page, optionally pre-filtered
+   * (connector/skill/expert). */
   onOpenMarketplace: (type?: string) => void;
   onRenameSession?: (id: string, name: string) => void | Promise<void>;
   onDeleteSession?: (id: string) => void | Promise<void>;
@@ -241,28 +240,18 @@ export function Sidebar({
             <Plus className="w-4 h-4 shrink-0" />
             {!collapsed && <span>New Session</span>}
           </button>
-          {!collapsed && (
-            <div className="px-1 pb-1 shrink-0">
-              {(
-                [
-                  ["connector", <Plug className="w-4 h-4 shrink-0" />, "Connectors"],
-                  ["skill", <Package className="w-4 h-4 shrink-0" />, "Skills"],
-                  ["expert", <Brain className="w-4 h-4 shrink-0" />, "Experts"],
-                ] as const
-              ).map(([type, icon, label]) => (
-                <button
-                  key={type}
-                  onClick={() => onOpenMarketplace(type)}
-                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
-                  title={`Browse ${label.toLowerCase()}`}
-                  aria-label={`Browse ${label}`}
-                >
-                  {icon}
-                  <span>{label}</span>
-                </button>
-              ))}
-            </div>
-          )}
+          {/* Extensions (marketplace): connectors, skills, experts. */}
+          <button
+            onClick={() => onOpenMarketplace()}
+            className={`w-full text-left px-3 py-2 mb-2 rounded-lg text-sm transition flex items-center gap-2 text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${
+              collapsed ? "justify-center" : ""
+            }`}
+            title="Browse extensions"
+            aria-label="Extensions"
+          >
+            <Puzzle className="w-4 h-4 shrink-0" />
+            {!collapsed && <span>Extensions</span>}
+          </button>
           {!collapsed &&
             groups.map((group) => (
               <div key={group.label} className="mb-2">
