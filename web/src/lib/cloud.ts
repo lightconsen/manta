@@ -70,6 +70,24 @@ export function cloudLogin(provider = "github") {
 export async function cloudSubmitToken(token: string): Promise<boolean> {
   const transport = getActiveTransport();
   if (!transport) return false;
+  // The OAuth callback page submits on mount, racing the transport's WS
+  // handshake; sendRequestAndWait fails fast while the socket is still
+  // CONNECTING. Wait for "connected" first (onStatusChange fires immediately
+  // with the current status, so this also passes through an open socket).
+  const ready = await new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => {
+      unsub();
+      resolve(false);
+    }, 8000);
+    const unsub = transport.onStatusChange((status) => {
+      if (status === "connected") {
+        clearTimeout(timer);
+        unsub();
+        resolve(true);
+      }
+    });
+  });
+  if (!ready) return false;
   try {
     const r = (await transport.submitCloudToken(token)) as { ok?: boolean };
     return r?.ok ?? true;
