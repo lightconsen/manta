@@ -1,12 +1,21 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import path from 'path'
+import pkg from './package.json'
+
+/** Substitute the {VERSION} placeholder in index.html (page title) with the
+ *  package version. The gateway does the same replacement when serving the
+ *  built UI; this keeps the dev server and prod build consistent. */
+const replaceVersionPlaceholder: Plugin = {
+  name: 'replace-version-placeholder',
+  transformIndexHtml(html: string) {
+    return html.replace('{VERSION}', pkg.version)
+  },
+}
 
 export default defineConfig({
-  plugins: [
-    react(),
-    VitePWA({
+  plugins: [replaceVersionPlaceholder, react(), VitePWA({
       registerType: 'autoUpdate',
       workbox: {
         globPatterns: ['**/*.{js,css,html,png,svg,ico}'],
@@ -31,8 +40,7 @@ export default defineConfig({
           },
         ],
       },
-    }),
-  ],
+    })],
   base: './',
   resolve: {
     alias: {
