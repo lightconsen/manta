@@ -67,11 +67,14 @@ async fn cloud_status_json(state: &GatewayState) -> serde_json::Value {
         let mut user = None;
         if logged_in {
             if let Some(token) = crate::cloud::session::get_token().await {
-                if let Ok(Some(u)) = crate::cloud::client::CloudClient::new(&cfg, token)
+                if let Ok(Some(v)) = crate::cloud::client::CloudClient::new(&cfg, token)
                     .me()
                     .await
                 {
-                    user = Some(u);
+                    // /auth/me wraps the identity ({ "user": { id, name, ... } });
+                    // unwrap it so the WS payload is flat — clients read
+                    // `status.user.name`, not `status.user.user.name`.
+                    user = v.get("user").cloned().or(Some(v));
                 }
             }
         }

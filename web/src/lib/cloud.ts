@@ -11,7 +11,12 @@ import { getActiveTransport } from "@/SyscityWebSocketTransport";
 export interface CloudStatus {
   enabled: boolean;
   logged_in: boolean;
-  user: { id?: string; name?: string; email?: string | null } | null;
+  user: {
+    id?: string;
+    name?: string;
+    email?: string | null;
+    avatar_url?: string | null;
+  } | null;
 }
 
 export interface CloudSubscription {

@@ -109,7 +109,10 @@ pub(crate) async fn handle_cloud_token(req: &WsRequest, state: &Arc<GatewayState
             .me()
             .await
         {
-            Ok(Some(user)) => {
+            Ok(Some(v)) => {
+                // Same unwrap as `cloud_status_json`: /auth/me wraps the
+                // identity ({ "user": { ... } }) — return it flat.
+                let user = v.get("user").cloned().or(Some(v));
                 // Best-effort device registration (P2-9): a stable device
                 // identity for future cloud sync. Never fails the login on
                 // bind errors (mirrors the removed REST token handler).
