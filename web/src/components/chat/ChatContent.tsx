@@ -10,8 +10,7 @@ import { CommandPalette } from "./CommandPalette";
 import { ModelSelector } from "./ModelSelector";
 import { getCommandCompletions, type CommandDef } from "@/slash-commands";
 import { useChatStore } from "@/stores/chatStore";
-import { Mic, Paperclip, Square, Send, ChevronDown, FolderOpen } from "lucide-react";
-import { useIsMobile } from "@/hooks/useMediaQuery";
+import { Mic, Paperclip, Square, Send, ChevronDown } from "lucide-react";
 import { MessageSkeleton } from "@/components/ui/Skeleton";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { useTextToSpeech } from "@/hooks/useTextToSpeech";
@@ -32,9 +31,6 @@ export function ChatContent({ transport }: ChatContentProps) {
 
   const messages = useChatStore((s) => s.messages);
   const isRunning = useChatStore((s) => s.isRunning);
-  const workspacePanelOpen = useChatStore((s) => s.workspacePanelOpen);
-  const setWorkspacePanelOpen = useChatStore((s) => s.setWorkspacePanelOpen);
-  const isMobile = useIsMobile();
   const voiceMode = useChatStore((s) => s.voiceMode);
   const setVoiceMode = useChatStore((s) => s.setVoiceMode);
   const speechLang = resolveSpeechLang(useSpeechStore((s) => s.lang));
@@ -416,22 +412,6 @@ export function ChatContent({ transport }: ChatContentProps) {
                 >
                   <Paperclip className="w-5 h-5" />
                 </button>
-                {!isMobile && (
-                  <button
-                    type="button"
-                    title="Browse workspace files"
-                    aria-label="Browse workspace files"
-                    aria-pressed={workspacePanelOpen}
-                    className={`p-2 rounded-lg transition ${
-                      workspacePanelOpen
-                        ? "text-primary-600 dark:text-primary-400 bg-black/5 dark:bg-white/10"
-                        : "text-secondary hover:text-primary-600 dark:hover:text-primary-400 hover:bg-black/5 dark:hover:bg-white/5"
-                    }`}
-                    onClick={() => setWorkspacePanelOpen(!workspacePanelOpen)}
-                  >
-                    <FolderOpen className="w-5 h-5" />
-                  </button>
-                )}
               </div>
               <div className="flex items-center gap-1">
                 <ModelSelector transport={transport} />

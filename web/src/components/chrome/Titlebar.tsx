@@ -1,6 +1,7 @@
 import {
   Menu,
   Settings,
+  FolderOpen,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
@@ -57,6 +58,8 @@ export function Titlebar({
 }: TitlebarProps) {
   const platform = usePlatform();
   const currentAgent = useChatStore((s) => s.currentAgent);
+  const workspacePanelOpen = useChatStore((s) => s.workspacePanelOpen);
+  const setWorkspacePanelOpen = useChatStore((s) => s.setWorkspacePanelOpen);
 
   const isMac = platform === "tauri-macos";
   const showSafeAreaTop = platform === "tauri-mobile" || (isMobile && !isMac);
@@ -162,6 +165,22 @@ export function Titlebar({
 
       {/* Right cluster (network dot + theme toggle live in the Statusbar) */}
       <div className="flex items-center gap-1 shrink-0">
+        {!isMobile && (
+          <button
+            type="button"
+            title="Browse workspace files"
+            aria-label="Browse workspace files"
+            aria-pressed={workspacePanelOpen}
+            className={
+              workspacePanelOpen
+                ? "p-1.5 rounded-md text-primary-600 dark:text-primary-400 bg-black/5 dark:bg-white/10 transition"
+                : iconBtnCls
+            }
+            onClick={() => setWorkspacePanelOpen(!workspacePanelOpen)}
+          >
+            <FolderOpen className="w-4 h-4" />
+          </button>
+        )}
         <button onClick={onOpenSettings} className={iconBtnCls} title="Settings" aria-label="Settings">
           <Settings className="w-4 h-4" />
         </button>
