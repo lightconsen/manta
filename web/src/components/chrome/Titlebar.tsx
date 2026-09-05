@@ -84,7 +84,7 @@ export function Titlebar({
 
   return (
     <div
-      className="h-11 shrink-0 flex items-center bg-sidebar border-b border-subtle pr-2 pl-2 md:pl-0"
+      className="h-11 shrink-0 flex items-center bg-page border-b border-subtle pr-2 pl-2 md:pl-0"
       style={
         showSafeAreaTop
           ? { paddingTop: "env(safe-area-inset-top)" }
@@ -105,11 +105,13 @@ export function Titlebar({
 
       {/* Sidebar-width mirror zone: hosts the sidebar header (logo + name +
           collapse toggle) on md+ and keeps the identity strip flush with the
-          sidebar's right edge; the macOS traffic lights overlay it. When
-          collapsed on macOS the lights fill the whole w-16 zone, so the
-          toggle renders just after it instead. */}
+          sidebar's right edge. Pane-following color: sidebar surface here,
+          page surface over the main column, so both columns read as
+          full-height panes. The macOS traffic lights overlay this zone;
+          when collapsed they fill the whole w-16, so the toggle renders
+          just after it instead. */}
       <div
-        className={`hidden md:flex shrink-0 h-full items-center transition-all duration-300 ${
+        className={`hidden md:flex shrink-0 h-full items-center bg-sidebar transition-all duration-300 ${
           sidebarCollapsed ? "w-16" : "w-64"
         } ${sidebarCollapsed ? "justify-center" : isMac ? "pl-[72px]" : "pl-3"}`}
       >

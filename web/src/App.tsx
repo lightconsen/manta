@@ -908,7 +908,7 @@ function ChatApp() {
       </div>
 
       {/* Row 3: statusbar (connection/version + run/model). */}
-      <Statusbar transport={transport} />
+      <Statusbar transport={transport} sidebarCollapsed={sidebarCollapsed} />
 
       {/* Mobile: document preview takes the whole screen instead of a split. */}
       {isMobile && previewDocument && (
