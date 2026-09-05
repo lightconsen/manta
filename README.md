@@ -93,24 +93,24 @@ Syscity provides the **action layer**, **memory layer**, and **control plane** t
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      Interaction Layer                        │
-│  Web UI · Desktop App · CLI · Telegram · Discord · Slack     │
+│                      Interaction Layer                      │
+│  Web UI · Desktop App · CLI · Telegram · Discord · Slack    │
 └─────────────────────────────────────────────────────────────┘
                               │
 ┌─────────────────────────────────────────────────────────────┐
-│                      Control Plane (Gateway)                  │
-│  Auth · Rate Limiting · WebSocket · ACP Protocol · Webhooks  │
+│                      Control Plane (Gateway)                │
+│  Auth · Rate Limiting · WebSocket · ACP Protocol · Webhooks │
 └─────────────────────────────────────────────────────────────┘
                               │
 ┌─────────────────────────────────────────────────────────────┐
-│                      Agent Runtime                            │
+│                      Agent Runtime                          │
 │  LLM Routing · Tool Loop · Memory · Sub-Agents (ACP) · MCP  │
 └─────────────────────────────────────────────────────────────┘
                               │
 ┌─────────────────────────────────────────────────────────────┐
-│                      Physical Layer                           │
-│  Screenshot · Desktop Control · Accessibility · AppleScript  │
-│  Shell · File System · Browser · Code Execution · Web Search │
+│                      Physical Layer                         │
+│  Screenshot · Desktop Control · Accessibility · AppleScript │
+│  Shell · File System · Browser · Code Execution · Web Search│
 └─────────────────────────────────────────────────────────────┘
 ```
 
