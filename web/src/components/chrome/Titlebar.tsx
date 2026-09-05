@@ -1,15 +1,11 @@
 import {
   Menu,
-  Sun,
-  Moon,
   Settings,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
 import { useChatStore } from "@/stores/chatStore";
-import { useThemeStore } from "@/stores/themeStore";
 import { usePlatform } from "@/hooks/usePlatform";
-import { StatusDot } from "@/components/chat/StatusDot";
 import { AccountButton } from "@/components/chat/AccountButton";
 
 interface TitlebarProps {
@@ -48,8 +44,8 @@ const iconBtnCls =
  *   header strip, native titlebar untouched. Below md the mirror zone
  *   disappears and the hamburger + logo lead the bar instead.
  *
- * Hosts the global controls (network dot, theme, settings, account) and the
- * agent identity strip.
+ * Hosts the agent identity strip and the settings/account controls; the
+ * network dot and theme toggle live in the Statusbar's sidebar-width zone.
  */
 export function Titlebar({
   isMobile,
@@ -60,9 +56,7 @@ export function Titlebar({
   onToggleSidebar,
 }: TitlebarProps) {
   const platform = usePlatform();
-  const networkStatus = useChatStore((s) => s.networkStatus);
   const currentAgent = useChatStore((s) => s.currentAgent);
-  const { resolvedTheme, setTheme } = useThemeStore();
 
   const isMac = platform === "tauri-macos";
   const showSafeAreaTop = platform === "tauri-mobile" || (isMobile && !isMac);
@@ -166,23 +160,8 @@ export function Titlebar({
       {/* Center: empty drag region */}
       <div className="flex-1 h-full" />
 
-      {/* Right cluster */}
+      {/* Right cluster (network dot + theme toggle live in the Statusbar) */}
       <div className="flex items-center gap-1 shrink-0">
-        <div className="flex items-center gap-1.5 mr-1" title={`Connection: ${networkStatus}`}>
-          <StatusDot status={networkStatus} />
-        </div>
-        <button
-          onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
-          className={iconBtnCls}
-          title="Toggle theme"
-          aria-label="Toggle theme"
-        >
-          {resolvedTheme === "dark" ? (
-            <Sun className="w-4 h-4" />
-          ) : (
-            <Moon className="w-4 h-4" />
-          )}
-        </button>
         <button onClick={onOpenSettings} className={iconBtnCls} title="Settings" aria-label="Settings">
           <Settings className="w-4 h-4" />
         </button>
