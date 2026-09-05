@@ -105,6 +105,31 @@ impl CloudClient {
         self.parse_response(resp, path).await
     }
 
+    /// POST /api/v1/kb — create a knowledge base.
+    pub async fn kb_create(&self, name: &str) -> Result<Value> {
+        self.post_json("/api/v1/kb", json!({ "name": name })).await
+    }
+
+    /// DELETE /api/v1/kb/:id — delete a knowledge base (and its documents).
+    ///
+    /// Handled directly (not via `parse_response`): the cloud answers `204`
+    /// with an empty body, which would fail JSON parsing.
+    pub async fn kb_delete(&self, kb_id: &str) -> Result<()> {
+        let url = format!("{}/api/v1/kb/{kb_id}", self.api_base);
+        let resp = self.auth(self.http.delete(&url)).send().await?;
+        let status = resp.status();
+        if !status.is_success() {
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                let _ = crate::cloud::session::clear_token().await;
+            }
+            let text = resp.text().await?;
+            return Err(SyscityError::Internal(format!(
+                "cloud DELETE /api/v1/kb/{kb_id} status {status}: {text}"
+            )));
+        }
+        Ok(())
+    }
+
     /// POST /api/v1/kb/:id/query — semantic retrieval (§3.7).
     pub async fn kb_query(&self, kb_id: &str, query: &str, top_k: usize) -> Result<Value> {
         let path = format!("/api/v1/kb/{kb_id}/query");

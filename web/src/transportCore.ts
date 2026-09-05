@@ -1851,6 +1851,11 @@ export interface SyscityWebSocketTransport {
   getCloudUsage(days?: number): Promise<unknown>;
   submitCloudToken(token: string): Promise<unknown>;
   cloudLogout(): Promise<void>;
+  cloudKbList(): Promise<unknown>;
+  cloudKbCreate(name: string): Promise<unknown>;
+  cloudKbDelete(kbId: string): Promise<{ ok: boolean }>;
+  cloudKbUpload(kbId: string, filename: string, contentBase64: string, mime?: string): Promise<unknown>;
+  cloudKbQuery(kbId: string, query: string, topK?: number): Promise<unknown>;
   getConfig(): Promise<Record<string, unknown>>;
   setConfig(path: string, value: unknown): Promise<boolean>;
   listCrons(): Promise<{ jobs: Array<Record<string, unknown>>; count: number }>;
@@ -1889,6 +1894,10 @@ export interface SyscityWebSocketTransport {
   shortcutInbox(): Promise<Array<{ prompt?: string; at_ms?: number; file?: string }> | null>;
   listSkills(): Promise<{ skills: Array<Record<string, unknown>>; count: number }>;
   installSkill(name: string, zipBase64: string): Promise<boolean>;
+  listKbCollections(): Promise<{ configured: boolean; reason: string | null; collections: Array<Record<string, unknown>> }>;
+  listKbDocs(collection: string): Promise<{ collection: string; docs: Array<Record<string, unknown>> }>;
+  ingestKbDoc(agentId: string, filename: string, contentBase64: string): Promise<Record<string, unknown>>;
+  deleteKbDoc(collection: string, docId: string): Promise<{ collection: string; doc_id: string; chunks_deleted: number }>;
   getUpdateStatus(): Promise<unknown>;
   getUpdateProgress(): Promise<unknown>;
   triggerUpdate(): Promise<unknown>;

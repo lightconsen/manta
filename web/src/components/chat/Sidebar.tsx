@@ -8,6 +8,7 @@ import {
   Pin,
   PinOff,
   Loader2,
+  Library,
   Puzzle,
 } from "lucide-react";
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
@@ -45,6 +46,8 @@ interface SidebarProps {
   /** Open the Extensions (marketplace) page, optionally pre-filtered
    * (connector/skill/expert). */
   onOpenMarketplace: (type?: string) => void;
+  /** Open the Knowledge Base management page (local + cloud). */
+  onOpenKnowledgeBase?: () => void;
   onRenameSession?: (id: string, name: string) => void | Promise<void>;
   onDeleteSession?: (id: string) => void | Promise<void>;
   onPinSession?: (id: string, pinned: boolean) => void | Promise<void>;
@@ -63,6 +66,7 @@ export function Sidebar({
   agents,
   onCreateSessionWithAgent,
   onOpenMarketplace,
+  onOpenKnowledgeBase,
   onRenameSession,
   onDeleteSession,
   onPinSession,
@@ -252,6 +256,20 @@ export function Sidebar({
             <Puzzle className="w-4 h-4 shrink-0" />
             {!collapsed && <span>Extensions</span>}
           </button>
+          {/* Knowledge Base: local per-agent collections + cloud KBs. */}
+          {onOpenKnowledgeBase && (
+            <button
+              onClick={onOpenKnowledgeBase}
+              className={`w-full text-left px-3 py-2 mb-2 rounded-lg text-sm transition flex items-center gap-2 text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${
+                collapsed ? "justify-center" : ""
+              }`}
+              title="Manage knowledge bases"
+              aria-label="Knowledge Base"
+            >
+              <Library className="w-4 h-4 shrink-0" />
+              {!collapsed && <span>Knowledge Base</span>}
+            </button>
+          )}
           {!collapsed &&
             groups.map((group) => (
               <div key={group.label} className="mb-2">

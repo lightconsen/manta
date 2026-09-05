@@ -317,7 +317,11 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         | "security.gate.list"
         | "security.allowlist.list"
         | "security.status"
-        | "status.get" => Some(SCOPE_READ),
+        | "status.get"
+        | "kb.collections"
+        | "kb.docs"
+        | "cloud.kb.list"
+        | "cloud.kb.query" => Some(SCOPE_READ),
         "sessions.create"
         | "sessions.delete"
         | "agents.create"
@@ -398,7 +402,12 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         | "skills.enable"
         | "skills.disable"
         | "skills.uninstall"
-        | "skills.run" => Some(SCOPE_WRITE),
+        | "skills.run"
+        | "kb.ingest"
+        | "kb.delete_doc"
+        | "cloud.kb.create"
+        | "cloud.kb.delete"
+        | "cloud.kb.upload" => Some(SCOPE_WRITE),
         "acp.spawn"
         | "acp.terminate"
         | "acp.message"

@@ -412,37 +412,16 @@ pub async fn init_side_effect_context(state: &Arc<GatewayState>) {
     info!("SideEffectExecutor context wired");
 }
 
-/// Initialize the Knowledge Base manager for daemon-side auto-ingest.
-pub async fn init_kb_manager(
+/// Build a `KnowledgeBaseManager` from gateway config: pool connect, embedding
+/// provider, vector store. Pure construction — no auto-ingest, no gate.
+async fn build_kb_manager(
     config: &GatewayConfig,
-    state: &Arc<GatewayState>,
     sqlite_pool: Option<&sqlx::SqlitePool>,
-    _unified_vector_store: Option<Arc<dyn crate::rag::VectorStore>>,
-) -> crate::Result<()> {
-    if !config.knowledge_base.auto_ingest_on_startup {
-        info!("KB auto-ingest disabled");
-        return Ok(());
-    }
-
-    info!("Initializing Knowledge Base manager...");
-
-    let pool = match sqlite_pool {
-        Some(p) => p.clone(),
-        None => {
-            let db_path = crate::dirs::default_memory_db();
-            sqlx::sqlite::SqlitePoolOptions::new()
-                .max_connections(2)
-                .connect(&format!("sqlite://{}", db_path.display()))
-                .await
-                .map_err(|e| crate::error::SyscityError::Storage {
-                    context: "Failed to connect to KB database".into(),
-                    details: e.to_string(),
-                })?
-        }
-    };
-
+) -> crate::Result<Arc<crate::rag::ingestion::KnowledgeBaseManager>> {
     let dimension = config.vector_memory.embedding_dimension;
 
+    // Provider validation comes first: it's pure config/env, so an
+    // unconfigured install fails fast without touching the filesystem.
     let provider: Arc<dyn crate::rag::EmbeddingProvider> = match config.vector_memory.provider {
         EmbeddingProviderType::OpenAi => {
             let api_key = config
@@ -453,7 +432,9 @@ pub async fn init_kb_manager(
                 .or_else(|| std::env::var("SYSCITY_EMBEDDING_API_KEY").ok())
                 .ok_or_else(|| {
                     crate::error::SyscityError::Validation(
-                        "OpenAI API key required for KB embedding".into(),
+                        "OpenAI API key required for KB embedding — set [vector_memory] \
+                         embedding_api_key in config.toml (or OPENAI_API_KEY)"
+                            .into(),
                     )
                 })?;
             let mut ep = ApiEmbeddingProvider::new(
@@ -471,8 +452,25 @@ pub async fn init_kb_manager(
         }
         EmbeddingProviderType::LocalGguf => {
             return Err(crate::error::SyscityError::Validation(
-                "KB auto-ingest requires an API-based embedding provider (OpenAI)".into(),
+                "KB requires an API-based embedding provider — set [vector_memory] \
+                 provider = \"openai\" in config.toml"
+                    .into(),
             ));
+        }
+    };
+
+    let pool = match sqlite_pool {
+        Some(p) => p.clone(),
+        None => {
+            let db_path = crate::dirs::default_memory_db();
+            sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(2)
+                .connect(&format!("sqlite://{}", db_path.display()))
+                .await
+                .map_err(|e| crate::error::SyscityError::Storage {
+                    context: "Failed to connect to KB database".into(),
+                    details: e.to_string(),
+                })?
         }
     };
 
@@ -492,12 +490,48 @@ pub async fn init_kb_manager(
         chunk_strategy: config.vector_memory.embedding.chunk_strategy.clone(),
     };
 
-    let manager = Arc::new(crate::rag::ingestion::KnowledgeBaseManager::new(
+    Ok(Arc::new(crate::rag::ingestion::KnowledgeBaseManager::new(
         provider,
         vec_store,
         pool,
         &embedding_config,
-    ));
+    )))
+}
+
+/// Fast-path/lazy accessor for the WS `kb.*` handlers: reuse the
+/// daemon-initialized manager when present, otherwise build one on demand
+/// (independent of the `auto_ingest_on_startup` gate). The error is a
+/// human-readable reason (surfaced as `KB_NOT_CONFIGURED` / the UI's setup
+/// hint) when the embedding provider isn't usable.
+pub(crate) async fn ensure_kb_manager(
+    config: &GatewayConfig,
+    state: &Arc<GatewayState>,
+) -> Result<Arc<crate::rag::ingestion::KnowledgeBaseManager>, String> {
+    if let Some(m) = state.memory.kb_manager.read().await.clone() {
+        return Ok(m);
+    }
+    let manager = build_kb_manager(config, None)
+        .await
+        .map_err(|e| e.to_string())?;
+    *state.memory.kb_manager.write().await = Some(manager.clone());
+    Ok(manager)
+}
+
+/// Initialize the Knowledge Base manager for daemon-side auto-ingest.
+pub async fn init_kb_manager(
+    config: &GatewayConfig,
+    state: &Arc<GatewayState>,
+    sqlite_pool: Option<&sqlx::SqlitePool>,
+    _unified_vector_store: Option<Arc<dyn crate::rag::VectorStore>>,
+) -> crate::Result<()> {
+    if !config.knowledge_base.auto_ingest_on_startup {
+        info!("KB auto-ingest disabled");
+        return Ok(());
+    }
+
+    info!("Initializing Knowledge Base manager...");
+
+    let manager = build_kb_manager(config, sqlite_pool).await?;
 
     *state.memory.kb_manager.write().await = Some(manager.clone());
 

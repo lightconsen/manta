@@ -24,6 +24,7 @@ import { WorkspacePanel } from "@/components/workspace/WorkspacePanel";
 import { UpdateBanner } from "@/components/update/UpdateBanner";
 import { CloudEnabledBanner } from "@/components/update/CloudEnabledBanner";
 import { ExtensionsView } from "@/components/marketplace/ExtensionsView";
+import { KnowledgeBaseView } from "@/components/kb/KnowledgeBaseView";
 import { AskModal, type AskPrompt } from "@/components/ask/AskModal";
 import { ApprovalModal } from "@/components/approval/ApprovalModal";
 import type { ApprovalPrompt } from "@/components/approval/ApprovalModal";
@@ -149,6 +150,8 @@ function ChatApp() {
   const [marketplaceOpen, setMarketplaceOpen] = useState(false);
   // Pre-filter for the marketplace view (connector/skill/expert; null = all).
   const [marketplaceType, setMarketplaceType] = useState<string | null>(null);
+  // Full-screen Knowledge Base management view (local + cloud KBs).
+  const [kbOpen, setKbOpen] = useState(false);
   // null = not yet checked / not connected; true = no LLM configured (Welcome).
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
   // null = not yet checked; true = identity wizard completed.
@@ -166,7 +169,15 @@ function ChatApp() {
   const openMarketplace = (type?: string) => {
     setMarketplaceType(type ?? null);
     setSettingsOpen(false);
+    setKbOpen(false);
     setMarketplaceOpen(true);
+  };
+
+  /** Open the full-screen Knowledge Base view (replaces the chat area). */
+  const openKb = () => {
+    setSettingsOpen(false);
+    setMarketplaceOpen(false);
+    setKbOpen(true);
   };
 
   // Handle the cloud OAuth callback: /cloud/login/callback#token=... — persist
@@ -562,6 +573,7 @@ function ChatApp() {
   const handleNewSession = useCallback(() => {
     setSettingsOpen(false);
     setMarketplaceOpen(false);
+    setKbOpen(false);
     // New Session is a page toggle: show the welcome state without creating
     // anything. The real session is created lazily on the first message sent
     // from the welcome page (transport.run() consumes the pending flag).
@@ -572,6 +584,7 @@ function ChatApp() {
     async (agentId: string) => {
       setSettingsOpen(false);
       setMarketplaceOpen(false);
+      setKbOpen(false);
 
       // If a session already exists for this agent, switch to it instead
       // of creating another one.
@@ -609,6 +622,7 @@ function ChatApp() {
     async (id: string) => {
       setSettingsOpen(false);
       setMarketplaceOpen(false);
+      setKbOpen(false);
       const currentId = transport.getSessionId();
       if (currentId !== id) {
         // Save current session's in-memory messages before switching
@@ -767,6 +781,7 @@ function ChatApp() {
             agents={agents}
             onCreateSessionWithAgent={handleCreateSessionWithAgent}
             onOpenMarketplace={openMarketplace}
+            onOpenKnowledgeBase={openKb}
             pendingApprovals={pendingApprovals.length}
             onShowApprovals={() => {}}
             onRenameSession={handleRenameSession}
@@ -812,6 +827,10 @@ function ChatApp() {
                   openMarketplace(type);
                   setMobileNavOpen(false);
                 }}
+                onOpenKnowledgeBase={() => {
+                  openKb();
+                  setMobileNavOpen(false);
+                }}
                 onRenameSession={handleRenameSession}
                 onDeleteSession={handleDeleteSession}
                 onPinSession={handlePinSession}
@@ -822,10 +841,12 @@ function ChatApp() {
 
         <main className="flex-1 min-w-0 flex flex-col overflow-hidden">
         {/* New-release banner; the settings General tab shows the full controls. */}
-        {!settingsOpen && !marketplaceOpen && <UpdateBanner />}
+        {!settingsOpen && !marketplaceOpen && !kbOpen && <UpdateBanner />}
         {/* First-login cloud guidance (shown once after a successful login). */}
-        {!settingsOpen && !marketplaceOpen && <CloudEnabledBanner />}
-        {marketplaceOpen ? (
+        {!settingsOpen && !marketplaceOpen && !kbOpen && <CloudEnabledBanner />}
+        {kbOpen ? (
+          <KnowledgeBaseView agents={agents} onClose={() => setKbOpen(false)} />
+        ) : marketplaceOpen ? (
           <ExtensionsView
             initialType={marketplaceType}
             onClose={() => setMarketplaceOpen(false)}

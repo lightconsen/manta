@@ -25,6 +25,7 @@
 //!   mcp_ws.rs    MCP server management
 //!   tasks.rs     cron + task scheduler
 //!   skills_ws.rs skills.list / skills.install
+//!   kb_ws.rs     kb.* (local Knowledge Base collections/docs/ingest/delete)
 //!   logs.rs      logs.subscribe / logs.unsubscribe
 //!   workspace.rs workspace.list / workspace.read (agent workspace browser)
 
@@ -143,6 +144,7 @@ mod device_ws;
 mod eval_ws;
 mod feedback;
 mod handshake;
+mod kb_ws;
 mod logs;
 mod mcp_ws;
 mod models;

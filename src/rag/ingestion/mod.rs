@@ -14,6 +14,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
+use serde::Serialize;
 use sqlx::Pool;
 use sqlx::Sqlite;
 use tracing::{info, warn};
@@ -59,7 +60,7 @@ pub enum KnowledgeBaseProviderType {
 }
 
 /// Report from a single `ingest_source` call.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct IngestReport {
     pub collection: String,
     pub total_sources: usize,
@@ -72,7 +73,7 @@ pub struct IngestReport {
 }
 
 /// Report from a delete operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DeleteReport {
     pub collection: String,
     pub doc_id: Option<String>,

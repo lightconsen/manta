@@ -3,6 +3,9 @@
 use std::sync::Arc;
 
 #[cfg(feature = "cloud")]
+use base64::Engine as _;
+
+#[cfg(feature = "cloud")]
 use serde::Deserialize;
 
 #[cfg(feature = "cloud")]
@@ -139,4 +142,261 @@ pub(crate) async fn handle_cloud_logout(req: &WsRequest, _state: &Arc<GatewaySta
         let _ = crate::cloud::session::clear_token().await;
     }
     WsResponse::ok(&req.id, serde_json::json!({ "ok": true }))
+}
+
+// --- cloud.kb.* — cloud knowledge base management (thin WS passthroughs) ---
+//
+// The cloud server owns KB storage/indexing; these handlers only gate on
+// `cloud.enabled` + a session token and forward to `CloudClient`. Upload
+// shares the 32 MiB cap with local `kb.ingest`.
+
+/// Shared gate: enabled + token, else `cloud_unavailable`.
+#[cfg(feature = "cloud")]
+async fn cloud_kb_client(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> Result<crate::cloud::client::CloudClient, WsResponse> {
+    let cfg = { state.config.read().await.cloud.clone() };
+    if !cfg.enabled {
+        return Err(cloud_unavailable(req));
+    }
+    let Some(token) = crate::cloud::session::get_token().await else {
+        return Err(cloud_unavailable(req));
+    };
+    Ok(crate::cloud::client::CloudClient::new(&cfg, token))
+}
+
+/// `cloud.kb.list` — list the account's knowledge bases.
+pub(crate) async fn handle_cloud_kb_list(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
+    #[cfg(feature = "cloud")]
+    match cloud_kb_client(req, state).await {
+        Err(res) => res,
+        Ok(client) => match client.list_kbs().await {
+            Ok(v) => WsResponse::ok(&req.id, v),
+            Err(e) => WsResponse::err(&req.id, "BAD_GATEWAY", e.to_string()),
+        },
+    }
+    #[cfg(not(feature = "cloud"))]
+    {
+        let _ = (state, req);
+        cloud_unavailable(req)
+    }
+}
+
+/// `cloud.kb.create` — create a knowledge base (`{ name }`).
+pub(crate) async fn handle_cloud_kb_create(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    #[cfg(feature = "cloud")]
+    #[derive(Deserialize)]
+    struct CreateParams {
+        name: String,
+    }
+    #[cfg(feature = "cloud")]
+    {
+        let name = match parse_params::<CreateParams>(req) {
+            Ok(p) => p.name.trim().to_string(),
+            Err(res) => return res,
+        };
+        if name.is_empty() {
+            return WsResponse::err(&req.id, "INVALID_PARAMS", "name is required");
+        }
+        match cloud_kb_client(req, state).await {
+            Err(res) => res,
+            Ok(client) => match client.kb_create(&name).await {
+                Ok(v) => WsResponse::ok(&req.id, v),
+                Err(e) => WsResponse::err(&req.id, "BAD_GATEWAY", e.to_string()),
+            },
+        }
+    }
+    #[cfg(not(feature = "cloud"))]
+    {
+        let _ = (state, req);
+        cloud_unavailable(req)
+    }
+}
+
+/// `cloud.kb.delete` — delete a knowledge base (`{ kb_id }`).
+pub(crate) async fn handle_cloud_kb_delete(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    #[cfg(feature = "cloud")]
+    #[derive(Deserialize)]
+    struct DeleteParams {
+        kb_id: String,
+    }
+    #[cfg(feature = "cloud")]
+    {
+        let kb_id = match parse_params::<DeleteParams>(req) {
+            Ok(p) => p.kb_id.trim().to_string(),
+            Err(res) => return res,
+        };
+        if kb_id.is_empty() {
+            return WsResponse::err(&req.id, "INVALID_PARAMS", "kb_id is required");
+        }
+        match cloud_kb_client(req, state).await {
+            Err(res) => res,
+            Ok(client) => match client.kb_delete(&kb_id).await {
+                Ok(()) => WsResponse::ok(&req.id, serde_json::json!({ "ok": true })),
+                Err(e) => WsResponse::err(&req.id, "BAD_GATEWAY", e.to_string()),
+            },
+        }
+    }
+    #[cfg(not(feature = "cloud"))]
+    {
+        let _ = (state, req);
+        cloud_unavailable(req)
+    }
+}
+
+/// `cloud.kb.upload` — upload one document (base64) to a cloud KB.
+pub(crate) async fn handle_cloud_kb_upload(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    #[cfg(feature = "cloud")]
+    #[derive(Deserialize)]
+    struct UploadParams {
+        kb_id: String,
+        filename: String,
+        content_base64: String,
+        #[serde(default)]
+        mime: Option<String>,
+    }
+    #[cfg(feature = "cloud")]
+    {
+        let p: UploadParams = match parse_params(req) {
+            Ok(p) => p,
+            Err(res) => return res,
+        };
+        let bytes = match base64::engine::general_purpose::STANDARD.decode(&p.content_base64) {
+            Ok(b) => b,
+            Err(e) => {
+                return WsResponse::err(&req.id, "INVALID_CONTENT", format!("Invalid base64: {e}"))
+            }
+        };
+        if bytes.len() > crate::gateway::ws::kb_ws::MAX_KB_UPLOAD_BYTES {
+            return WsResponse::err(
+                &req.id,
+                "INVALID_CONTENT",
+                format!(
+                    "File exceeds maximum size of {} MB",
+                    crate::gateway::ws::kb_ws::MAX_KB_UPLOAD_BYTES / (1024 * 1024)
+                ),
+            );
+        }
+        let mime = p
+            .mime
+            .filter(|m| !m.trim().is_empty())
+            .unwrap_or_else(|| "application/octet-stream".into());
+        match cloud_kb_client(req, state).await {
+            Err(res) => res,
+            Ok(client) => match client.kb_upload(&p.kb_id, &p.filename, &bytes, &mime).await {
+                Ok(v) => WsResponse::ok(&req.id, v),
+                Err(e) => WsResponse::err(&req.id, "BAD_GATEWAY", e.to_string()),
+            },
+        }
+    }
+    #[cfg(not(feature = "cloud"))]
+    {
+        let _ = (state, req);
+        cloud_unavailable(req)
+    }
+}
+
+/// `cloud.kb.query` — semantic test-query against a cloud KB.
+pub(crate) async fn handle_cloud_kb_query(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    #[cfg(feature = "cloud")]
+    #[derive(Deserialize)]
+    struct QueryParams {
+        kb_id: String,
+        query: String,
+        #[serde(default = "default_query_top_k")]
+        top_k: usize,
+    }
+    #[cfg(feature = "cloud")]
+    fn default_query_top_k() -> usize {
+        5
+    }
+    #[cfg(feature = "cloud")]
+    {
+        let p: QueryParams = match parse_params(req) {
+            Ok(p) => p,
+            Err(res) => return res,
+        };
+        if p.query.trim().is_empty() {
+            return WsResponse::err(&req.id, "INVALID_PARAMS", "query is required");
+        }
+        let top_k = p.top_k.clamp(1, 50);
+        match cloud_kb_client(req, state).await {
+            Err(res) => res,
+            Ok(client) => match client.kb_query(&p.kb_id, &p.query, top_k).await {
+                Ok(v) => WsResponse::ok(&req.id, v),
+                Err(e) => WsResponse::err(&req.id, "BAD_GATEWAY", e.to_string()),
+            },
+        }
+    }
+    #[cfg(not(feature = "cloud"))]
+    {
+        let _ = (state, req);
+        cloud_unavailable(req)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::state_tests::make_test_state;
+    use crate::gateway::GatewayConfig;
+
+    async fn state() -> Arc<GatewayState> {
+        Arc::new(make_test_state(GatewayConfig::default()).await)
+    }
+
+    /// Default config has cloud disabled → every cloud.kb.* method must
+    /// report UNAUTHORIZED (not panic / not reach the network).
+    #[tokio::test]
+    async fn cloud_kb_methods_unauthorized_when_cloud_disabled() {
+        let state = state().await;
+        let cases: Vec<(&str, Option<serde_json::Value>)> = vec![
+            ("cloud.kb.list", Some(serde_json::json!({}))),
+            ("cloud.kb.create", Some(serde_json::json!({ "name": "x" }))),
+            ("cloud.kb.delete", Some(serde_json::json!({ "kb_id": "kb1" }))),
+            (
+                "cloud.kb.upload",
+                Some(serde_json::json!({
+                    "kb_id": "kb1",
+                    "filename": "a.md",
+                    "content_base64": base64::engine::general_purpose::STANDARD.encode("hi"),
+                })),
+            ),
+            ("cloud.kb.query", Some(serde_json::json!({ "kb_id": "kb1", "query": "q" }))),
+        ];
+        for (method, params) in cases {
+            let req = WsRequest {
+                frame_type: "req".into(),
+                id: "r1".into(),
+                method: method.into(),
+                params,
+            };
+            let resp = match method {
+                "cloud.kb.list" => handle_cloud_kb_list(&req, &state).await,
+                "cloud.kb.create" => handle_cloud_kb_create(&req, &state).await,
+                "cloud.kb.delete" => handle_cloud_kb_delete(&req, &state).await,
+                "cloud.kb.upload" => handle_cloud_kb_upload(&req, &state).await,
+                _ => handle_cloud_kb_query(&req, &state).await,
+            };
+            assert!(!resp.ok, "{method} unexpectedly succeeded");
+            assert_eq!(
+                resp.error.as_ref().unwrap().code,
+                "UNAUTHORIZED",
+                "{method} wrong error code"
+            );
+        }
+    }
 }
