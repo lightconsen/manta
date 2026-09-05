@@ -235,7 +235,7 @@ export function Sidebar({
         >
           <button
             onClick={onNewSession}
-            className={`w-full text-left px-3 py-2 mb-2 rounded-lg text-sm transition flex items-center gap-2 text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${
+            className={`w-full text-left px-3 py-1.5 mb-0.5 rounded-lg text-sm transition flex items-center gap-2 text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${
               collapsed ? "justify-center" : ""
             }`}
             title="New session"
@@ -247,7 +247,7 @@ export function Sidebar({
           {/* Extensions (marketplace): connectors, skills, experts. */}
           <button
             onClick={() => onOpenMarketplace()}
-            className={`w-full text-left px-3 py-2 mb-2 rounded-lg text-sm transition flex items-center gap-2 text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${
+            className={`w-full text-left px-3 py-1.5 mb-0.5 rounded-lg text-sm transition flex items-center gap-2 text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${
               collapsed ? "justify-center" : ""
             }`}
             title="Browse extensions"
@@ -260,7 +260,7 @@ export function Sidebar({
           {onOpenKnowledgeBase && (
             <button
               onClick={onOpenKnowledgeBase}
-              className={`w-full text-left px-3 py-2 mb-2 rounded-lg text-sm transition flex items-center gap-2 text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${
+              className={`w-full text-left px-3 py-1.5 mb-0.5 rounded-lg text-sm transition flex items-center gap-2 text-secondary hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${
                 collapsed ? "justify-center" : ""
               }`}
               title="Manage knowledge bases"
