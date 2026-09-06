@@ -582,6 +582,7 @@ async fn dispatch_method(
         "cloud.kb.pull" => admin_ws::handle_cloud_kb_pull(req, state).await,
         "kb.collections" => kb_ws::handle_kb_collections(req, state).await,
         "kb.docs" => kb_ws::handle_kb_docs(req, state).await,
+        "kb.doc_content" => kb_ws::handle_kb_doc_content(req, state).await,
         "kb.ingest" => kb_ws::handle_kb_ingest(req, state).await,
         "kb.delete_doc" => kb_ws::handle_kb_delete_doc(req, state).await,
         "update.status" => admin_ws::handle_update_status(req, state).await,

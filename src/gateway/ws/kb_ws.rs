@@ -181,6 +181,124 @@ pub(super) async fn handle_kb_ingest(req: &WsRequest, state: &Arc<GatewayState>)
     )
 }
 
+/// `kb.doc_content` — read one document's source file for UI preview.
+///
+/// Resolves the document's `source_id` from the ingestion tracker and returns
+/// the file content (text) capped at 256 KiB, or a `binary: true` marker for
+/// non-text formats (pdf/docx/xlsx) which the UI cannot render inline.
+/// URL sources have no local bytes → `NOT_SUPPORTED`.
+pub(super) async fn handle_kb_doc_content(
+    req: &WsRequest,
+    state: &Arc<GatewayState>,
+) -> WsResponse {
+    #[derive(Debug, Deserialize)]
+    struct DocContentParams {
+        collection: String,
+        doc_id: String,
+    }
+    let p: DocContentParams = match parse_params(req) {
+        Ok(p) => p,
+        Err(res) => return res,
+    };
+    if !p.collection.starts_with("kb-") || p.collection == "kb-" {
+        return WsResponse::err(
+            &req.id,
+            "INVALID_PARAMS",
+            "collection must be a per-agent collection (kb-{agent_id})",
+        );
+    }
+    if p.doc_id.trim().is_empty() {
+        return WsResponse::err(&req.id, "INVALID_PARAMS", "doc_id is required");
+    }
+
+    let cfg = state.config.read().await.clone();
+    let manager = match ensure_kb_manager(&cfg, state).await {
+        Ok(m) => m,
+        Err(reason) => return WsResponse::err(&req.id, "KB_NOT_CONFIGURED", reason),
+    };
+
+    let source_id = match manager.list(Some(&p.collection), None).await {
+        Ok(records) => match records.into_iter().find(|r| r.doc_id == p.doc_id) {
+            Some(r) => r.source_id,
+            None => {
+                return WsResponse::err(
+                    &req.id,
+                    "NOT_FOUND",
+                    format!("No document '{}' in {}", p.doc_id, p.collection),
+                )
+            }
+        },
+        Err(e) => return WsResponse::err(&req.id, "INTERNAL_ERROR", e.to_string()),
+    };
+
+    if is_url_source(&source_id) {
+        return WsResponse::err(
+            &req.id,
+            "NOT_SUPPORTED",
+            "URL sources have no local bytes to preview",
+        );
+    }
+
+    const MAX_READ_BYTES: usize = 256 * 1024;
+    let file = std::path::PathBuf::from(&source_id);
+    let meta = match tokio::fs::metadata(&file).await {
+        Ok(m) => m,
+        Err(e) => return WsResponse::err(&req.id, "NOT_FOUND", format!("stat failed: {e}")),
+    };
+    if meta.is_dir() {
+        return WsResponse::err(&req.id, "INVALID_REQUEST", "Source path is a directory");
+    }
+
+    let handle = match tokio::fs::File::open(&file).await {
+        Ok(f) => f,
+        Err(e) => return WsResponse::err(&req.id, "READ_FAILED", format!("open failed: {e}")),
+    };
+    use tokio::io::AsyncReadExt;
+    let mut buf = Vec::new();
+    if let Err(e) = handle
+        .take((MAX_READ_BYTES + 1) as u64)
+        .read_to_end(&mut buf)
+        .await
+    {
+        return WsResponse::err(&req.id, "READ_FAILED", format!("read failed: {e}"));
+    }
+    let truncated = buf.len() > MAX_READ_BYTES;
+    if truncated {
+        buf.truncate(MAX_READ_BYTES);
+    }
+    let size = meta.len();
+
+    let binary = buf.contains(&0) || String::from_utf8(buf.clone()).is_err();
+    if binary {
+        return WsResponse::ok(
+            &req.id,
+            serde_json::json!({
+                "doc_id": p.doc_id,
+                "size": size,
+                "truncated": false,
+                "binary": true,
+            }),
+        );
+    }
+    // UTF-8 validity was checked above; this cannot fail.
+    let content = String::from_utf8_lossy(&buf).into_owned();
+    WsResponse::ok(
+        &req.id,
+        serde_json::json!({
+            "doc_id": p.doc_id,
+            "size": size,
+            "truncated": truncated,
+            "binary": false,
+            "content": content,
+        }),
+    )
+}
+
+/// True when a KB source_id points at a fetched URL rather than a local file.
+fn is_url_source(source_id: &str) -> bool {
+    source_id.starts_with("http://") || source_id.starts_with("https://")
+}
+
 /// `kb.delete_doc` — delete one document (vectors + tracker + uploaded file).
 pub(super) async fn handle_kb_delete_doc(req: &WsRequest, state: &Arc<GatewayState>) -> WsResponse {
     #[derive(Debug, Deserialize)]
@@ -316,6 +434,24 @@ mod tests {
         let state = state().await;
         let params = serde_json::json!({ "collection": "other", "doc_id": "a" });
         let resp = handle_kb_delete_doc(&req("r1", Some(params)), &state).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_PARAMS");
+    }
+
+    #[tokio::test]
+    async fn doc_content_rejects_non_kb_collection() {
+        let state = state().await;
+        let params = serde_json::json!({ "collection": "other", "doc_id": "a" });
+        let resp = handle_kb_doc_content(&req("r1", Some(params)), &state).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_PARAMS");
+    }
+
+    #[tokio::test]
+    async fn doc_content_rejects_empty_doc_id() {
+        let state = state().await;
+        let params = serde_json::json!({ "collection": "kb-default", "doc_id": "  " });
+        let resp = handle_kb_doc_content(&req("r1", Some(params)), &state).await;
         assert!(!resp.ok);
         assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_PARAMS");
     }

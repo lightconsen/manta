@@ -320,6 +320,7 @@ pub fn method_scope(method: &str) -> Option<&'static str> {
         | "status.get"
         | "kb.collections"
         | "kb.docs"
+        | "kb.doc_content"
         | "cloud.kb.list"
         | "cloud.kb.docs"
         | "cloud.kb.query" => Some(SCOPE_READ),
