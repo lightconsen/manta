@@ -83,3 +83,4 @@ lcov.info
 !.env.example
 
 *.secret
+.e2e-tmp/
