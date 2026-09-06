@@ -1926,6 +1926,7 @@ export interface SyscityWebSocketTransport {
   installSkill(name: string, zipBase64: string): Promise<boolean>;
   listKbCollections(): Promise<{ configured: boolean; reason: string | null; collections: Array<Record<string, unknown>> }>;
   listKbDocs(collection: string): Promise<{ collection: string; docs: Array<Record<string, unknown>> }>;
+  kbDocContent(collection: string, docId: string): Promise<{ doc_id: string; size: number; truncated: boolean; binary: boolean; content?: string }>;
   ingestKbDoc(agentId: string, filename: string, contentBase64: string): Promise<Record<string, unknown>>;
   deleteKbDoc(collection: string, docId: string): Promise<{ collection: string; doc_id: string; chunks_deleted: number }>;
   getUpdateStatus(): Promise<unknown>;

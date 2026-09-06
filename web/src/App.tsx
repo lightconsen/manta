@@ -764,6 +764,13 @@ function ChatApp() {
         onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
         onOpenMobileNav={() => setMobileNavOpen(true)}
         onOpenSettings={() => openSettings("general")}
+        page={
+          kbOpen
+            ? { title: "Knowledge Base" }
+            : marketplaceOpen
+              ? { title: "Extensions" }
+              : undefined
+        }
       />
 
       {/* Row 2: sidebar + main content. */}
@@ -845,11 +852,10 @@ function ChatApp() {
         {/* First-login cloud guidance (shown once after a successful login). */}
         {!settingsOpen && !marketplaceOpen && !kbOpen && <CloudEnabledBanner />}
         {kbOpen ? (
-          <KnowledgeBaseView agents={agents} onClose={() => setKbOpen(false)} />
+          <KnowledgeBaseView agents={agents} />
         ) : marketplaceOpen ? (
           <ExtensionsView
             initialType={marketplaceType}
-            onClose={() => setMarketplaceOpen(false)}
             onSummonExpert={handleCreateSessionWithAgent}
           />
         ) : settingsOpen ? (

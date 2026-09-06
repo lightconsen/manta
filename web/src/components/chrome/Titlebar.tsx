@@ -19,6 +19,11 @@ interface TitlebarProps {
   onToggleSidebar: () => void;
   onOpenMobileNav: () => void;
   onOpenSettings: () => void;
+  /** Full-screen page opened over the chat area (e.g. Knowledge Base):
+   * its title replaces the agent identity in the leading cluster, indented
+   * to align with the page's content below. No icons, no close button —
+   * leaving the page happens via the sidebar (sessions, New Session). */
+  page?: { title: string };
 }
 
 const iconBtnCls =
@@ -55,6 +60,7 @@ export function Titlebar({
   onOpenSettings,
   sidebarCollapsed,
   onToggleSidebar,
+  page,
 }: TitlebarProps) {
   const platform = usePlatform();
   const currentAgent = useChatStore((s) => s.currentAgent);
@@ -133,30 +139,40 @@ export function Titlebar({
 
       {/* Left cluster — starts exactly at the sidebar's right edge */}
       <div className="flex items-center gap-2 min-w-0">
-        <img
-          src="/syscity.png"
-          alt="Syscity"
-          className="w-5 h-5 shrink-0 md:hidden"
-          draggable={false}
-        />
-        {currentAgent ? (
-          <div className="flex items-center gap-2 text-xs text-secondary min-w-0">
-            <span className="text-sm shrink-0" aria-hidden="true">
-              {currentAgent.emoji}
+        {page ? (
+          <div className="flex items-center min-w-0 pl-6 md:pl-8">
+            <span className="text-sm font-medium text-primary truncate">
+              {page.title}
             </span>
-            <span className="font-medium truncate">
-              {currentAgent.display_name}
-            </span>
-            {!currentAgent.display_name.includes(currentAgent.id) && (
-              <span className="text-[10px] text-secondary/50 truncate">
-                ({currentAgent.id})
-              </span>
-            )}
           </div>
         ) : (
-          <span className="md:hidden text-sm font-semibold text-primary whitespace-nowrap">
-            Syscity
-          </span>
+          <>
+            <img
+              src="/syscity.png"
+              alt="Syscity"
+              className="w-5 h-5 shrink-0 md:hidden"
+              draggable={false}
+            />
+            {currentAgent ? (
+              <div className="flex items-center gap-2 text-xs text-secondary min-w-0">
+                <span className="text-sm shrink-0" aria-hidden="true">
+                  {currentAgent.emoji}
+                </span>
+                <span className="font-medium truncate">
+                  {currentAgent.display_name}
+                </span>
+                {!currentAgent.display_name.includes(currentAgent.id) && (
+                  <span className="text-[10px] text-secondary/50 truncate">
+                    ({currentAgent.id})
+                  </span>
+                )}
+              </div>
+            ) : (
+              <span className="md:hidden text-sm font-semibold text-primary whitespace-nowrap">
+                Syscity
+              </span>
+            )}
+          </>
         )}
       </div>
 

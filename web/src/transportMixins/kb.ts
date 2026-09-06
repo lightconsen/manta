@@ -33,6 +33,19 @@ export function install(proto: typeof SyscityWebSocketTransport.prototype): void
       content_base64: contentBase64,
     })) as Record<string, unknown>;
   };
+  proto.kbDocContent = async function (
+    this: SyscityWebSocketTransport,
+    collection: string,
+    docId: string
+  ): Promise<{ doc_id: string; size: number; truncated: boolean; binary: boolean; content?: string }> {
+    return (await this.sendRequestAndWait("kb.doc_content", { collection, doc_id: docId })) as {
+      doc_id: string;
+      size: number;
+      truncated: boolean;
+      binary: boolean;
+      content?: string;
+    };
+  };
   proto.deleteKbDoc = async function (
     this: SyscityWebSocketTransport,
     collection: string,
