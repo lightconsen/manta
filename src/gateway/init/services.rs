@@ -451,11 +451,51 @@ async fn build_kb_manager(
             )) as Arc<dyn crate::rag::EmbeddingProvider>
         }
         EmbeddingProviderType::LocalGguf => {
-            return Err(crate::error::SyscityError::Validation(
-                "KB requires an API-based embedding provider — set [vector_memory] \
-                 provider = \"openai\" in config.toml"
-                    .into(),
-            ));
+            // KB also accepts the local GGUF model — the same provider the
+            // vector memory service uses. Requires the `local-embeddings`
+            // feature and an available model; anything else fails fast here
+            // with an actionable message.
+            #[cfg(feature = "local-embeddings")]
+            {
+                let model_path =
+                    config
+                        .vector_memory
+                        .local_model_path
+                        .clone()
+                        .ok_or_else(|| {
+                            crate::error::SyscityError::Validation(
+                                "local_gguf embeddings require [vector_memory] \
+                             local_model_path in config.toml"
+                                    .into(),
+                            )
+                        })?;
+                use crate::rag::local_embeddings::ModelSource;
+                let source = ModelSource::parse(&model_path);
+                let provider = LocalGgufEmbeddingProvider::create(source, dimension).await;
+                if provider.is_fts_only() {
+                    let reason = provider
+                        .fts_reason()
+                        .unwrap_or("local embedding model unavailable");
+                    return Err(crate::error::SyscityError::Validation(format!(
+                        "KB local_gguf embeddings unavailable: {reason} — set [vector_memory] \
+                         provider = \"open_ai\" with an embedding_api_key instead"
+                    )));
+                }
+                info!("KB using local GGUF embedding provider");
+                Arc::new(CachedEmbeddingProvider::new(
+                    Arc::new(provider) as Arc<dyn crate::rag::EmbeddingProvider>,
+                    1024,
+                )) as Arc<dyn crate::rag::EmbeddingProvider>
+            }
+            #[cfg(not(feature = "local-embeddings"))]
+            {
+                return Err(crate::error::SyscityError::Validation(
+                    "KB requires API-based embeddings — set [vector_memory] \
+                     provider = \"open_ai\" with embedding_api_key, or rebuild with \
+                     the 'local-embeddings' feature"
+                        .into(),
+                ));
+            }
         }
     };
 
