@@ -530,8 +530,11 @@ mod tests {
         }
     }
 
-    /// Param validation fires before the cloud gate, so it is testable
-    /// without cloud (or network).
+    /// Param validation order (params before the cloud gate) only exists in
+    /// cloud builds; without the feature every method short-circuits to
+    /// cloud_unavailable (UNAUTHORIZED) — covered by
+    /// `sync_methods_unauthorized_when_cloud_disabled` above.
+    #[cfg(feature = "cloud")]
     #[tokio::test]
     async fn push_rejects_non_kb_collection() {
         let state = state().await;
@@ -546,6 +549,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "cloud")]
     #[tokio::test]
     async fn push_requires_collection_param() {
         let state = state().await;
@@ -555,6 +559,7 @@ mod tests {
         assert_eq!(resp.error.as_ref().unwrap().code, "INVALID_REQUEST");
     }
 
+    #[cfg(feature = "cloud")]
     #[tokio::test]
     async fn pull_requires_collection_or_explicit_ids() {
         let state = state().await;
@@ -570,6 +575,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "cloud")]
     #[tokio::test]
     async fn pull_rejects_non_kb_collection() {
         let state = state().await;

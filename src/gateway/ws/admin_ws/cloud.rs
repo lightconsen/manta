@@ -372,7 +372,7 @@ mod tests {
                 Some(serde_json::json!({
                     "kb_id": "kb1",
                     "filename": "a.md",
-                    "content_base64": base64::engine::general_purpose::STANDARD.encode("hi"),
+                    "content_base64": "aGk=",
                 })),
             ),
             ("cloud.kb.query", Some(serde_json::json!({ "kb_id": "kb1", "query": "q" }))),

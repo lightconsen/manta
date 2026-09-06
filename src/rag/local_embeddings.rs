@@ -202,7 +202,9 @@ impl LazyEmbeddingModel {
                     ))
                 })??;
 
-                let context_params = LlamaContextParams::default().with_n_batch(512);
+                let context_params = LlamaContextParams::default()
+                    .with_n_batch(512)
+                    .with_embeddings(true);
 
                 info!("GGUF model loaded successfully");
 
